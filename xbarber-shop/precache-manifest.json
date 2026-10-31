@@ -1,0 +1,23 @@
+{
+  "files": [
+    "/",
+    "/index.html",
+    "/manifest.json",
+    "/app-mode.json",
+    "/sw.js",
+    "/precache-manifest.json",
+    "/src/index.html",
+    "/src/css/style.css",
+    "/src/js/app.js",
+    "/src/js/web-api.js",
+    "/database/schema.sql",
+    "/assets/logo/logo.png",
+    "/assets/logo/apple-touch-icon.png",
+    "/assets/logo/pwa-192.png",
+    "/assets/logo/pwa-512.png",
+    "/assets/logo/logo.ico",
+    "/vendor/sql-wasm.js",
+    "/vendor/sql-wasm.wasm",
+    "/vendor/SQLJS-LICENSE"
+  ]
+}

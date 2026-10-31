@@ -1,0 +1,68 @@
+{
+  "name": "xbarber-shop",
+  "version": "1.0.0",
+  "description": "Barber Shop POS + Appointment Scheduling + Inventory Management Application",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "web": "node server.js",
+    "build:pwa": "node scripts/build-pwa.js",
+    "build": "electron-builder",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "barber",
+    "pos",
+    "appointment",
+    "scheduling",
+    "inventory",
+    "electron",
+    "desktop",
+    "application"
+  ],
+  "author": "XBARBER SHOP",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.0.0",
+    "sql.js": "^1.15.2"
+  },
+  "dependencies": {
+    "sqlite3": "^5.1.6"
+  },
+  "build": {
+    "appId": "com.xbarber.shop",
+    "productName": "XBARBER SHOP",
+    "npmRebuild": false,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "database/**/*",
+      "assets/**/*",
+      "vendor/**/*",
+      "manifest.json",
+      "sw.js",
+      "precache-manifest.json",
+      "scripts/build-pwa.js",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "assets/logo/logo.png",
+      "signAndEditExecutable": false
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "assets/logo/logo.png"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "assets/logo/logo.png"
+    }
+  }
+}

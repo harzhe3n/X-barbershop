@@ -1,0 +1,87 @@
+'use strict';
+
+const CACHE_NAME = 'xbarber-app-shell-v3';
+const APP_ENTRY = '/src/index.html';
+const CORE_FILES = [
+  '/',
+  '/index.html',
+  '/manifest.json',
+  '/app-mode.json',
+  '/sw.js',
+  '/precache-manifest.json',
+  APP_ENTRY,
+  '/src/css/style.css',
+  '/src/js/app.js',
+  '/src/js/web-api.js',
+  '/database/schema.sql',
+  '/assets/logo/logo.png',
+  '/assets/logo/apple-touch-icon.png',
+  '/assets/logo/pwa-192.png',
+  '/assets/logo/pwa-512.png',
+  '/assets/logo/logo.ico',
+  '/vendor/sql-wasm.js',
+  '/vendor/sql-wasm.wasm',
+  '/vendor/SQLJS-LICENSE'
+];
+
+self.addEventListener('install', event => {
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE_NAME);
+    let files = CORE_FILES;
+    try {
+      const response = await fetch('/precache-manifest.json', { cache: 'no-store' });
+      if (response.ok) {
+        const manifest = await response.json();
+        if (Array.isArray(manifest.files) && manifest.files.length) files = manifest.files;
+      }
+    } catch (error) {
+      console.warn('Using the core offline file list:', error.message);
+    }
+    await cache.addAll([...new Set(files)]);
+    await self.skipWaiting();
+  })());
+});
+
+self.addEventListener('activate', event => {
+  event.waitUntil((async () => {
+    const names = await caches.keys();
+    await Promise.all(names.filter(name => name.startsWith('xbarber-app-shell-') && name !== CACHE_NAME)
+      .map(name => caches.delete(name)));
+    await self.clients.claim();
+  })());
+});
+
+self.addEventListener('fetch', event => {
+  const request = event.request;
+  const url = new URL(request.url);
+  if (request.method !== 'GET' || url.origin !== self.location.origin || url.pathname.startsWith('/api/')) return;
+
+  if (request.mode === 'navigate') {
+    event.respondWith((async () => {
+      try {
+        const response = await fetch(request);
+        if (response.ok) {
+          const cache = await caches.open(CACHE_NAME);
+          await cache.put(APP_ENTRY, response.clone());
+        }
+        return response;
+      } catch {
+        return (await caches.match(request, { ignoreSearch: true }))
+          || (await caches.match(APP_ENTRY))
+          || Response.error();
+      }
+    })());
+    return;
+  }
+
+  event.respondWith((async () => {
+    const cached = await caches.match(request);
+    if (cached) return cached;
+    const response = await fetch(request);
+    if (response.ok) {
+      const cache = await caches.open(CACHE_NAME);
+      await cache.put(request, response.clone());
+    }
+    return response;
+  })());
+});

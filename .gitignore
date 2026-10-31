@@ -1,0 +1,10 @@
+# Generated packages and build output
+/xbarber-shop/dist/
+
+# Installed dependencies
+/node_modules/
+/xbarber-shop/node_modules/
+
+# Python cache files
+**/__pycache__/
+*.py[cod]

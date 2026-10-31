@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; connect-src 'self'; object-src 'none'; base-uri 'self';">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="XBARBER SHOP">
+    <meta name="theme-color" content="#000000">
+    <title>XBARBER SHOP</title>
+    <link rel="manifest" href="../manifest.json">
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="icon" href="../assets/logo/logo.png" type="image/png">
+    <link rel="apple-touch-icon" href="../assets/logo/apple-touch-icon.png">
+</head>
+<body>
+    <div id="app">
+        <!-- Login Screen -->
+        <div id="login-screen" class="screen active">
+            <div class="login-container">
+                <div class="logo-placeholder">
+                    <img src="../assets/logo/logo.png" alt="XBARBER SHOP Logo" id="logo-img">
+                </div>
+                <h1>XBARBER SHOP</h1>
+                <form id="login-form">
+                    <div class="input-group">
+                        <label for="username">Username</label>
+                        <input type="text" id="username" required>
+                    </div>
+                    <div class="input-group">
+                        <label for="password">Password</label>
+                        <input type="password" id="password" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary">LOGIN</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Main App Screen -->
+        <div id="main-app" class="screen">
+            <button type="button" id="sidebar-backdrop" aria-label="Close navigation" tabindex="-1"></button>
+            <!-- Sidebar Navigation -->
+            <div id="sidebar">
+                <div class="logo-placeholder sidebar-logo">
+                    <img src="../assets/logo/logo.png" alt="XBARBER SHOP Logo">
+                </div>
+                <nav>
+                    <ul>
+                        <li><a href="#" class="nav-link active" data-page="dashboard">Overview</a></li>
+                        <li><a href="#" class="nav-link" data-page="schedule">Schedule</a></li>
+                        <li><a href="#" class="nav-link" data-page="cashier">Cashier</a></li>
+                        <li><a href="#" class="nav-link" data-page="sales-history">Sales History</a></li>
+                        <li><a href="#" class="nav-link" data-page="print">Print</a></li>
+                        <li><a href="#" class="nav-link" data-page="customers">Customers</a></li>
+                        <li><a href="#" class="nav-link" data-page="barbers">Barbers</a></li>
+                        <li><a href="#" class="nav-link" data-page="catalog">Catalog</a></li>
+                        <li><a href="#" class="nav-link" data-page="analytics">Analytics</a></li>
+                        <li><a href="#" class="nav-link" data-page="settings">Settings</a></li>
+                    </ul>
+                </nav>
+                <div class="sidebar-language">
+                    <button type="button" id="language-toggle" class="language-toggle" aria-label="Switch language to Kurdish">کوردی</button>
+                </div>
+            </div>
+
+            <!-- Main Content Area -->
+            <div id="main-content">
+                <div class="app-toolbar">
+                    <button type="button" id="sidebar-toggle" aria-controls="sidebar" aria-expanded="true">
+                        <span class="menu-icon" aria-hidden="true"><span></span><span></span><span></span></span>
+                        <span id="sidebar-toggle-label">Hide menu</span>
+                    </button>
+                    <span class="app-toolbar-title">XBARBER SHOP</span>
+                </div>
+                <!-- Dashboard Page -->
+                <div id="dashboard-page" class="page active">
+                    <h2>Overview</h2>
+                    <div id="dashboard-content"></div>
+                </div>
+
+                <!-- Schedule Page -->
+                <div id="schedule-page" class="page">
+                    <h2>Schedule</h2>
+                    <div id="schedule-content"></div>
+                </div>
+
+                <!-- Cashier Page -->
+                <div id="cashier-page" class="page">
+                    <h2>Cashier</h2>
+                    <div id="cashier-content"></div>
+                </div>
+
+                <!-- Completed sales and service orders -->
+                <div id="sales-history-page" class="page">
+                    <h2>Sales History</h2>
+                    <div id="sales-history-content"></div>
+                </div>
+
+                <!-- Appointment printouts and history maintenance -->
+                <div id="print-page" class="page">
+                    <h2>Print</h2>
+                    <div id="print-content"></div>
+                </div>
+
+                <!-- Customers Page -->
+                <div id="customers-page" class="page">
+                    <h2>Customers</h2>
+                    <div class="section-tabs" role="tablist" aria-label="Customer views">
+                        <button type="button" class="section-tab active" data-customer-view="customers" role="tab" aria-selected="true">Customer List</button>
+                        <button type="button" class="section-tab" data-customer-view="history" role="tab" aria-selected="false">Visit History</button>
+                    </div>
+                    <p class="swipe-hint">Swipe left or right to switch views</p>
+                    <div id="customers-content"></div>
+                    <div id="history-content" hidden></div>
+                </div>
+
+                <!-- Barber Management -->
+                <div id="barbers-page" class="page">
+                    <h2>Barbers</h2>
+                    <div id="barbers-content"></div>
+                </div>
+
+                <!-- Services and Products Catalog -->
+                <div id="catalog-page" class="page">
+                    <h2>Catalog</h2>
+                    <div class="section-tabs" role="tablist" aria-label="Catalog views">
+                        <button type="button" class="section-tab active" data-catalog-view="services" role="tab" aria-selected="true">Services</button>
+                        <button type="button" class="section-tab" data-catalog-view="products" role="tab" aria-selected="false">Products</button>
+                        <button type="button" class="section-tab" data-catalog-view="categories" role="tab" aria-selected="false">Categories</button>
+                    </div>
+                    <p class="swipe-hint">Swipe left or right to switch views</p>
+                    <div id="services-content"></div>
+                    <div id="products-content" hidden></div>
+                    <div id="categories-content" hidden></div>
+                </div>
+
+                <!-- Settings Page -->
+                <div id="settings-page" class="page">
+                    <h2>Settings</h2>
+                    <div id="settings-content"></div>
+                </div>
+
+                <!-- Analytics Page -->
+                <div id="analytics-page" class="page">
+                    <h2>Analytics</h2>
+                    <div id="analytics-content"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="offline-status" role="status" aria-live="polite" data-state="checking">Checking connection…</div>
+    <script src="../vendor/sql-wasm.js"></script>
+    <script src="js/web-api.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

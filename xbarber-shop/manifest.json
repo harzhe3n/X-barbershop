@@ -1,0 +1,26 @@
+{
+  "id": "./src/index.html",
+  "name": "XBARBER SHOP",
+  "short_name": "XBARBER",
+  "description": "Offline barber shop appointments, cashier, inventory, and reports.",
+  "start_url": "./src/index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f4f3ef",
+  "theme_color": "#202321",
+  "icons": [
+    {
+      "src": "./assets/logo/pwa-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./assets/logo/pwa-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
