@@ -2328,6 +2328,53 @@ textarea {
     object-fit: cover;
 }
 
+.product-info {
+    min-width: 0;
+}
+
+.product-info .product-name {
+    display: block;
+    width: fit-content;
+    max-width: 100%;
+    min-height: 2rem;
+    margin: 0 0 0.45rem;
+    padding: 0.3rem 0.55rem;
+    overflow-wrap: anywhere;
+    border: 1px solid #d5c8b7;
+    border-radius: 5px;
+    background: #fff;
+    color: #202321;
+    font-size: 1rem;
+    font-weight: 750;
+    line-height: 1.35;
+}
+
+.product-name-input::placeholder {
+    color: #62665f;
+    opacity: 1;
+}
+
+.product-info .product-price,
+.product-info .product-stock,
+.product-info .product-category {
+    display: block;
+    min-height: 1.25rem;
+    color: #343832;
+    overflow-wrap: anywhere;
+}
+
+.product-info .product-price {
+    color: #70452f;
+    font-weight: 700;
+}
+
+.cashier-product-row .item-name {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    color: #202321;
+    font-weight: 650;
+}
+
 .cashier-product-image {
     display: grid;
     flex: 0 0 42px;

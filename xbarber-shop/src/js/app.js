@@ -27,6 +27,8 @@ const soraniTranslations = {
     'Additional Services (Optional)': 'خزمەتگوزاریی زیادە (ئارەزوومەندانە)',
     'Notes (Optional)': 'تێبینی (ئارەزوومەندانە)',
     'Edit Appointment': 'دەستکاریکردنی وادە',
+    'Enter product name': 'ناوی بەرهەم بنووسە',
+    'Unnamed product': 'بەرهەمی بێ ناو',
     'Save Changes': 'پاشەکەوتکردنی گۆڕانکارییەکان',
     'Appointment updated successfully.': 'وادەکە بە سەرکەوتوویی نوێکرایەوە.',
     'Could not save appointment:': 'نەتوانرا وادەکە پاشەکەوت بکرێت:',
@@ -1200,16 +1202,19 @@ async function loadCashier() {
         <div class="cashier-section">
             <h3>Products</h3>
             <div class="item-list" id="cashier-products-list">
-                ${products.map(product => `
-                    <div class="item-row">
+                ${products.map(product => {
+                    const productName = String(product.name || '').trim() || `Unnamed product #${product.id}`;
+                    return `
+                    <div class="item-row cashier-product-row">
                         <div class="cashier-product-image">${product.image_data
                             ? `<img src="${escapeHtml(product.image_data)}" alt="">`
                             : '<span aria-hidden="true">P</span>'}</div>
-                        <div class="item-name">${escapeHtml(product.name)}</div>
+                        <div class="item-name">${escapeHtml(productName)}</div>
                         <div class="item-price">${formatCurrency(product.price)}</div>
-                        <button class="btn btn-sm btn-primary" data-add-item="product-${product.id}" data-name="${escapeHtml(product.name)}" data-price="${product.price}" data-image="${product.image_data ? escapeHtml(product.image_data) : ''}">Add</button>
+                        <button class="btn btn-sm btn-primary" data-add-item="product-${product.id}" data-name="${escapeHtml(productName)}" data-price="${product.price}" data-image="${product.image_data ? escapeHtml(product.image_data) : ''}">Add</button>
                     </div>
-                `).join('') || '<p>No products available.</p>'}
+                `;
+                }).join('') || '<p>No products available.</p>'}
             </div>
         </div>
 
@@ -2197,25 +2202,28 @@ async function loadProducts() {
         </div>
 
         <div class="product-list">
-            ${products.map(product => `
-                <div class="product-item">
-                    <div class="product-image-placeholder">
-                        ${product.image_data
-                            ? `<img src="${escapeHtml(product.image_data)}" alt="${escapeHtml(product.name)}">`
-                            : '<span aria-hidden="true">No photo</span>'}
-                    </div>
-                    <div class="product-info">
-                        <div class="product-name">${escapeHtml(product.name)}</div>
-                        <div class="product-price">${formatCurrency(product.price)}</div>
-                        <div class="product-stock">Stock: ${product.stock}</div>
-                        <div class="product-category">${escapeHtml(product.category_name || 'Uncategorized')}</div>
+            ${products.map(product => {
+                const productName = String(product.name || '').trim() || `Unnamed product #${product.id}`;
+                return `
+                    <div class="product-item">
+                        <div class="product-image-placeholder">
+                            ${product.image_data
+                                ? `<img src="${escapeHtml(product.image_data)}" alt="${escapeHtml(productName)}">`
+                                : '<span aria-hidden="true">No photo</span>'}
+                        </div>
+                        <div class="product-info">
+                            <div class="product-name">${escapeHtml(productName)}</div>
+                            <div class="product-price">${formatCurrency(product.price)}</div>
+                            <div class="product-stock">Stock: ${product.stock}</div>
+                            <div class="product-category">${escapeHtml(product.category_name || 'Uncategorized')}</div>
                     </div>
                     <div class="product-actions">
                         <button class="btn btn-sm" data-edit-product="${product.id}">Edit</button>
                         <button class="btn btn-sm btn-danger" data-delete-product="${product.id}">Delete</button>
                     </div>
                 </div>
-            `).join('') || '<p>No products available.</p>'}
+            `;
+        }).join('') || '<p>No products available.</p>'}
         </div>
 
         <div id="product-modal" class="modal" style="display:none;">
@@ -2223,7 +2231,7 @@ async function loadProducts() {
                 <h3 id="product-modal-title">Add Product</h3>
                 <div class="form-group">
                     <label for="product-name">Product Name</label>
-                    <input type="text" id="product-name">
+                    <input type="text" id="product-name" class="product-name-input" placeholder="Enter product name">
                 </div>
                 <div class="form-group">
                     <label for="product-price">Price</label>

@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_NAME = 'xbarber-app-shell-v9';
+const CACHE_NAME = 'xbarber-app-shell-v10';
 const APP_ENTRY = '/src/index.html';
 const CORE_FILES = [
   '/',
