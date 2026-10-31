@@ -1,7 +1,6 @@
 (function () {
     if (window.electronAPI || window.webApi) return;
 
-    const MODE_KEY = 'xbarber-storage-mode-v1';
     const DATABASE_NAME = 'xbarber-offline';
     const DATABASE_VERSION = 2;
     const DATABASE_STORE = 'storage';
@@ -69,41 +68,22 @@
         return data;
     }
 
-    function storedMode() {
-        try {
-            return localStorage.getItem(MODE_KEY);
-        } catch (error) {
-            console.warn('Could not read the saved storage mode:', error.message);
-            return null;
-        }
-    }
-
-    function rememberMode(mode) {
-        try {
-            localStorage.setItem(MODE_KEY, mode);
-        } catch (error) {
-            console.warn('Could not remember the storage mode:', error.message);
-        }
-    }
-
     async function resolveMode() {
-        const savedMode = storedMode();
-        if (savedMode === 'server' || savedMode === 'indexeddb') return savedMode;
-
         try {
             const response = await fetch('/app-mode.json', { cache: 'no-store' });
             if (response.ok) {
                 const config = await response.json();
-                if (config.mode === 'server') {
-                    rememberMode('server');
-                    return 'server';
+                if (config.mode === 'server' || config.mode === 'indexeddb') {
+                    return config.mode;
                 }
             }
         } catch (error) {
-            if (!navigator.onLine) console.info('Starting in local offline mode.');
+            if (navigator.onLine) {
+                console.warn('Could not load the app-mode configuration; using local offline storage:', error.message);
+            }
         }
 
-        rememberMode('indexeddb');
+        // A missing/static-host config must not reuse a stale server mode from an older deployment.
         return 'indexeddb';
     }
 
