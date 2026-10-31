@@ -1,0 +1,6 @@
+{
+  "installCommand": "npm --prefix xbarber-shop ci",
+  "buildCommand": "npm --prefix xbarber-shop run build:pwa",
+  "outputDirectory": "xbarber-shop/dist/pwa",
+  "framework": null
+}
