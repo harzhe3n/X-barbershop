@@ -48,14 +48,12 @@
                 <nav>
                     <ul>
                         <li><a href="#" class="nav-link active" data-page="dashboard">Overview</a></li>
-                        <li><a href="#" class="nav-link" data-page="schedule">Schedule</a></li>
-                        <li><a href="#" class="nav-link" data-page="cashier">Cashier</a></li>
+                        <li><a href="#" class="nav-link" data-page="workspace">Appointments &amp; Cashier</a></li>
                         <li><a href="#" class="nav-link" data-page="sales-history">Sales History</a></li>
                         <li><a href="#" class="nav-link" data-page="print">Print</a></li>
                         <li><a href="#" class="nav-link" data-page="customers">Customers</a></li>
                         <li><a href="#" class="nav-link" data-page="barbers">Barbers</a></li>
                         <li><a href="#" class="nav-link" data-page="catalog">Catalog</a></li>
-                        <li><a href="#" class="nav-link" data-page="analytics">Analytics</a></li>
                         <li><a href="#" class="nav-link" data-page="settings">Settings</a></li>
                     </ul>
                 </nav>
@@ -79,16 +77,15 @@
                     <div id="dashboard-content"></div>
                 </div>
 
-                <!-- Schedule Page -->
-                <div id="schedule-page" class="page">
-                    <h2>Schedule</h2>
+                <!-- Combined appointments and cashier workspace -->
+                <div id="workspace-page" class="page">
+                    <h2>Appointments &amp; Cashier</h2>
+                    <div class="section-tabs workspace-tabs" role="tablist" aria-label="Appointments and cashier">
+                        <button type="button" class="section-tab active" data-workspace-view="appointments" role="tab" aria-selected="true">Appointments</button>
+                        <button type="button" class="section-tab" data-workspace-view="cashier" role="tab" aria-selected="false">Cashier</button>
+                    </div>
                     <div id="schedule-content"></div>
-                </div>
-
-                <!-- Cashier Page -->
-                <div id="cashier-page" class="page">
-                    <h2>Cashier</h2>
-                    <div id="cashier-content"></div>
+                    <div id="cashier-content" hidden></div>
                 </div>
 
                 <!-- Completed sales and service orders -->
@@ -139,12 +136,6 @@
                 <div id="settings-page" class="page">
                     <h2>Settings</h2>
                     <div id="settings-content"></div>
-                </div>
-
-                <!-- Analytics Page -->
-                <div id="analytics-page" class="page">
-                    <h2>Analytics</h2>
-                    <div id="analytics-content"></div>
                 </div>
             </div>
         </div>

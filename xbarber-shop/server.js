@@ -124,7 +124,16 @@ async function openDatabase() {
       if (!productColumns.some(column => column.name === 'category_id')) {
         await dbRun(connection, 'ALTER TABLE products ADD COLUMN category_id INTEGER REFERENCES categories(id)');
       }
+      const updatedProductColumns = await dbAll(connection, 'PRAGMA table_info(products)');
+      if (!updatedProductColumns.some(column => column.name === 'image_data')) {
+        await dbRun(connection, 'ALTER TABLE products ADD COLUMN image_data TEXT');
+      }
+      const customerImageColumns = await dbAll(connection, 'PRAGMA table_info(customers)');
+      if (!customerImageColumns.some(column => column.name === 'image_data')) {
+        await dbRun(connection, 'ALTER TABLE customers ADD COLUMN image_data TEXT');
+      }
       await dbRun(connection, 'CREATE INDEX IF NOT EXISTS idx_products_category_id ON products(category_id)');
+      await dbRun(connection, "UPDATE settings SET currency = 'IQD' WHERE currency IS NULL OR currency <> 'IQD'");
 
       const migrations = [
         { name: 'clear-service-catalog-v1', table: 'services' },

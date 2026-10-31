@@ -139,18 +139,61 @@ function initDatabase() {
 
               const finish = () => {
                 db.run('CREATE INDEX IF NOT EXISTS idx_products_category_id ON products(category_id)', indexError => {
-                  if (indexError) reject(indexError);
-                  else applyMigration(0);
+                  if (indexError) {
+                    reject(indexError);
+                    return;
+                  }
+                  db.run("UPDATE settings SET currency = 'IQD' WHERE currency IS NULL OR currency <> 'IQD'", currencyError => {
+                    if (currencyError) reject(currencyError);
+                    else applyMigration(0);
+                  });
                 });
               };
 
+              const ensureImageColumns = () => {
+                db.all('PRAGMA table_info(products)', (updatedProductsError, updatedProductColumns) => {
+                  if (updatedProductsError) {
+                    reject(updatedProductsError);
+                    return;
+                  }
+                  const ensureCustomerImage = () => {
+                    db.all('PRAGMA table_info(customers)', (customerImageError, customerColumns) => {
+                      if (customerImageError) {
+                        reject(customerImageError);
+                        return;
+                      }
+                      const finishImageMigration = () => {
+                        if (updatedProductColumns.some(column => column.name === 'image_data')) {
+                          finish();
+                          return;
+                        }
+                        db.run('ALTER TABLE products ADD COLUMN image_data TEXT', imageAlterError => {
+                          if (imageAlterError) reject(imageAlterError);
+                          else finish();
+                        });
+                      };
+                      if (customerColumns.some(column => column.name === 'image_data')) {
+                        finishImageMigration();
+                        return;
+                      }
+                      db.run('ALTER TABLE customers ADD COLUMN image_data TEXT', imageAlterError => {
+                        if (imageAlterError) reject(imageAlterError);
+                        else finishImageMigration();
+                      });
+                    });
+                  };
+                  ensureCustomerImage();
+                });
+              };
+
+              const ensureCategoryIndex = () => ensureImageColumns();
               if (productColumns.some(column => column.name === 'category_id')) {
-                finish();
+                ensureCategoryIndex();
                 return;
               }
               db.run('ALTER TABLE products ADD COLUMN category_id INTEGER REFERENCES categories(id)', alterError => {
                 if (alterError) reject(alterError);
-                else finish();
+                else ensureCategoryIndex();
               });
             });
           };

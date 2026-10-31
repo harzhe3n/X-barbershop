@@ -13,6 +13,24 @@ const soraniTranslations = {
     'XBARBER SHOP': 'XBARBER SHOP',
     'Visit History': 'مێژووی سەردان',
     'Overview': 'پوختەی گشتی',
+    'Appointments & Cashier': 'وادەکان و کاشێر',
+    'Appointments and cashier': 'وادەکان و کاشێر',
+    'Daily workspace': 'شوێنی کاری ڕۆژانە',
+    'Appointments': 'وادەکان',
+    'View date': 'بینینی ڕێکەوت',
+    'New appointment': 'وادەی نوێ',
+    'Manage bookings, update their details, and move customers straight into checkout.': 'وادەکان بەڕێوەببە، وردەکارییان دەستکاری بکە، و ڕاستەوخۆ کڕیارەکان بنێرە بۆ کاشێر.',
+    'Tap Edit to update any booking detail': 'دەستکاری بکە بۆ نوێکردنەوەی هەر وردەکارییەکی وادە',
+    'Edit details': 'دەستکاریکردنی وردەکارییەکان',
+    'Main Service': 'خزمەتگوزاریی سەرەکی',
+    'Appointment Status': 'باری وادە',
+    'Additional Services (Optional)': 'خزمەتگوزاریی زیادە (ئارەزوومەندانە)',
+    'Notes (Optional)': 'تێبینی (ئارەزوومەندانە)',
+    'Edit Appointment': 'دەستکاریکردنی وادە',
+    'Save Changes': 'پاشەکەوتکردنی گۆڕانکارییەکان',
+    'Appointment updated successfully.': 'وادەکە بە سەرکەوتوویی نوێکرایەوە.',
+    'Could not save appointment:': 'نەتوانرا وادەکە پاشەکەوت بکرێت:',
+    'Appointment could not be found.': 'وادەکە نەدۆزرایەوە.',
     'Sales History': 'مێژووی فرۆشتن',
     'Print': 'چاپکردن',
     'Appointment List': 'لیستی وادەکان',
@@ -299,7 +317,14 @@ let currentOrder = [];
 let pendingScheduleCustomerId = null;
 let historyAppointmentIds = [];
 let selectedCashierBarberId = '';
+let selectedCashierAppointmentId = null;
+let selectedCashierCustomerId = null;
+let selectedCashierAppointmentServices = [];
+let appointmentServices = [];
+let draftProductImageData = null;
 let activePageName = 'dashboard';
+let activeWorkspaceTab = 'appointments';
+let editingAppointmentId = null;
 
 document.addEventListener('DOMContentLoaded', function() {
     applyInterfaceLanguage();
@@ -316,6 +341,10 @@ function setupEventListeners() {
     loginForm.addEventListener('submit', handleLogin);
     setupSidebarToggle();
     setupSwipeNavigation();
+
+    document.querySelectorAll('[data-workspace-view]').forEach(tab => {
+        tab.addEventListener('click', () => selectWorkspaceTab(tab.dataset.workspaceView));
+    });
 
     document.querySelectorAll('[data-customer-view]').forEach(tab => {
         tab.addEventListener('click', () => {
@@ -488,8 +517,8 @@ function showScreen(screenName) {
 }
 
 function showPage(pageName) {
-    const targetPageName = ['history', 'services', 'products'].includes(pageName)
-        ? ({ history: 'customers', services: 'catalog', products: 'catalog' })[pageName]
+    const targetPageName = ['history', 'services', 'products', 'schedule', 'cashier'].includes(pageName)
+        ? ({ history: 'customers', services: 'catalog', products: 'catalog', schedule: 'workspace', cashier: 'workspace' })[pageName]
         : pageName;
     const navPages = [...navLinks].map(link => link.dataset.page);
     const previousIndex = navPages.indexOf(activePageName);
@@ -508,11 +537,12 @@ function showPage(pageName) {
         case 'dashboard':
             loadDashboard();
             break;
+        case 'workspace':
         case 'schedule':
-            loadSchedule();
-            break;
         case 'cashier':
-            loadCashier();
+            if (pageName === 'schedule') activeWorkspaceTab = 'appointments';
+            if (pageName === 'cashier') activeWorkspaceTab = 'cashier';
+            loadWorkspace();
             break;
         case 'sales-history':
             loadSalesHistory();
@@ -546,13 +576,65 @@ function showPage(pageName) {
     }
 }
 
+function selectWorkspaceTab(tabName) {
+    activeWorkspaceTab = tabName === 'cashier' ? 'cashier' : 'appointments';
+    document.querySelectorAll('[data-workspace-view]').forEach(tab => {
+        const selected = tab.dataset.workspaceView === activeWorkspaceTab;
+        tab.classList.toggle('active', selected);
+        tab.setAttribute('aria-selected', String(selected));
+    });
+    document.getElementById('schedule-content').hidden = activeWorkspaceTab !== 'appointments';
+    document.getElementById('cashier-content').hidden = activeWorkspaceTab !== 'cashier';
+}
+
+async function loadWorkspace() {
+    selectWorkspaceTab(activeWorkspaceTab);
+    await loadSchedule();
+    await loadCashier();
+    selectWorkspaceTab(activeWorkspaceTab);
+}
+
 function setActiveNav(activeLink) {
     navLinks.forEach(link => link.classList.remove('active'));
     if (activeLink) activeLink.classList.add('active');
 }
 
 function formatCurrency(value) {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(value || 0));
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'IQD' }).format(Number(value || 0));
+}
+
+function readImageFile(file) {
+    if (!file) return Promise.resolve(null);
+    if (!file.type.startsWith('image/')) return Promise.reject(new Error('Choose an image file.'));
+    if (file.size > 12 * 1024 * 1024) return Promise.reject(new Error('Choose an image smaller than 12 MB.'));
+
+    return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const image = new Image();
+        image.onload = () => {
+            URL.revokeObjectURL(url);
+            const scale = Math.min(1, 1200 / Math.max(image.naturalWidth, image.naturalHeight));
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+            canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+            const context = canvas.getContext('2d');
+            if (!context) {
+                reject(new Error('Could not prepare this image.'));
+                return;
+            }
+            try {
+                context.drawImage(image, 0, 0, canvas.width, canvas.height);
+                resolve(canvas.toDataURL('image/jpeg', 0.82));
+            } catch (error) {
+                reject(error);
+            }
+        };
+        image.onerror = () => {
+            URL.revokeObjectURL(url);
+            reject(new Error('This image could not be opened. Try a JPEG or PNG image.'));
+        };
+        image.src = url;
+    });
 }
 
 function escapeHtml(value) {
@@ -671,26 +753,36 @@ async function loadDashboard() {
 async function loadSchedule() {
     const content = document.getElementById('schedule-content');
     content.innerHTML = `
-        <div class="schedule-controls">
+        <section class="appointments-hero">
+            <div>
+                <span class="appointments-eyebrow">Daily workspace</span>
+                <h3>Appointments</h3>
+                <p>Manage bookings, update their details, and move customers straight into checkout.</p>
+            </div>
+            <button type="button" class="btn btn-primary" id="add-appointment-btn">+ New appointment</button>
+        </section>
+        <div class="schedule-controls appointments-toolbar">
             <div class="schedule-date-selector">
-                <label for="schedule-date">Date:</label>
+                <label for="schedule-date">View date</label>
                 <input type="date" id="schedule-date" value="${getLocalDateString()}">
             </div>
-            <button class="btn btn-primary" id="add-appointment-btn">Add Appointment</button>
+            <span class="appointments-day-label" id="appointments-day-label"></span>
         </div>
 
         <div class="appointment-list" id="appointment-list"></div>
 
         <div id="appointment-modal" class="modal" style="display:none;">
             <div class="modal-content">
-                <h3>New Appointment</h3>
-                <div class="form-group">
-                    <label for="modal-date">Date</label>
-                    <input type="date" id="modal-date">
-                </div>
-                <div class="form-group">
-                    <label for="modal-time">Time</label>
-                    <input type="time" id="modal-time">
+                <h3 id="appointment-modal-title">New Appointment</h3>
+                <div class="appointment-form-grid">
+                    <div class="form-group">
+                        <label for="modal-date">Date</label>
+                        <input type="date" id="modal-date" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="modal-time">Time</label>
+                        <input type="time" id="modal-time" required>
+                    </div>
                 </div>
                 <div class="form-group">
                     <label for="modal-existing-customer">Saved Customer</label>
@@ -698,20 +790,40 @@ async function loadSchedule() {
                         <option value="">New customer or walk-in</option>
                     </select>
                 </div>
-                <div class="form-group">
-                    <label for="modal-customer">Customer Name (Optional)</label>
-                    <input type="text" id="modal-customer">
+                <div class="appointment-form-grid">
+                    <div class="form-group">
+                        <label for="modal-customer">Customer Name (Optional)</label>
+                        <input type="text" id="modal-customer">
+                    </div>
+                    <div class="form-group">
+                        <label for="modal-phone">Phone Number (Optional)</label>
+                        <input type="text" id="modal-phone" inputmode="tel">
+                    </div>
+                </div>
+                <div class="appointment-form-grid">
+                    <div class="form-group">
+                        <label for="modal-service">Main Service</label>
+                        <select id="modal-service" required></select>
+                    </div>
+                    <div class="form-group">
+                        <label for="modal-status">Appointment Status</label>
+                        <select id="modal-status">
+                            <option value="scheduled">scheduled</option>
+                            <option value="waiting">waiting</option>
+                            <option value="in-service">in-service</option>
+                            <option value="completed">completed</option>
+                            <option value="cancelled">cancelled</option>
+                        </select>
+                    </div>
                 </div>
                 <div class="form-group">
-                    <label for="modal-phone">Phone Number (Optional)</label>
-                    <input type="text" id="modal-phone">
+                    <fieldset class="appointment-additional-services">
+                        <legend>Additional Services (Optional)</legend>
+                        <div id="modal-additional-services" class="appointment-service-checkboxes"></div>
+                    </fieldset>
                 </div>
                 <div class="form-group">
-                    <label for="modal-service">Service</label>
-                    <select id="modal-service"></select>
-                </div>
-                <div class="form-group">
-                    <label for="modal-notes">Notes</label>
+                    <label for="modal-notes">Notes (Optional)</label>
                     <textarea id="modal-notes" rows="3"></textarea>
                 </div>
                 <div class="btn-group">
@@ -723,11 +835,16 @@ async function loadSchedule() {
     `;
 
     document.getElementById('schedule-date').addEventListener('change', loadAppointmentsForSelectedDate);
-    document.getElementById('add-appointment-btn').addEventListener('click', openAppointmentModal);
+    document.getElementById('add-appointment-btn').addEventListener('click', () => openAppointmentModal());
     document.getElementById('modal-existing-customer').addEventListener('change', updateAppointmentCustomerFields);
     document.getElementById('cancel-appointment-btn').addEventListener('click', closeAppointmentModal);
     document.getElementById('save-appointment-btn').addEventListener('click', saveAppointment);
     document.getElementById('appointment-list').addEventListener('click', async (event) => {
+        const editButton = event.target.closest('[data-edit-appointment]');
+        if (editButton) {
+            await openAppointmentModal(null, Number(editButton.dataset.editAppointment));
+            return;
+        }
         const deleteButton = event.target.closest('[data-delete-appointment]');
         if (!deleteButton) return;
 
@@ -738,7 +855,17 @@ async function loadSchedule() {
 
         const result = await api.dbRun('DELETE FROM appointments WHERE id = ?', [appointmentId]);
         if (result.changes > 0) {
+            if (selectedCashierAppointmentId === appointmentId) {
+                selectedCashierAppointmentId = null;
+                selectedCashierCustomerId = null;
+                if (selectedCashierAppointmentServices.length) {
+                    currentOrder = currentOrder.filter(item => !selectedCashierAppointmentServices.includes(item));
+                    selectedCashierAppointmentServices = [];
+                    renderCashierOrder();
+                }
+            }
             await loadAppointmentsForSelectedDate();
+            if (!currentOrder.length) await loadCashier();
             alert('Appointment deleted.');
         }
     });
@@ -751,6 +878,7 @@ async function loadSchedule() {
         const appointmentId = Number(target.dataset.statusId);
         await api.dbRun('UPDATE appointments SET status = ? WHERE id = ?', [status, appointmentId]);
         await loadAppointmentsForSelectedDate();
+        if (!currentOrder.length) await loadCashier();
     });
 
     await loadAppointmentServices();
@@ -767,18 +895,22 @@ async function loadAppointmentServices() {
     const select = document.getElementById('modal-service');
     if (!select) return;
 
-    const services = await api.dbQuery('SELECT id, name FROM services WHERE is_active = 1 ORDER BY name');
-    select.innerHTML = services.length 
+    const services = await api.dbQuery('SELECT id, name, price FROM services WHERE is_active = 1 ORDER BY name');
+    appointmentServices = services;
+    select.innerHTML = services.length
         ? services.map(service => `<option value="${service.id}">${escapeHtml(service.name)}</option>`).join('')
         : '<option value="">No services available</option>';
+    document.getElementById('modal-additional-services').innerHTML = services.map(service =>
+        `<label><input type="checkbox" value="${service.id}"> ${escapeHtml(service.name)}</label>`
+    ).join('');
 }
 
 async function loadAppointmentCustomers() {
     const select = document.getElementById('modal-existing-customer');
-    const customers = await api.dbQuery('SELECT id, name, phone FROM customers WHERE is_active = 1 ORDER BY name');
+    const customers = await api.dbQuery('SELECT id, name, phone, is_active FROM customers ORDER BY name');
 
     select.innerHTML = '<option value="">New customer or walk-in</option>' + customers.map(customer =>
-        `<option value="${customer.id}">${escapeHtml(customer.name || 'Unnamed customer')}${customer.phone ? ` - ${escapeHtml(customer.phone)}` : ''}</option>`
+        `<option value="${customer.id}">${escapeHtml(customer.name || 'Unnamed customer')}${customer.phone ? ` - ${escapeHtml(customer.phone)}` : ''}${Number(customer.is_active) ? '' : ' (inactive)'}</option>`
     ).join('');
 }
 
@@ -790,40 +922,76 @@ async function updateAppointmentCustomerFields() {
     if (!customerId) {
         nameInput.value = '';
         phoneInput.value = '';
-        nameInput.readOnly = false;
-        phoneInput.readOnly = false;
         return;
     }
 
-    const customer = (await api.dbQuery('SELECT id, name, phone FROM customers WHERE id = ? AND is_active = 1', [customerId]))[0];
+    const customer = (await api.dbQuery('SELECT id, name, phone FROM customers WHERE id = ?', [customerId]))[0];
     if (!customer) return;
 
     nameInput.value = customer.name || '';
     phoneInput.value = customer.phone || '';
-    nameInput.readOnly = true;
-    phoneInput.readOnly = true;
 }
 
-function openAppointmentModal(customerId = null) {
+async function openAppointmentModal(customerId = null, appointmentId = null) {
     const modal = document.getElementById('appointment-modal');
-    const dateInput = document.getElementById('modal-date');
-    const timeInput = document.getElementById('modal-time');
+    editingAppointmentId = appointmentId;
+    document.getElementById('appointment-modal-title').textContent = appointmentId ? 'Edit Appointment' : 'New Appointment';
+    document.getElementById('save-appointment-btn').textContent = appointmentId ? 'Save Changes' : 'Save Appointment';
+    document.getElementById('modal-date').value = document.getElementById('schedule-date').value;
+    document.getElementById('modal-time').value = '09:00';
+    document.getElementById('modal-existing-customer').value = customerId ? String(customerId) : '';
+    document.getElementById('modal-customer').value = '';
+    document.getElementById('modal-phone').value = '';
+    document.getElementById('modal-notes').value = '';
+    document.getElementById('modal-service').selectedIndex = 0;
+    document.getElementById('modal-status').value = 'scheduled';
+    document.querySelectorAll('#modal-additional-services input[type="checkbox"]').forEach(input => { input.checked = false; });
+
+    if (customerId) await updateAppointmentCustomerFields();
+    if (appointmentId) {
+        const appointment = (await api.dbQuery(
+            'SELECT id, date, time, customer_id, service_id, additional_services, notes, status FROM appointments WHERE id = ?',
+            [appointmentId]
+        ))[0];
+        if (!appointment) {
+            alert('Appointment could not be found.');
+            return;
+        }
+        document.getElementById('modal-date').value = appointment.date;
+        document.getElementById('modal-time').value = appointment.time;
+        document.getElementById('modal-existing-customer').value = appointment.customer_id ? String(appointment.customer_id) : '';
+        if (appointment.customer_id) await updateAppointmentCustomerFields();
+        document.getElementById('modal-service').value = String(appointment.service_id);
+        document.getElementById('modal-notes').value = appointment.notes || '';
+        document.getElementById('modal-status').value = appointment.status || 'scheduled';
+        let additionalServices = [];
+        try {
+            additionalServices = JSON.parse(appointment.additional_services || '[]');
+        } catch (error) {
+            console.warn('Ignoring invalid appointment additional-services data:', error);
+        }
+        const additionalIds = new Set(additionalServices.map(Number));
+        document.querySelectorAll('#modal-additional-services input[type="checkbox"]').forEach(input => {
+            input.checked = additionalIds.has(Number(input.value)) && Number(input.value) !== Number(appointment.service_id);
+        });
+    }
 
     modal.style.display = 'flex';
-    dateInput.value = document.getElementById('schedule-date').value;
-    timeInput.value = '09:00';
-    document.getElementById('modal-existing-customer').value = customerId ? String(customerId) : '';
-    updateAppointmentCustomerFields();
 }
 
 function closeAppointmentModal() {
     const modal = document.getElementById('appointment-modal');
     modal.style.display = 'none';
+    editingAppointmentId = null;
 }
 
 async function loadAppointmentsForSelectedDate() {
     const date = document.getElementById('schedule-date').value;
     const list = document.getElementById('appointment-list');
+    const dayLabel = document.getElementById('appointments-day-label');
+    if (dayLabel) dayLabel.textContent = date ? new Date(`${date}T12:00:00`).toLocaleDateString(undefined, {
+        weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'
+    }) : '';
 
     if (!date) {
         list.innerHTML = '<p>Select a date to view appointments.</p>';
@@ -831,8 +999,9 @@ async function loadAppointmentsForSelectedDate() {
     }
 
     const appointments = await api.dbQuery(
-        `SELECT a.id, a.time, a.status, s.name AS service_name,
-                COALESCE(NULLIF(c.name, ''), 'Walk-in') AS customer_name
+        `SELECT a.id, a.date, a.time, a.status, a.notes, a.additional_services,
+                a.service_id, a.customer_id, s.name AS service_name,
+                COALESCE(NULLIF(c.name, ''), 'Walk-in') AS customer_name, c.phone AS customer_phone
          FROM appointments a
          LEFT JOIN services s ON s.id = a.service_id
          LEFT JOIN customers c ON c.id = a.customer_id
@@ -846,26 +1015,49 @@ async function loadAppointmentsForSelectedDate() {
     }
 
     const statusOptions = ['scheduled', 'waiting', 'in-service', 'completed', 'cancelled'];
-    list.innerHTML = appointments.map((appointment) => {
+    list.innerHTML = `
+        <div class="appointments-list-heading">
+            <div><strong>${appointments.length}</strong> appointment${appointments.length === 1 ? '' : 's'}</div>
+            <span>Tap Edit to update any booking detail</span>
+        </div>
+        ${appointments.map((appointment) => {
         const selectedStatus = appointment.status || 'scheduled';
         const optionMarkup = statusOptions.map(option => 
             `<option value="${option}" ${option === selectedStatus ? 'selected' : ''}>${option}</option>`
         ).join('');
+        let additionalServiceNames = [];
+        try {
+            const ids = JSON.parse(appointment.additional_services || '[]').map(Number);
+            additionalServiceNames = ids
+                .filter(id => id !== Number(appointment.service_id))
+                .map(id => appointmentServices.find(service => Number(service.id) === id)?.name)
+                .filter(Boolean);
+        } catch (error) {
+            console.warn('Ignoring invalid appointment additional-services data:', error);
+        }
 
         return `
-            <div class="appointment-item">
-                <div>
-                    <div class="appointment-time">${escapeHtml(appointment.time)}</div>
-                    <div>${escapeHtml(appointment.customer_name)}</div>
-                    <div>${escapeHtml(appointment.service_name || 'Service')}</div>
+            <article class="appointment-item appointment-card">
+                <div class="appointment-card-time">
+                    <strong>${escapeHtml(appointment.time)}</strong>
+                    <span>${escapeHtml(appointment.date)}</span>
                 </div>
-                <div class="appointment-actions">
-                    <select class="status-select" data-status-id="${appointment.id}">${optionMarkup}</select>
-                    <button class="btn btn-danger btn-sm" data-delete-appointment="${appointment.id}">Delete</button>
+                <div class="appointment-card-details">
+                    <strong>${escapeHtml(appointment.customer_name)}</strong>
+                    ${appointment.customer_phone ? `<span>${escapeHtml(appointment.customer_phone)}</span>` : '<span>Walk-in / no phone</span>'}
+                    <span>${escapeHtml(appointment.service_name || 'Service unavailable')}${additionalServiceNames.length ? ` · + ${escapeHtml(additionalServiceNames.join(', '))}` : ''}</span>
+                    ${appointment.notes ? `<span class="appointment-card-notes">${escapeHtml(appointment.notes)}</span>` : ''}
                 </div>
-            </div>
+                <div class="appointment-card-controls">
+                    <label class="visually-hidden" for="appointment-status-${appointment.id}">Status</label>
+                    <select class="status-select" id="appointment-status-${appointment.id}" data-status-id="${appointment.id}">${optionMarkup}</select>
+                    <button type="button" class="btn btn-primary btn-sm" data-edit-appointment="${appointment.id}">Edit details</button>
+                    <button type="button" class="btn btn-danger btn-sm" data-delete-appointment="${appointment.id}">Delete</button>
+                </div>
+            </article>
         `;
-    }).join('');
+    }).join('')}
+    `;
 }
 
 async function saveAppointment() {
@@ -876,41 +1068,93 @@ async function saveAppointment() {
     const savedCustomerId = Number(document.getElementById('modal-existing-customer').value);
     const serviceId = Number(document.getElementById('modal-service').value);
     const notes = document.getElementById('modal-notes').value.trim();
+    const status = document.getElementById('modal-status').value;
+    const additionalServices = [...document.querySelectorAll('#modal-additional-services input[type="checkbox"]:checked')]
+        .map(input => Number(input.value))
+        .filter(id => id !== serviceId);
 
     if (!date || !time || !serviceId) {
         alert('Please choose a date, time, and service.');
         return;
     }
 
-    let customerId = null;
-    if (savedCustomerId) {
-        customerId = savedCustomerId;
-    } else if (customerName || phone) {
-        const result = await api.dbRun('INSERT INTO customers (name, phone) VALUES (?, ?)', [customerName || null, phone || null]);
-        customerId = result.lastID;
+    try {
+        const statements = [];
+        let customerRef = null;
+        if (savedCustomerId) {
+            statements.push({
+                query: 'UPDATE customers SET name = ?, phone = ? WHERE id = ?',
+                params: [customerName || null, phone || null, savedCustomerId]
+            });
+            customerRef = savedCustomerId;
+        } else if (customerName || phone) {
+            statements.push({
+                query: 'INSERT INTO customers (name, phone) VALUES (?, ?)',
+                params: [customerName || null, phone || null]
+            });
+            customerRef = { lastIDFrom: statements.length - 1 };
+        }
+
+        const appointmentParams = [customerRef, date, time, serviceId, additionalServices.length ? JSON.stringify(additionalServices) : null, notes || null, status];
+        if (editingAppointmentId) {
+            statements.push({
+                query: 'UPDATE appointments SET customer_id = ?, date = ?, time = ?, service_id = ?, additional_services = ?, notes = ?, status = ? WHERE id = ?',
+                params: [...appointmentParams, editingAppointmentId]
+            });
+        } else {
+            statements.push({
+                query: 'INSERT INTO appointments (customer_id, date, time, service_id, additional_services, notes, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                params: appointmentParams
+            });
+        }
+        await api.runTransaction(statements);
+        await loadAppointmentCustomers();
+
+        const editedId = editingAppointmentId;
+        if (editedId && selectedCashierAppointmentId === editedId) {
+            selectedCashierAppointmentId = null;
+            selectedCashierCustomerId = null;
+            if (selectedCashierAppointmentServices.length) {
+                currentOrder = currentOrder.filter(item => !selectedCashierAppointmentServices.includes(item));
+                selectedCashierAppointmentServices = [];
+                renderCashierOrder();
+            }
+        }
+        document.getElementById('schedule-date').value = date;
+        closeAppointmentModal();
+        await loadAppointmentsForSelectedDate();
+        if (!currentOrder.length) await loadCashier();
+        alert(editedId ? 'Appointment updated successfully.' : 'Appointment saved successfully.');
+    } catch (error) {
+        console.error('Could not save appointment:', error);
+        alert(`Could not save appointment: ${error.message}`);
     }
-
-    await api.dbRun(
-        'INSERT INTO appointments (customer_id, date, time, service_id, notes, status) VALUES (?, ?, ?, ?, ?, ?)',
-        [customerId, date, time, serviceId, notes || null, 'scheduled']
-    );
-
-    document.getElementById('schedule-date').value = date;
-    closeAppointmentModal();
-    await loadAppointmentsForSelectedDate();
-    alert('Appointment saved successfully.');
 }
 
 async function loadCashier() {
     const content = document.getElementById('cashier-content');
-    const [services, products, barbers] = await Promise.all([
+    const [services, products, barbers, appointments] = await Promise.all([
         api.dbQuery('SELECT id, name, price FROM services WHERE is_active = 1 ORDER BY name'),
-        api.dbQuery('SELECT id, name, price, stock FROM products WHERE is_active = 1 ORDER BY name'),
-        api.dbQuery('SELECT id, name FROM barbers WHERE is_active = 1 ORDER BY name')
+        api.dbQuery('SELECT id, name, price, stock, image_data FROM products WHERE is_active = 1 ORDER BY name'),
+        api.dbQuery('SELECT id, name FROM barbers WHERE is_active = 1 ORDER BY name'),
+        api.dbQuery(
+            `SELECT a.id, a.time, a.customer_id, a.service_id, a.additional_services,
+                    COALESCE(NULLIF(c.name, ''), 'Walk-in') AS customer_name,
+                    s.name AS service_name, s.price AS service_price
+             FROM appointments a
+             LEFT JOIN customers c ON c.id = a.customer_id
+             LEFT JOIN services s ON s.id = a.service_id
+             WHERE a.date = ? AND COALESCE(a.status, 'scheduled') IN ('scheduled', 'waiting', 'in-service')
+             ORDER BY a.time`,
+            [getLocalDateString()]
+        )
     ]);
     if (!barbers.some(barber => String(barber.id) === selectedCashierBarberId)) {
         selectedCashierBarberId = '';
     }
+    selectedCashierAppointmentId = null;
+    selectedCashierCustomerId = null;
+    selectedCashierAppointmentServices = [];
 
     content.innerHTML = `
         <div class="cashier-header">
@@ -918,10 +1162,24 @@ async function loadCashier() {
             <div class="order-info">Ready to sell</div>
         </div>
 
+        <section class="cashier-appointment-panel">
+            <label for="cashier-appointment">Today's appointment (optional)</label>
+            <select id="cashier-appointment">
+                <option value="">Walk-in / no appointment</option>
+                ${appointments.map(appointment => `
+                    <option value="${appointment.id}">
+                        ${escapeHtml(appointment.time)} · ${escapeHtml(appointment.customer_name)}
+                        ${appointment.service_name ? ` · ${escapeHtml(appointment.service_name)}` : ''}
+                    </option>
+                `).join('')}
+            </select>
+            <p>Selecting an appointment adds its service to the order and links the customer.</p>
+        </section>
+
         <div class="form-group">
-            <label for="cashier-barber">Barber for this order</label>
-            <select id="cashier-barber" required>
-                <option value="">${barbers.length ? 'Select a barber' : 'No barbers yet.'}</option>
+            <label for="cashier-barber">Barber (optional)</label>
+            <select id="cashier-barber">
+                <option value="">${barbers.length ? 'No barber assigned' : 'No barbers yet.'}</option>
                 ${barbers.map(barber => `<option value="${barber.id}" ${String(barber.id) === selectedCashierBarberId ? 'selected' : ''}>${escapeHtml(barber.name)}</option>`).join('')}
             </select>
         </div>
@@ -944,9 +1202,12 @@ async function loadCashier() {
             <div class="item-list" id="cashier-products-list">
                 ${products.map(product => `
                     <div class="item-row">
+                        <div class="cashier-product-image">${product.image_data
+                            ? `<img src="${escapeHtml(product.image_data)}" alt="">`
+                            : '<span aria-hidden="true">P</span>'}</div>
                         <div class="item-name">${escapeHtml(product.name)}</div>
                         <div class="item-price">${formatCurrency(product.price)}</div>
-                        <button class="btn btn-sm btn-primary" data-add-item="product-${product.id}" data-name="${escapeHtml(product.name)}" data-price="${product.price}">Add</button>
+                        <button class="btn btn-sm btn-primary" data-add-item="product-${product.id}" data-name="${escapeHtml(product.name)}" data-price="${product.price}" data-image="${product.image_data ? escapeHtml(product.image_data) : ''}">Add</button>
                     </div>
                 `).join('') || '<p>No products available.</p>'}
             </div>
@@ -992,9 +1253,57 @@ async function loadCashier() {
         <button class="btn btn-primary" id="complete-order-btn">Complete Order</button>
     `;
 
-    document.getElementById('cashier-content').addEventListener('click', handleCashierActions);
+    content.onclick = handleCashierActions;
     document.getElementById('cashier-barber').addEventListener('change', event => {
         selectedCashierBarberId = event.target.value;
+    });
+    document.getElementById('cashier-appointment').addEventListener('change', event => {
+        const appointment = appointments.find(item => String(item.id) === event.target.value);
+        if (selectedCashierAppointmentServices.length) {
+            selectedCashierAppointmentServices.forEach(item => {
+                if (item.quantity > 1) item.quantity -= 1;
+                else currentOrder = currentOrder.filter(orderItem => orderItem !== item);
+            });
+            selectedCashierAppointmentServices = [];
+        }
+        if (!appointment) {
+            selectedCashierAppointmentId = null;
+            selectedCashierCustomerId = null;
+            renderCashierOrder();
+            return;
+        }
+
+        selectedCashierAppointmentId = Number(appointment.id);
+        selectedCashierCustomerId = appointment.customer_id ? Number(appointment.customer_id) : null;
+        const service = services.find(item => Number(item.id) === Number(appointment.service_id))
+            || (appointment.service_name
+                ? { id: appointment.service_id, name: appointment.service_name, price: appointment.service_price }
+                : null);
+        if (service) {
+            selectedCashierAppointmentServices = [];
+            const appointmentServiceIds = [service.id];
+            try {
+                appointmentServiceIds.push(...JSON.parse(appointment.additional_services || '[]'));
+            } catch (error) {
+                console.warn('Ignoring invalid appointment additional-services data:', error);
+            }
+            appointmentServiceIds.map(Number).filter((id, index, ids) => ids.indexOf(id) === index).forEach(serviceId => {
+                const selectedService = services.find(item => Number(item.id) === serviceId)
+                    || (Number(service.id) === serviceId ? service : null);
+                if (!selectedService || currentOrder.some(item => item.itemType === 'service' && item.id === serviceId)) return;
+                const orderItem = {
+                    type: 'service',
+                    itemType: 'service',
+                    id: serviceId,
+                    name: selectedService.name,
+                    price: Number(selectedService.price),
+                    quantity: 1
+                };
+                currentOrder.push(orderItem);
+                selectedCashierAppointmentServices.push(orderItem);
+            });
+        }
+        renderCashierOrder();
     });
     const paymentMethod = document.getElementById('payment-method');
     const updateCashPaymentVisibility = () => {
@@ -1026,7 +1335,15 @@ function handleCashierActions(event) {
     if (existing) {
         existing.quantity += 1;
     } else {
-        currentOrder.push({ type, itemType: type, id: Number(id), name, price, quantity: 1 });
+        currentOrder.push({
+            type,
+            itemType: type,
+            id: Number(id),
+            name,
+            price,
+            imageData: addButton.dataset.image || null,
+            quantity: 1
+        });
     }
 
     renderCashierOrder();
@@ -1092,14 +1409,10 @@ function calculateCurrentOrderTotal() {
 
 async function completeOrder() {
     const total = calculateCurrentOrderTotal();
-    const barberId = Number(document.getElementById('cashier-barber')?.value);
+    const barberValue = document.getElementById('cashier-barber')?.value || '';
+    const barberId = barberValue ? Number(barberValue) : null;
     if (!currentOrder.length) {
         alert('Add at least one item to the order.');
-        return;
-    }
-
-    if (!Number.isInteger(barberId) || barberId < 1) {
-        alert('Choose a barber for this order.');
         return;
     }
 
@@ -1111,7 +1424,7 @@ async function completeOrder() {
     try {
         const statements = [{
             query: 'INSERT INTO orders (customer_id, date, time, total, discount, status, payment_method, barber_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-            params: [null, date, time, total, 0, 'completed', paymentMethod, barberId]
+            params: [selectedCashierCustomerId, date, time, total, 0, 'completed', paymentMethod, barberId]
         }];
         for (const item of currentOrder) {
             statements.push({
@@ -1133,10 +1446,23 @@ async function completeOrder() {
             query: 'INSERT INTO payments (order_id, amount, method, received_amount, change_amount) VALUES (?, ?, ?, ?, ?)',
             params: [{ lastIDFrom: 0 }, total, paymentMethod, receivedAmount, changeAmount]
         });
+        if (selectedCashierCustomerId) {
+            statements.push({
+                query: 'UPDATE customers SET total_visits = COALESCE(total_visits, 0) + 1, total_spent = COALESCE(total_spent, 0) + ? WHERE id = ?',
+                params: [total, selectedCashierCustomerId]
+            });
+        }
+        if (selectedCashierAppointmentId) {
+            statements.push({
+                query: "UPDATE appointments SET status = 'completed' WHERE id = ? AND status <> 'cancelled'",
+                params: [selectedCashierAppointmentId]
+            });
+        }
         await api.runTransaction(statements);
 
         currentOrder = [];
-        renderCashierOrder();
+        await loadCashier();
+        if (document.getElementById('schedule-date')) await loadAppointmentsForSelectedDate();
         alert('Order completed successfully.');
     } catch (error) {
         console.error('Order failed:', error);
@@ -1147,9 +1473,19 @@ async function completeOrder() {
 async function loadSalesHistory() {
     const content = document.getElementById('sales-history-content');
     try {
-        const orders = await api.dbQuery(
+        const [barberStats, orders] = await Promise.all([
+            api.dbQuery(
+                `SELECT b.id AS barber_id, COALESCE(b.name, 'Unassigned') AS barber_name,
+                        COUNT(o.id) AS clients_finished, COALESCE(SUM(o.total), 0) AS earned
+                 FROM orders o
+                 LEFT JOIN barbers b ON b.id = o.barber_id
+                 WHERE COALESCE(o.status, 'completed') != 'cancelled'
+                 GROUP BY b.id, b.name
+                 ORDER BY barber_name`
+            ),
+            api.dbQuery(
             `SELECT o.id, o.date, o.time, o.total, o.payment_method,
-                    COALESCE(b.name, 'Unassigned') AS barber_name,
+                    o.barber_id, COALESCE(b.name, 'Unassigned') AS barber_name,
                     COALESCE(NULLIF(c.name, ''), 'Walk-in') AS customer_name,
                     GROUP_CONCAT(oi.quantity || ' x ' || COALESCE(s.name, p.name, 'Item unavailable'), ', ') AS items
              FROM orders o
@@ -1162,21 +1498,57 @@ async function loadSalesHistory() {
              GROUP BY o.id
              ORDER BY o.date DESC, o.time DESC
              LIMIT 200`
-        );
+            )
+        ]);
 
-        content.innerHTML = orders.length ? `
-            <div class="appointment-list">
-                ${orders.map(order => `
-                    <div class="appointment-item">
-                        <div>
-                            <div class="appointment-time">Order #${Number(order.id)} · ${escapeHtml(order.date)} ${escapeHtml(order.time)}</div>
-                            <div>${escapeHtml(order.customer_name)} · Barber: ${escapeHtml(order.barber_name)}</div>
-                            <div>${escapeHtml(order.items || 'No item details available')}</div>
-                            <div>Payment: ${escapeHtml(order.payment_method || 'Unknown')}</div>
+        const ordersByBarber = new Map();
+        orders.forEach(order => {
+            const key = order.barber_id == null ? 'unassigned' : String(order.barber_id);
+            const group = ordersByBarber.get(key) || [];
+            group.push(order);
+            ordersByBarber.set(key, group);
+        });
+
+        content.innerHTML = barberStats.length ? `
+            <div class="barber-history-list">
+                ${barberStats.map(barber => {
+                    const key = barber.barber_id == null ? 'unassigned' : String(barber.barber_id);
+                    const barberOrders = ordersByBarber.get(key) || [];
+                    const initials = barber.barber_name.trim().slice(0, 1).toUpperCase();
+                    return `
+                        <section class="barber-history-card">
+                            <header class="barber-history-header">
+                                <div class="barber-history-identity">
+                                    <span class="barber-history-avatar">${escapeHtml(initials || 'B')}</span>
+                                    <div>
+                                        <h3>${escapeHtml(barber.barber_name)}</h3>
+                                        <p>${Number(barber.clients_finished)} completed client${Number(barber.clients_finished) === 1 ? '' : 's'}</p>
+                                    </div>
+                                </div>
+                                <div class="barber-history-earned">
+                                    <span>Money earned</span>
+                                    <strong>${formatCurrency(barber.earned)}</strong>
+                                </div>
+                            </header>
+                            <div class="barber-history-orders">
+                                ${barberOrders.map(order => `
+                                    <article class="barber-history-order">
+                                        <div class="barber-history-order-main">
+                                            <strong>${escapeHtml(order.customer_name)}</strong>
+                                            <span>${escapeHtml(order.date)} · ${escapeHtml(order.time)}</span>
+                                            <span>${escapeHtml(order.items || 'No item details available')}</span>
+                                        </div>
+                                        <div class="barber-history-order-total">
+                                            <strong>${formatCurrency(order.total)}</strong>
+                                            <span>${escapeHtml(order.payment_method || 'Unknown')} · #${Number(order.id)}</span>
                         </div>
-                        <div class="item-price">${formatCurrency(order.total)}</div>
-                    </div>
-                `).join('')}
+                                    </article>
+                                `).join('')}
+                                ${!barberOrders.length ? '<p class="barber-history-empty">No recent order details.</p>' : ''}
+                            </div>
+                        </section>
+                    `;
+                }).join('')}
             </div>
         ` : '<p>No completed orders yet.</p>';
     } catch (error) {
@@ -1334,7 +1706,7 @@ async function loadCustomers() {
     const content = document.getElementById('customers-content');
 
     const [customers, barbers, assignments] = await Promise.all([
-        api.dbQuery('SELECT id, name, phone, total_visits, total_spent FROM customers WHERE is_active = 1 ORDER BY created_at DESC LIMIT 50'),
+        api.dbQuery('SELECT id, name, phone, image_data, total_visits, total_spent FROM customers WHERE is_active = 1 ORDER BY created_at DESC LIMIT 50'),
         api.dbQuery('SELECT id, name FROM barbers WHERE is_active = 1 ORDER BY name'),
         api.dbQuery('SELECT cb.customer_id, cb.barber_id, b.name AS barber_name FROM customer_barbers cb JOIN barbers b ON b.id = cb.barber_id ORDER BY b.name')
     ]);
@@ -1347,28 +1719,41 @@ async function loadCustomers() {
     const barberOptions = barbers.map(barber => `<option value="${barber.id}">${escapeHtml(barber.name)}</option>`).join('');
 
     content.innerHTML = `
-        <div class="form-group">
-            <label for="customer-name">Customer Name</label>
-            <input type="text" id="customer-name">
-        </div>
-        <div class="form-group">
-            <label for="customer-phone">Phone</label>
-            <input type="text" id="customer-phone">
-        </div>
-        <div class="form-group">
-            <label for="new-customer-barbers">Assign barbers</label>
-            <select id="new-customer-barbers" multiple size="3">${barberOptions}</select>
-        </div>
-        <div class="form-group">
+        <section class="customer-create-panel">
+            <h3>Add a customer</h3>
+            <div class="customer-create-fields">
+                <div class="form-group">
+                    <label for="customer-name">Name (optional)</label>
+                    <input type="text" id="customer-name">
+                </div>
+                <div class="form-group">
+                    <label for="customer-phone">Phone (optional)</label>
+                    <input type="text" id="customer-phone">
+                </div>
+                <div class="form-group">
+                    <label for="customer-photo">Photo (optional)</label>
+                    <input type="file" id="customer-photo" accept="image/*">
+                    <div id="customer-photo-preview" class="photo-preview" hidden></div>
+                </div>
+                <div class="form-group">
+                    <label for="new-customer-barbers">Assign barbers (optional)</label>
+                    <select id="new-customer-barbers" multiple size="3">${barberOptions}</select>
+                </div>
+            </div>
             <button class="btn btn-primary" id="save-customer-btn">Add Customer</button>
-        </div>
+        </section>
 
         <div class="customer-list">
             ${customers.length ? customers.map(customer => `
                 <div class="appointment-item customer-record">
+                    <div class="customer-avatar">
+                        ${customer.image_data
+                            ? `<img src="${escapeHtml(customer.image_data)}" alt="${escapeHtml(customer.name || 'Customer photo')}">`
+                            : `<span aria-hidden="true">${escapeHtml((customer.name || 'C').trim().slice(0, 1).toUpperCase())}</span>`}
+                    </div>
                     <div>
-                        <div class="appointment-time">${escapeHtml(customer.name || 'Walk-in')}</div>
-                        <div>${escapeHtml(customer.phone || 'No phone')}</div>
+                        <div class="appointment-time">${escapeHtml(customer.name || `Customer #${customer.id}`)}</div>
+                        ${customer.phone ? `<div>${escapeHtml(customer.phone)}</div>` : ''}
                         <div>${escapeHtml((assignments
                             .filter(assignment => Number(assignment.customer_id) === Number(customer.id))
                             .map(assignment => assignment.barber_name)
@@ -1376,6 +1761,9 @@ async function loadCustomers() {
                         <div>Visits: ${customer.total_visits || 0} | Spent: ${formatCurrency(customer.total_spent || 0)}</div>
                     </div>
                     <div class="appointment-actions">
+                        <label class="btn btn-sm customer-photo-button" for="customer-photo-${customer.id}">${customer.image_data ? 'Change photo' : 'Add photo'}</label>
+                        <input class="visually-hidden" type="file" id="customer-photo-${customer.id}" accept="image/*" data-customer-photo="${customer.id}">
+                        ${customer.image_data ? `<button class="btn btn-sm" data-clear-customer-photo="${customer.id}">Remove photo</button>` : ''}
                         <button class="btn btn-primary btn-sm" data-schedule-customer="${customer.id}">Schedule</button>
                         <button class="btn btn-danger btn-sm" data-delete-customer="${customer.id}">Delete</button>
                     </div>
@@ -1394,23 +1782,73 @@ async function loadCustomers() {
     document.getElementById('save-customer-btn').addEventListener('click', async () => {
         const name = document.getElementById('customer-name').value.trim();
         const phone = document.getElementById('customer-phone').value.trim();
+        const imageFile = document.getElementById('customer-photo').files?.[0];
         const barberIds = [...document.getElementById('new-customer-barbers').selectedOptions]
             .map(option => Number(option.value));
 
-        if (!name && !phone) {
-            alert('Enter a customer name or phone number.');
+        let imageData;
+        try {
+            imageData = await readImageFile(imageFile);
+        } catch (error) {
+            alert(error.message);
             return;
         }
 
-        const result = await api.dbRun('INSERT INTO customers (name, phone, total_visits, total_spent) VALUES (?, ?, 0, 0)', [name || null, phone || null]);
-        for (const barberId of barberIds) {
-            await api.dbRun('INSERT INTO customer_barbers (customer_id, barber_id) VALUES (?, ?)', [result.lastID, barberId]);
+        const statements = [{
+            query: 'INSERT INTO customers (name, phone, image_data, total_visits, total_spent) VALUES (?, ?, ?, 0, 0)',
+            params: [name || null, phone || null, imageData]
+        }];
+        barberIds.forEach(barberId => statements.push({
+            query: 'INSERT INTO customer_barbers (customer_id, barber_id) VALUES (?, ?)',
+            params: [{ lastIDFrom: 0 }, barberId]
+        }));
+        try {
+            await api.runTransaction(statements);
+        } catch (error) {
+            console.error('Could not add customer:', error);
+            alert(`Could not add customer: ${error.message}`);
+            return;
         }
         await loadCustomers();
         alert('Customer added.');
     });
+    document.getElementById('customer-photo').addEventListener('change', async event => {
+        const preview = document.getElementById('customer-photo-preview');
+        try {
+            const imageData = await readImageFile(event.target.files?.[0]);
+            preview.hidden = !imageData;
+            preview.innerHTML = imageData ? `<img src="${escapeHtml(imageData)}" alt="Customer photo preview">` : '';
+        } catch (error) {
+            alert(error.message);
+            event.target.value = '';
+        }
+    });
+    content.onchange = async event => {
+        const input = event.target.closest('[data-customer-photo]');
+        if (!input || !input.files?.[0]) return;
+        const customerId = Number(input.dataset.customerPhoto);
+        try {
+            const imageData = await readImageFile(input.files[0]);
+            await api.dbRun('UPDATE customers SET image_data = ? WHERE id = ?', [imageData, customerId]);
+            await loadCustomers();
+        } catch (error) {
+            console.error('Could not update customer photo:', error);
+            alert(`Could not update customer photo: ${error.message}`);
+        }
+    };
 
     content.onclick = async (event) => {
+        const clearPhotoButton = event.target.closest('[data-clear-customer-photo]');
+        if (clearPhotoButton) {
+            const customerId = Number(clearPhotoButton.dataset.clearCustomerPhoto);
+            try {
+                await api.dbRun('UPDATE customers SET image_data = NULL WHERE id = ?', [customerId]);
+                await loadCustomers();
+            } catch (error) {
+                alert(`Could not remove customer photo: ${error.message}`);
+            }
+            return;
+        }
         const saveBarbersButton = event.target.closest('[data-save-customer-barbers]');
         if (saveBarbersButton) {
             const customerId = Number(saveBarbersButton.dataset.saveCustomerBarbers);
@@ -1448,8 +1886,9 @@ async function loadCustomers() {
         if (!scheduleButton) return;
 
         pendingScheduleCustomerId = Number(scheduleButton.dataset.scheduleCustomer);
-        showPage('schedule');
-        setActiveNav(document.querySelector('[data-page="schedule"]'));
+        showPage('workspace');
+        selectWorkspaceTab('appointments');
+        setActiveNav(document.querySelector('[data-page="workspace"]'));
     };
 }
 
@@ -1748,7 +2187,7 @@ async function saveService() {
 async function loadProducts() {
     const content = document.getElementById('products-content');
     const [products, categories] = await Promise.all([
-        api.dbQuery('SELECT p.id, p.name, p.price, p.stock, p.description, p.category_id, c.name AS category_name FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.is_active = 1 ORDER BY p.name'),
+        api.dbQuery('SELECT p.id, p.name, p.price, p.stock, p.description, p.category_id, p.image_data, c.name AS category_name FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.is_active = 1 ORDER BY p.name'),
         api.dbQuery('SELECT id, name FROM categories ORDER BY name')
     ]);
 
@@ -1760,7 +2199,11 @@ async function loadProducts() {
         <div class="product-list">
             ${products.map(product => `
                 <div class="product-item">
-                    <div class="product-image-placeholder">[Image]</div>
+                    <div class="product-image-placeholder">
+                        ${product.image_data
+                            ? `<img src="${escapeHtml(product.image_data)}" alt="${escapeHtml(product.name)}">`
+                            : '<span aria-hidden="true">No photo</span>'}
+                    </div>
                     <div class="product-info">
                         <div class="product-name">${escapeHtml(product.name)}</div>
                         <div class="product-price">${formatCurrency(product.price)}</div>
@@ -1787,19 +2230,25 @@ async function loadProducts() {
                     <input type="number" id="product-price" step="0.01">
                 </div>
                 <div class="form-group">
-                    <label for="product-stock">Stock</label>
-                    <input type="number" id="product-stock">
+                    <label for="product-stock">Stock (optional; defaults to 0)</label>
+                    <input type="number" id="product-stock" min="0" step="1">
                 </div>
                 <div class="form-group">
-                    <label for="product-description">Description</label>
+                    <label for="product-description">Description (optional)</label>
                     <textarea id="product-description" rows="3"></textarea>
                 </div>
                 <div class="form-group">
-                    <label for="product-category">Category</label>
+                    <label for="product-category">Category (optional)</label>
                     <select id="product-category">
                         <option value="">Uncategorized</option>
                         ${categories.map(category => `<option value="${category.id}">${escapeHtml(category.name)}</option>`).join('')}
                     </select>
+                </div>
+                <div class="form-group">
+                    <label for="product-image">Product photo (optional)</label>
+                    <input type="file" id="product-image" accept="image/*">
+                    <div id="product-image-preview" class="photo-preview" hidden></div>
+                    <button type="button" class="btn btn-sm" id="clear-product-image" hidden>Remove photo</button>
                 </div>
                 <div class="btn-group">
                     <button class="btn btn-primary" id="save-product-btn">Save</button>
@@ -1812,6 +2261,22 @@ async function loadProducts() {
     document.getElementById('add-product-btn').addEventListener('click', () => openProductModal());
     document.getElementById('cancel-product-btn').addEventListener('click', closeProductModal);
     document.getElementById('save-product-btn').addEventListener('click', saveProduct);
+    document.getElementById('product-image').addEventListener('change', async event => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+        try {
+            draftProductImageData = await readImageFile(file);
+            updateProductImagePreview();
+        } catch (error) {
+            alert(error.message);
+            event.target.value = '';
+        }
+    });
+    document.getElementById('clear-product-image').addEventListener('click', () => {
+        draftProductImageData = null;
+        document.getElementById('product-image').value = '';
+        updateProductImagePreview();
+    });
 
     document.querySelectorAll('[data-delete-product]').forEach((button) => {
         button.addEventListener('click', async () => {
@@ -1824,7 +2289,7 @@ async function loadProducts() {
     document.querySelectorAll('[data-edit-product]').forEach((button) => {
         button.addEventListener('click', async () => {
             const id = Number(button.dataset.editProduct);
-            const product = (await api.dbQuery('SELECT id, name, price, stock, description, category_id FROM products WHERE id = ?', [id]))[0];
+            const product = (await api.dbQuery('SELECT id, name, price, stock, description, category_id, image_data FROM products WHERE id = ?', [id]))[0];
             if (!product) return;
             openProductModal(product);
         });
@@ -1836,17 +2301,32 @@ function openProductModal(product = null) {
     const title = document.getElementById('product-modal-title');
     document.getElementById('product-name').value = product?.name || '';
     document.getElementById('product-price').value = product?.price || '';
-    document.getElementById('product-stock').value = product?.stock || '';
+    document.getElementById('product-stock').value = product ? product.stock : '0';
     document.getElementById('product-description').value = product?.description || '';
     document.getElementById('product-category').value = product?.category_id || '';
+    document.getElementById('product-image').value = '';
+    draftProductImageData = product?.image_data || null;
+    updateProductImagePreview();
     title.textContent = product ? 'Edit Product' : 'Add Product';
     localStorage.setItem('editingProductId', product ? String(product.id) : '');
     modal.style.display = 'flex';
 }
 
+function updateProductImagePreview() {
+    const preview = document.getElementById('product-image-preview');
+    const clearButton = document.getElementById('clear-product-image');
+    if (!preview || !clearButton) return;
+    preview.hidden = !draftProductImageData;
+    clearButton.hidden = !draftProductImageData;
+    preview.innerHTML = draftProductImageData
+        ? `<img src="${escapeHtml(draftProductImageData)}" alt="Product photo preview">`
+        : '';
+}
+
 function closeProductModal() {
     document.getElementById('product-modal').style.display = 'none';
     localStorage.removeItem('editingProductId');
+    draftProductImageData = null;
 }
 
 async function saveProduct() {
@@ -1854,22 +2334,22 @@ async function saveProduct() {
     const priceValue = document.getElementById('product-price').value.trim();
     const stockValue = document.getElementById('product-stock').value.trim();
     const price = Number(priceValue);
-    const stock = Number(stockValue);
+    const stock = stockValue === '' ? 0 : Number(stockValue);
     const description = document.getElementById('product-description').value.trim();
     const categoryValue = document.getElementById('product-category').value;
     const categoryId = categoryValue ? Number(categoryValue) : null;
     const productId = localStorage.getItem('editingProductId');
 
-    if (!name || priceValue === '' || !Number.isFinite(price) || price < 0 || stockValue === '' || !Number.isInteger(stock) || stock < 0) {
-        alert('Enter a product name, a valid non-negative price, and a whole-number stock quantity.');
+    if (!name || priceValue === '' || !Number.isFinite(price) || price < 0 || !Number.isInteger(stock) || stock < 0) {
+        alert('Enter a product name and valid non-negative price. Stock can be left blank or set to a whole-number quantity.');
         return;
     }
 
     try {
         if (productId) {
-            await api.dbRun('UPDATE products SET name = ?, price = ?, stock = ?, description = ?, category_id = ? WHERE id = ?', [name, price, stock, description, categoryId, Number(productId)]);
+            await api.dbRun('UPDATE products SET name = ?, price = ?, stock = ?, description = ?, category_id = ?, image_data = ? WHERE id = ?', [name, price, stock, description, categoryId, draftProductImageData, Number(productId)]);
         } else {
-            await api.dbRun('INSERT INTO products (name, price, stock, description, category_id, is_active) VALUES (?, ?, ?, ?, ?, 1)', [name, price, stock, description, categoryId]);
+            await api.dbRun('INSERT INTO products (name, price, stock, description, category_id, image_data, is_active) VALUES (?, ?, ?, ?, ?, ?, 1)', [name, price, stock, description, categoryId, draftProductImageData]);
         }
 
         closeProductModal();
@@ -1941,7 +2421,7 @@ async function loadSettings() {
         shop_name: 'XBARBER SHOP',
         phone: '',
         address: '',
-        currency: 'USD',
+        currency: 'IQD',
     };
 
     content.innerHTML = `
@@ -1967,9 +2447,7 @@ async function loadSettings() {
         <div class="form-group">
             <label for="shop-currency">Currency</label>
             <select id="shop-currency">
-                <option value="USD" ${settings.currency === 'USD' ? 'selected' : ''}>USD</option>
-                <option value="EUR" ${settings.currency === 'EUR' ? 'selected' : ''}>EUR</option>
-                <option value="IQD" ${settings.currency === 'IQD' ? 'selected' : ''}>IQD</option>
+                <option value="IQD" selected>IQD</option>
             </select>
         </div>
         <div class="btn-group">

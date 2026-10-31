@@ -234,9 +234,25 @@
         }
         database.run(await schemaResponse.text());
         database.run('PRAGMA foreign_keys = ON');
+        const customerColumns = queryRows(database, 'PRAGMA table_info(customers)');
+        if (!customerColumns.some(column => column.name === 'is_active')) {
+            database.run('ALTER TABLE customers ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT 1');
+        }
+        const orderColumns = queryRows(database, 'PRAGMA table_info(orders)');
+        if (!orderColumns.some(column => column.name === 'barber_id')) {
+            database.run('ALTER TABLE orders ADD COLUMN barber_id INTEGER REFERENCES barbers(id)');
+        }
         const productColumns = queryRows(database, 'PRAGMA table_info(products)');
         if (!productColumns.some(column => column.name === 'category_id')) {
             database.run('ALTER TABLE products ADD COLUMN category_id INTEGER REFERENCES categories(id)');
+        }
+        const updatedProductColumns = queryRows(database, 'PRAGMA table_info(products)');
+        if (!updatedProductColumns.some(column => column.name === 'image_data')) {
+            database.run('ALTER TABLE products ADD COLUMN image_data TEXT');
+        }
+        const updatedCustomerColumns = queryRows(database, 'PRAGMA table_info(customers)');
+        if (!updatedCustomerColumns.some(column => column.name === 'image_data')) {
+            database.run('ALTER TABLE customers ADD COLUMN image_data TEXT');
         }
         database.run('CREATE INDEX IF NOT EXISTS idx_products_category_id ON products(category_id)');
     }
@@ -247,17 +263,36 @@
         let database;
         if (stored) {
             database = new SQL.Database(stored instanceof Uint8Array ? stored : new Uint8Array(stored));
+            let databaseChanged = false;
             const hasCategoryTable = queryRows(
                 database,
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'categories'"
             ).length > 0;
             const hasCategoryColumn = queryRows(database, 'PRAGMA table_info(products)')
                 .some(column => column.name === 'category_id');
+            const hasProductImageColumn = queryRows(database, 'PRAGMA table_info(products)')
+                .some(column => column.name === 'image_data');
+            const hasCustomerImageColumn = queryRows(database, 'PRAGMA table_info(customers)')
+                .some(column => column.name === 'image_data');
+            const hasCustomerActiveColumn = queryRows(database, 'PRAGMA table_info(customers)')
+                .some(column => column.name === 'is_active');
+            const hasOrderBarberColumn = queryRows(database, 'PRAGMA table_info(orders)')
+                .some(column => column.name === 'barber_id');
             database.run('PRAGMA foreign_keys = ON');
-            if (!hasCategoryTable || !hasCategoryColumn) {
+            if (!hasCategoryTable || !hasCategoryColumn || !hasProductImageColumn || !hasCustomerImageColumn
+                || !hasCustomerActiveColumn || !hasOrderBarberColumn) {
                 await ensureSchema(database);
-                await persistDatabase(database.export());
+                databaseChanged = true;
             }
+            const outdatedCurrency = queryRows(
+                database,
+                "SELECT COUNT(*) AS count FROM settings WHERE currency IS NULL OR currency <> 'IQD'"
+            )[0].count;
+            if (Number(outdatedCurrency)) {
+                database.run("UPDATE settings SET currency = 'IQD'");
+                databaseChanged = true;
+            }
+            if (databaseChanged) await persistDatabase(database.export());
         } else {
             database = new SQL.Database();
             await ensureSchema(database);

@@ -7,16 +7,17 @@ The same app can also be published as a static, installable PWA. The PWA keeps i
 ## Features
 
 - **Offline Operation**: Works completely offline with local SQLite database
-- **POS System**: Fast cashier with service and product ordering
-- **Sales History**: Review completed cashier orders with their items, barber, payment method, and total
+- **Appointments & Cashier**: One workspace for booking management and checkout; selecting an appointment carries its customer and services into the sale
+- **Editable Appointments**: Edit dates, times, customers, contact details, services, notes, and status
+- **Sales History**: Vertical barber summaries with earnings and completed-order counts, plus recent order details
 - **Sales Overview**: Compare product sales, service sales, and combined sales for today and all time
 - **Print**: Preview appointment lists by day, week, or month and save them as PDFs with customer names and phone numbers
 - **History Cleanup**: Clear sales and completed past visits while preserving upcoming appointments
-- **Appointment Scheduling**: Complete scheduling system with status tracking
 - **Inventory Management**: Real-time stock updates and low-stock warnings
-- **Customer Management**: Customer profiles with history tracking
+- **Customer Management**: Customer profiles with history tracking; names, phone numbers, and customer photos are optional
+- **Product Photos**: Optional product images appear in the catalog and cashier
 - **Barber Management**: Manage barbers, assign customers to multiple barbers, and attribute cashier orders to a barber
-- **Reports & Analytics**: Detailed business reports with charts
+- **Business Overview**: Live totals for appointments, sales, and inventory
 - **Backup & Restore**: Database backup and restore functionality
 
 ## Technology Stack
@@ -67,7 +68,7 @@ Notes:
 
 ### Offline PWA for iPhone and iPad (Netlify)
 
-The PWA is a static website. Netlify serves the initial install and app updates; after the first successful online visit, the service worker caches the application shell and SQLite runtime. Product, category, appointment, order, payment, sales, and settings records are stored on that device in IndexedDB. Cashier orders and their stock/payment changes are committed as one SQLite transaction.
+The PWA is a static website. Netlify serves the initial install and app updates; after the first successful online visit, the service worker caches the application shell and SQLite runtime. Product, category, appointment, order, payment, sales, and settings records are stored on that device in IndexedDB. Cashier orders and their stock/payment changes are committed as one SQLite transaction. Prices and sales are displayed in Iraqi dinars (IQD); existing numeric amounts are not converted.
 
 1. On the project computer, run `npm install` if dependencies are not installed, then build the static site:
    ```sh
@@ -179,12 +180,10 @@ xbarber-shop/
 ### Core Features
 
 - **Dashboard**: Shows today's statistics and schedule
-- **Schedule**: Create, edit, and manage appointments
-- **Cashier**: Process orders with services and products
+- **Appointments & Cashier**: Create and edit bookings, update status, and process orders from one workspace
 - **Customers**: Manage customer profiles and history
 - **Services**: Add/edit/delete services
 - **Products**: Manage inventory and products
-- **Reports**: Generate business reports
 - **Settings**: Configure application settings and backup
 
 ## Security

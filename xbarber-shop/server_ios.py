@@ -91,8 +91,17 @@ def initialize_database():
                 connection.execute(
                     "ALTER TABLE products ADD COLUMN category_id INTEGER REFERENCES categories(id)"
                 )
+            product_columns = {row["name"] for row in connection.execute("PRAGMA table_info(products)")}
+            if "image_data" not in product_columns:
+                connection.execute("ALTER TABLE products ADD COLUMN image_data TEXT")
+            customer_columns = {row["name"] for row in connection.execute("PRAGMA table_info(customers)")}
+            if "image_data" not in customer_columns:
+                connection.execute("ALTER TABLE customers ADD COLUMN image_data TEXT")
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_products_category_id ON products(category_id)"
+            )
+            connection.execute(
+                "UPDATE settings SET currency = 'IQD' WHERE currency IS NULL OR currency <> 'IQD'"
             )
 
             for name, table in (

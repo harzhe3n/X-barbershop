@@ -1967,3 +1967,510 @@ textarea {
         transition: none;
     }
 }
+
+.cashier-appointment-panel,
+.customer-create-panel {
+    margin-bottom: 1.15rem;
+    padding: 1rem;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+}
+
+.cashier-appointment-panel label,
+.customer-create-panel h3 {
+    display: block;
+    margin-bottom: 0.45rem;
+    font-weight: 650;
+}
+
+.cashier-appointment-panel select {
+    width: 100%;
+    min-height: 44px;
+    padding: 0.55rem 0.7rem;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: #fff;
+}
+
+.cashier-appointment-panel p {
+    margin-top: 0.4rem;
+    color: var(--muted);
+    font-size: 0.86rem;
+}
+
+.customer-create-fields {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+    gap: 0 0.8rem;
+}
+
+.customer-create-panel > .btn {
+    width: auto;
+    min-width: 150px;
+}
+
+.customer-record {
+    align-items: flex-start;
+}
+
+.customer-avatar,
+.barber-history-avatar {
+    display: grid;
+    flex: 0 0 auto;
+    width: 58px;
+    height: 58px;
+    place-items: center;
+    overflow: hidden;
+    border-radius: 50%;
+    background: #eee9e2;
+    color: var(--accent-dark);
+    font-size: 1.25rem;
+    font-weight: 700;
+}
+
+.customer-avatar img,
+.barber-history-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.photo-preview {
+    width: min(100%, 220px);
+    margin-top: 0.6rem;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+}
+
+.photo-preview img {
+    display: block;
+    width: 100%;
+    max-height: 180px;
+    object-fit: contain;
+    background: #f7f6f2;
+}
+
+#workspace-page [hidden] {
+    display: none !important;
+}
+
+.workspace-tabs {
+    width: 100%;
+    margin-bottom: 1.25rem;
+    padding: 0.35rem;
+    border-color: #ded8ce;
+    background: #e9e5de;
+}
+
+.workspace-tabs .section-tab {
+    min-height: 48px;
+    font-size: 1rem;
+}
+
+.workspace-tabs .section-tab.active {
+    background: var(--accent-dark);
+    color: #fff;
+    box-shadow: 0 3px 10px rgba(32, 35, 33, 0.16);
+}
+
+.appointments-hero {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.2rem;
+    padding: clamp(1rem, 3vw, 1.6rem);
+    border: 1px solid #e6ddd1;
+    border-radius: 12px;
+    background: linear-gradient(120deg, #fff 0%, #f6f0e8 100%);
+    box-shadow: var(--shadow);
+}
+
+.appointments-hero h3 {
+    margin: 0.2rem 0 0.35rem;
+    font-size: clamp(1.25rem, 3vw, 1.65rem);
+}
+
+.appointments-hero p {
+    max-width: 620px;
+    margin: 0;
+    color: var(--muted);
+}
+
+.appointments-eyebrow {
+    color: var(--accent-dark);
+    font-size: 0.76rem;
+    font-weight: 750;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+
+.appointments-toolbar {
+    align-items: center;
+    justify-content: space-between;
+    margin: 0 0 0.8rem;
+    padding: 0.8rem 1rem;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: var(--surface);
+}
+
+.appointments-toolbar .schedule-date-selector {
+    flex-wrap: wrap;
+}
+
+.appointments-toolbar .schedule-date-selector label {
+    font-weight: 650;
+}
+
+.appointments-day-label {
+    color: var(--muted);
+    font-size: 0.9rem;
+}
+
+.appointments-list-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin: 1rem 0 0.6rem;
+    color: var(--muted);
+    font-size: 0.86rem;
+}
+
+.appointments-list-heading strong {
+    color: var(--ink);
+    font-size: 1rem;
+}
+
+.appointment-card {
+    display: grid;
+    grid-template-columns: minmax(88px, 0.35fr) minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 1rem;
+    margin: 0 0 0.7rem;
+    padding: 1rem;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    box-shadow: 0 3px 12px rgba(32, 35, 33, 0.05);
+    transition: border-color 150ms ease, transform 150ms ease, box-shadow 150ms ease;
+}
+
+.appointment-card:hover {
+    transform: translateY(-1px);
+    border-color: #c9a98b;
+    box-shadow: 0 6px 16px rgba(32, 35, 33, 0.09);
+}
+
+.appointment-card-time {
+    display: grid;
+    gap: 0.2rem;
+    color: var(--muted);
+    font-size: 0.84rem;
+}
+
+.appointment-card-time strong {
+    color: var(--accent-dark);
+    font-size: 1.2rem;
+}
+
+.appointment-card-details {
+    display: grid;
+    min-width: 0;
+    gap: 0.25rem;
+    overflow-wrap: anywhere;
+    color: var(--muted);
+    font-size: 0.9rem;
+}
+
+.appointment-card-details strong {
+    color: var(--ink);
+    font-size: 1rem;
+}
+
+.appointment-card-notes {
+    padding-top: 0.2rem;
+    color: var(--ink);
+    font-style: italic;
+}
+
+.appointment-card-controls {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+
+.appointment-card-controls .status-select {
+    min-height: 38px;
+    padding: 0.4rem 0.55rem;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: #fff;
+}
+
+.appointment-form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 0.85rem;
+}
+
+.appointment-additional-services {
+    min-width: 0;
+    margin: 0;
+    padding: 0.65rem 0.75rem 0.75rem;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+}
+
+.appointment-additional-services legend {
+    padding: 0 0.25rem;
+    font-weight: 600;
+}
+
+.appointment-service-checkboxes {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+    gap: 0.45rem 0.75rem;
+}
+
+.appointment-service-checkboxes label {
+    display: flex;
+    min-height: 38px;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.35rem 0.5rem;
+    border-radius: 5px;
+    background: #f5f2ed;
+}
+
+.appointment-service-checkboxes input {
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    accent-color: var(--accent-dark);
+}
+
+#modal-additional-services:empty::after {
+    content: "No additional services available.";
+    color: var(--muted);
+}
+
+@media (max-width: 680px) {
+    .appointments-hero {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .appointments-hero > .btn {
+        width: 100%;
+    }
+
+    .appointment-card {
+        grid-template-columns: 1fr;
+        align-items: stretch;
+        gap: 0.65rem;
+    }
+
+    .appointment-card-time {
+        grid-template-columns: auto 1fr;
+        align-items: baseline;
+        gap: 0.65rem;
+    }
+
+    .appointment-card-controls {
+        justify-content: flex-start;
+    }
+
+    .appointment-card-controls .status-select {
+        flex: 1 1 100%;
+    }
+}
+
+@media (max-width: 520px) {
+    .appointments-list-heading {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 0.2rem;
+    }
+
+    .appointment-form-grid {
+        grid-template-columns: 1fr;
+        gap: 0;
+    }
+
+    .appointments-day-label {
+        flex: 1 1 100%;
+    }
+}
+
+.product-image-placeholder {
+    display: grid;
+    flex: 0 0 82px;
+    width: 82px;
+    height: 82px;
+    place-items: center;
+    overflow: hidden;
+    border-radius: 6px;
+    background: #eee9e2;
+    color: var(--muted);
+    font-size: 0.78rem;
+}
+
+.product-image-placeholder img,
+.cashier-product-image img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.cashier-product-image {
+    display: grid;
+    flex: 0 0 42px;
+    width: 42px;
+    height: 42px;
+    place-items: center;
+    overflow: hidden;
+    border-radius: 5px;
+    background: #eee9e2;
+    color: var(--muted);
+    font-size: 0.75rem;
+}
+
+.barber-history-list {
+    display: grid;
+    gap: 1rem;
+}
+
+.barber-history-card {
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+}
+
+.barber-history-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1rem 1.1rem;
+    background: #f7f6f2;
+}
+
+.barber-history-identity {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 0.8rem;
+}
+
+.barber-history-identity h3 {
+    overflow-wrap: anywhere;
+}
+
+.barber-history-identity p,
+.barber-history-earned span,
+.barber-history-order-main span,
+.barber-history-order-total span {
+    display: block;
+    color: var(--muted);
+    font-size: 0.84rem;
+}
+
+.barber-history-earned {
+    flex: 0 0 auto;
+    text-align: right;
+}
+
+.barber-history-earned strong {
+    color: var(--success);
+    font-size: 1.08rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.barber-history-orders {
+    padding: 0 1.1rem;
+}
+
+.barber-history-order {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.85rem 0;
+    border-top: 1px solid var(--line);
+}
+
+.barber-history-order-main {
+    display: grid;
+    min-width: 0;
+}
+
+.barber-history-order-main span:last-child {
+    overflow-wrap: anywhere;
+}
+
+.barber-history-order-total {
+    flex: 0 0 auto;
+    text-align: right;
+}
+
+.barber-history-order-total strong {
+    font-variant-numeric: tabular-nums;
+}
+
+.barber-history-empty {
+    padding: 0.8rem 0;
+    color: var(--muted);
+}
+
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    clip-path: inset(50%);
+}
+
+.customer-photo-button {
+    display: inline-flex;
+    align-items: center;
+    cursor: pointer;
+}
+
+@media (max-width: 600px) {
+    .barber-history-header,
+    .barber-history-order {
+        align-items: flex-start;
+    }
+
+    .barber-history-header {
+        flex-wrap: wrap;
+    }
+
+    .barber-history-earned {
+        margin-left: calc(58px + 0.8rem);
+        text-align: left;
+    }
+
+    .barber-history-order {
+        flex-direction: column;
+        gap: 0.4rem;
+    }
+
+    .barber-history-order-total {
+        text-align: left;
+    }
+
+    .customer-record .appointment-actions {
+        width: 100%;
+    }
+}
