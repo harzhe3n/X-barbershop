@@ -67,6 +67,8 @@ const state = {
     shopName: 'XBARBER SHOP',
     // The client form open inside a time slot: { ticketId, barberId, date, time, name, phone, ... }
     slotForm: null,
+    // The barber whose "Add slot" box is open on the board.
+    addSlot: null,
     showPast: false,
     // Product cashier: product id -> quantity
     cart: new Map(),
@@ -592,6 +594,7 @@ async function loadShopName() {
 async function go(page) {
     state.page = allowedPages().includes(page) ? page : 'cashier';
     state.slotForm = null;
+    state.addSlot = null;
     await renderPage();
 }
 
@@ -786,6 +789,27 @@ function offKey(barberId, date) {
     return `off.${Number(barberId)}.${date}`;
 }
 
+// Slots a barber added by hand ("Add slot"), saved as app_options "extra.<barber id>.<YYYY-MM-DD>" = "HH:MM,HH:MM".
+function extraKey(barberId, date) {
+    return `extra.${Number(barberId)}.${date}`;
+}
+
+function parseExtraSlots(rows) {
+    const map = new Map();
+    rows.forEach(row => {
+        const match = /^extra\.(\d+)\.(\d{4}-\d{2}-\d{2})$/.exec(String(row.key));
+        if (!match) return;
+        const minutes = [...new Set(String(row.value || '').split(',').map(toMinutes).filter(value => value != null))].sort((a, b) => a - b);
+        if (minutes.length) map.set(`${Number(match[1])}|${match[2]}`, minutes);
+    });
+    return map;
+}
+
+// The barber's slots for a day: the regular ones plus the ones added by hand.
+function daySlots(hours, step, extra = []) {
+    return [...new Set([...slotGrid(hours, step), ...extra])].sort((a, b) => a - b);
+}
+
 function parseOffDays(rows) {
     const set = new Set();
     rows.forEach(row => {
@@ -805,7 +829,7 @@ async function renderCashier() {
     const options = await loadBookingOptions();
     const hours = shopHours(options);
     const mineOnly = isAdmin() ? '' : ' AND (o.barber_id = ? OR o.barber_id IS NULL)';
-    const [barbers, ticketRows, itemRows, upcomingRows, services, slotRows, offRows] = await queryMany([
+    const [barbers, ticketRows, itemRows, upcomingRows, services, slotRows, offRows, extraRows] = await queryMany([
         { query: 'SELECT id, name, is_active FROM barbers ORDER BY id' },
         {
             query: `SELECT ${TICKET_COLUMNS}
@@ -830,8 +854,10 @@ async function renderCashier() {
         },
         { query: 'SELECT id, name, price FROM services WHERE is_active = 1 ORDER BY name' },
         BARBER_SLOT_QUERY,
-        { query: "SELECT key, value FROM app_options WHERE key LIKE ?", params: [`off.%.${date}`] }
+        { query: "SELECT key, value FROM app_options WHERE key LIKE ?", params: [`off.%.${date}`] },
+        { query: "SELECT key, value FROM app_options WHERE key LIKE ?", params: [`extra.%.${date}`] }
     ]);
+    if (state.addSlot != null && !barbers.some(barber => Number(barber.id) === state.addSlot && Number(barber.is_active))) state.addSlot = null;
 
     // A form left open on another day is closed.
     if (state.slotForm && state.slotForm.date !== date) state.slotForm = null;
@@ -907,8 +933,10 @@ async function renderCashier() {
     const now = nowMinutes();
     const barberSlots = parseBarberSlots(slotRows);
     const offDays = parseOffDays(offRows);
+    const extraSlots = parseExtraSlots(extraRows);
     const ctx = {
         date,
+        extraFor: barberId => extraSlots.get(`${Number(barberId)}|${date}`) || [],
         isOff: barberId => offDays.has(`${Number(barberId)}|${date}`),
         today: date === today,
         hours,
@@ -963,6 +991,78 @@ function renderSlotBar(hours, pastFree) {
             <span class="spacer"></span>
             ${pastToggle}
         </div>`;
+}
+
+// "Add slot": a free time at any hour the barber (or the admin) chooses, for the day on the board.
+function renderAddSlot(barber) {
+    const id = Number(barber.id);
+    if (state.addSlot !== id) {
+        return `
+            <button type="button" class="btn-add-slot" data-action="add-slot-open" data-barber="${id}" title="${escapeHtml(t('slots.addSlotTitle', { name: barber.name }))}">
+                ${icon('plus')}<span>${escapeHtml(t('slots.addSlot'))}</span>
+            </button>`;
+    }
+    return `
+        <form class="add-slot-form" data-form="add-slot" data-barber="${id}" autocomplete="off">
+            <label class="add-slot-time">
+                <span>${escapeHtml(t('slots.newSlotTime'))}</span>
+                <input type="time" name="time" required>
+            </label>
+            <button type="submit" class="btn btn-primary btn-sm">${icon('plus')}<span>${escapeHtml(t('slots.addSlot'))}</span></button>
+            <button type="button" class="btn-icon btn-icon-sm" data-action="add-slot-cancel" aria-label="${escapeHtml(t('common.cancel'))}">${icon('x')}</button>
+        </form>`;
+}
+
+async function changeExtraSlots(barberId, change) {
+    const id = Number(barberId);
+    if (!Number.isInteger(id) || (!isAdmin() && !isMine(id))) {
+        denyNotYours();
+        return null;
+    }
+    const key = extraKey(id, state.boardDate);
+    const row = await queryOne('SELECT value FROM app_options WHERE key = ?', [key]);
+    const before = parseExtraSlots(row ? [{ key, value: row.value }] : []).get(`${id}|${state.boardDate}`) || [];
+    const after = change(before);
+    if (!after) return null;
+    await runStatements([after.length
+        ? setOption(key, after.slice(0, 60).map(fromMinutes).join(','))
+        : { query: 'DELETE FROM app_options WHERE key = ?', params: [key] }]);
+    return after;
+}
+
+async function addExtraSlot(form) {
+    const barberId = Number(form.dataset.barber);
+    const time = form.elements.time.value;
+    if (!isValidTime(time)) {
+        toast(t('slots.badTime'), 'error');
+        form.elements.time.focus();
+        return;
+    }
+    const minutes = toMinutes(time);
+    const [options, slotRows] = await Promise.all([loadBookingOptions(), api.dbQuery(BARBER_SLOT_QUERY.query)]);
+    const hours = shopHours(options);
+    const step = barberStep(hours, parseBarberSlots(slotRows), barberId);
+    const saved = await changeExtraSlots(barberId, before => {
+        if (daySlots(hours, step, before).includes(minutes)) {
+            toast(t('slots.slotExists', { time: I18N.formatTime(fromMinutes(minutes)) }), 'error');
+            return null;
+        }
+        return [...before, minutes].sort((a, b) => a - b);
+    });
+    if (!saved) return;
+    state.addSlot = null;
+    toast(t('slots.slotAdded', { time: I18N.formatTime(fromMinutes(minutes)) }));
+    await renderPage({ keepScroll: true });
+    if (state.booking?.enabled === '1') syncOnlineBookings();
+}
+
+async function removeExtraSlot(barberId, time) {
+    const minutes = toMinutes(time);
+    const saved = await changeExtraSlots(barberId, before => before.filter(value => value !== minutes));
+    if (!saved) return;
+    toast(t('slots.slotRemoved'));
+    await renderPage({ keepScroll: true });
+    if (state.booking?.enabled === '1') syncOnlineBookings();
 }
 
 // "At work" / "Not at work" for the day on the board. The barber changes their own, the admin anyone's.
@@ -1021,6 +1121,11 @@ function renderColumnSlot(column, step, editable) {
 
 // After the board is drawn: focus a form that was just opened, and on today start each column at the current time.
 function cashierAfterRender({ keepScroll }) {
+    const slotBox = dom.page.querySelector('[data-form="add-slot"] [name="time"]');
+    if (slotBox && state.addSlotFocus) {
+        state.addSlotFocus = false;
+        slotBox.focus({ preventScroll: true });
+    }
     const form = dom.page.querySelector('[data-form="slot"]');
     if (form && state.slotForm?.focus) {
         state.slotForm.focus = false;
@@ -1037,22 +1142,22 @@ function cashierAfterRender({ keepScroll }) {
 }
 
 // Rows of a column, sorted by time: free slots, and clients (in their slot, or at their own time).
-function columnRows(column, grid, step) {
+// A slot is taken when a client's time is inside it (from its start up to the next slot).
+function columnRows(column, slots, step, extra = []) {
     const withSlots = Boolean(column.barber && Number(column.barber.is_active));
-    const start = grid.length ? grid[0] : 0;
-    const taken = new Set();
+    const added = new Set(extra);
     const rows = [];
+    const clientTimes = [];
     column.tickets.forEach(ticket => {
         const minutes = toMinutes(ticket.time);
-        if (withSlots && minutes != null && grid.length) {
-            const index = Math.floor((minutes - start) / step);
-            if (index >= 0 && index < grid.length) taken.add(index);
-        }
+        if (minutes != null) clientTimes.push(minutes);
         rows.push({ kind: 'ticket', minutes: minutes == null ? -1 : minutes, ticket });
     });
     if (withSlots) {
-        grid.forEach((minutes, index) => {
-            if (!taken.has(index)) rows.push({ kind: 'free', minutes });
+        slots.forEach(minutes => {
+            if (!clientTimes.some(time => time >= minutes && time < minutes + step)) {
+                rows.push({ kind: 'free', minutes, extra: added.has(minutes) });
+            }
         });
     }
     return rows.sort((a, b) => a.minutes - b.minutes
@@ -1076,7 +1181,8 @@ function renderColumn(column, ctx) {
     // A barber who is not at work on this day has no free slots.
     const off = Boolean(column.barber && !removed && ctx.isOff(column.barber.id));
     const step = column.barber ? ctx.stepFor(column.barber.id) : ctx.hours.slot;
-    const grid = column.barber && !off ? slotGrid(ctx.hours, step) : [];
+    const extra = column.barber && !off ? ctx.extraFor(column.barber.id) : [];
+    const grid = column.barber && !off ? daySlots(ctx.hours, step, extra) : [];
 
     let free = 0;
     let marked = false;
@@ -1089,7 +1195,7 @@ function renderColumn(column, ctx) {
         return 'data-now';
     };
 
-    const rowsHtml = columnRows(column, grid, step).map(row => {
+    const rowsHtml = columnRows(column, grid, step, extra).map(row => {
         if (row.kind === 'ticket') {
             const now = markNow(row.minutes, true);
             if (form && form.ticketId === row.ticket.id) return renderSlotForm(form, ctx, now);
@@ -1107,20 +1213,31 @@ function renderColumn(column, ctx) {
             free += 1;
         }
         const now = past ? '' : markNow(row.minutes, false);
+        const extraTag = row.extra ? `<span class="slot-extra-tag">${escapeHtml(t('slots.extraTag'))}</span>` : '';
         if (!canAdd) {
             return `
                 <div class="slot slot-readonly ${past ? 'is-past' : ''}" ${now}>
                     <span class="slot-time">${timeLabel(time)}</span>
                     <span class="slot-free">${escapeHtml(t('slots.free'))}</span>
+                    ${extraTag}
                 </div>`;
         }
-        return `
-            <button type="button" class="slot ${past ? 'is-past' : ''}" data-action="slot-add" data-barber="${barberId}" data-time="${time}" ${now}
+        const slotButton = `
+            <button type="button" class="slot ${past ? 'is-past' : ''}" data-action="slot-add" data-barber="${barberId}" data-time="${time}" ${row.extra ? '' : now}
                 aria-label="${escapeHtml(t('slots.addAt', { time: I18N.formatTime(time) }))}">
                 <span class="slot-time">${timeLabel(time)}</span>
                 <span class="slot-free">${escapeHtml(t('slots.free'))}</span>
+                ${extraTag}
                 <span class="slot-plus">${icon('plus')}<span>${escapeHtml(t('slots.add'))}</span></span>
             </button>`;
+        if (!row.extra) return slotButton;
+        // A slot added by hand can be taken away again.
+        return `
+            <div class="slot-row" ${now}>
+                ${slotButton}
+                <button type="button" class="btn-icon btn-icon-sm slot-remove" data-action="remove-extra-slot" data-barber="${barberId}" data-time="${time}"
+                    aria-label="${escapeHtml(t('slots.removeExtra'))}" title="${escapeHtml(t('slots.removeExtra'))}">${icon('x')}</button>
+            </div>`;
     }).join('');
 
     const emptyText = column.barber
@@ -1151,6 +1268,7 @@ function renderColumn(column, ctx) {
                 <div class="stat-done"><strong>${doneTickets.length}</strong><span>${escapeHtml(t('status.completed'))}</span></div>
             </div>
             ${column.barber && !removed && !off ? renderColumnSlot(column, step, editable) : ''}
+            ${column.barber && !removed && !off && editable ? renderAddSlot(column.barber) : ''}
             <div class="col-body" data-scroll-key="${column.key}">
                 ${offNote}
                 ${rowsHtml || (emptyText ? `<p class="col-empty">${escapeHtml(emptyText)}</p>` : '')}
@@ -3907,6 +4025,10 @@ async function renderSettings() {
     const current = I18N.getLanguage();
     const booking = await loadBookingOptions();
     const bookingCount = await queryOne("SELECT COUNT(*) AS count FROM online_bookings WHERE order_id IS NOT NULL");
+    const [settingsBarbers, settingsSlotRows] = await queryMany([
+        { query: 'SELECT id, name FROM barbers WHERE is_active = 1 ORDER BY id' },
+        BARBER_SLOT_QUERY
+    ]);
 
     const body = `
         <div class="settings-grid">
@@ -3938,7 +4060,7 @@ async function renderSettings() {
                     <div><button type="submit" class="btn btn-primary">${icon('check')}<span>${escapeHtml(t('common.save'))}</span></button></div>
                 </form>
             </section>
-            ${renderHoursCard(booking)}
+            ${renderHoursCard(booking, settingsBarbers, parseBarberSlots(settingsSlotRows))}
             ${renderBookingCard(booking, Number(bookingCount?.count || 0))}
             <section class="card">
                 <h3 class="card-title">${icon('lock')}${escapeHtml(t('lock.settingsTitle'))}</h3>
@@ -4134,7 +4256,7 @@ function bookingLocalStatus(row) {
 async function buildBookingPayload(options) {
     const today = todayString();
     const daysAhead = clampInt(options.days, 1, 60, 14);
-    const [barbers, busyRows, bookingRows, shopRows, slotRows, offRows] = await queryMany([
+    const [barbers, busyRows, bookingRows, shopRows, slotRows, offRows, extraRows] = await queryMany([
         { query: 'SELECT id, name FROM barbers WHERE is_active = 1 ORDER BY id' },
         {
             query: `SELECT barber_id, date, time FROM orders
@@ -4153,8 +4275,10 @@ async function buildBookingPayload(options) {
         },
         { query: 'SELECT shop_name, phone, address FROM settings ORDER BY id DESC LIMIT 1' },
         BARBER_SLOT_QUERY,
-        { query: "SELECT key, value FROM app_options WHERE key LIKE 'off.%'" }
+        { query: "SELECT key, value FROM app_options WHERE key LIKE 'off.%'" },
+        { query: "SELECT key, value FROM app_options WHERE key LIKE 'extra.%'" }
     ]);
+    const extraSlots = parseExtraSlots(extraRows);
     const barberSlots = parseBarberSlots(slotRows);
     const offDays = parseOffDays(offRows);
     const lastDay = addDays(today, daysAhead);
@@ -4207,16 +4331,16 @@ async function buildBookingPayload(options) {
                 days_off: daysOff(barber.id)
             })),
             busy: busyRows.map(row => ({ barber_id: Number(row.barber_id), date: row.date, time: String(row.time).slice(0, 5) })),
-            slots: freeSlots(hours, barberSlots, offDays, barbers, busyRows, today, daysAhead),
+            slots: freeSlots(hours, barberSlots, offDays, extraSlots, barbers, busyRows, today, daysAhead),
             updates
         }
     };
 }
 
 // The same free times the cashier shows: every slot of every open day that has no client yet,
-// using each barber's own time between clients. Days a barber is not at work, and for today
+// using each barber's own time between clients plus the slots added by hand. Days a barber is not at work, and for today
 // slots that have already started, are left out.
-function freeSlots(hours, barberSlots, offDays, barbers, busyRows, today, daysAhead) {
+function freeSlots(hours, barberSlots, offDays, extraSlots, barbers, busyRows, today, daysAhead) {
     const taken = new Map();
     busyRows.forEach(row => {
         const key = `${row.barber_id}|${row.date}`;
@@ -4234,7 +4358,7 @@ function freeSlots(hours, barberSlots, offDays, barbers, busyRows, today, daysAh
             if (offDays.has(`${Number(barber.id)}|${date}`)) return;
             const step = barberStep(hours, barberSlots, barber.id);
             const busy = taken.get(`${barber.id}|${date}`) || [];
-            const times = slotGrid(hours, step)
+            const times = daySlots(hours, step, extraSlots.get(`${Number(barber.id)}|${date}`) || [])
                 .filter(start => !(day === 0 && start <= now))
                 .filter(start => !busy.some(minutes => minutes != null && minutes >= start && minutes < start + step))
                 .map(fromMinutes);
@@ -4504,7 +4628,7 @@ function announceBookings(totals, manual) {
     } else if (manual) {
         toast(t('booking.upToDate'));
     }
-    if ((added.length || totals.changed || totals.cancelled) && !modalStack.length && !state.slotForm && ['cashier', 'dashboard'].includes(state.page)) {
+    if ((added.length || totals.changed || totals.cancelled) && !modalStack.length && !state.slotForm && state.addSlot == null && ['cashier', 'dashboard'].includes(state.page)) {
         renderPage({ keepScroll: true });
     }
     refreshSettingsIfOpen();
@@ -4611,8 +4735,25 @@ async function saveBookingSettings(form, { quiet = false } = {}) {
 
 // Opening hours, time between clients and closed days. The cashier makes its time slots from
 // these, and the website shows the same free times.
-function renderHoursCard(options) {
+function renderHoursCard(options, barbers = [], barberSlots = new Map()) {
     const hours = shopHours(options);
+    const barberRows = barbers.map(barber => {
+        const step = barberStep(hours, barberSlots, barber.id);
+        return `
+            <div class="barber-time">
+                <span class="avatar avatar-sm">${escapeHtml(initials(barber.name))}</span>
+                <strong>${escapeHtml(barber.name)}</strong>
+                <div class="hours-slot">
+                    <div class="segmented" role="group" aria-label="${escapeHtml(t('slots.everyLabel', { name: barber.name }))}">
+                        ${SLOT_PRESETS.map(value => `<button type="button" class="${value === step ? 'active' : ''}" data-set-slot="${value}" aria-pressed="${value === step}">${escapeHtml(I18N.formatNumber(value))}</button>`).join('')}
+                    </div>
+                    <span class="money-input hours-minutes">
+                        <input type="number" min="5" max="240" step="1" inputmode="numeric" value="${step}" data-barber-slot="${barber.id}" aria-label="${escapeHtml(t('slots.everyLabel', { name: barber.name }))}">
+                        <span>${escapeHtml(t('slots.min'))}</span>
+                    </span>
+                </div>
+            </div>`;
+    }).join('');
     // The week starts on Saturday in Iraq.
     const weekOrder = [6, 0, 1, 2, 3, 4, 5];
     return `
@@ -4620,26 +4761,18 @@ function renderHoursCard(options) {
             <h3 class="card-title">${icon('clock')}${escapeHtml(t('hours.title'))}</h3>
             <p class="card-text">${escapeHtml(t('hours.text'))}</p>
             <form class="stack" data-form="hours" autocomplete="off">
-                <div class="grid-3">
+                <div class="grid-2">
                     <label class="field"><span>${escapeHtml(t('booking.open'))}</span>
                         <input type="time" name="open" value="${escapeHtml(hours.open)}">
                     </label>
                     <label class="field"><span>${escapeHtml(t('booking.close'))}</span>
                         <input type="time" name="close" value="${escapeHtml(hours.close)}">
                     </label>
-                    <div class="field">
-                        <span>${escapeHtml(t('hours.defaultSlot'))}</span>
-                        <div class="hours-slot">
-                            <div class="segmented" role="group" aria-label="${escapeHtml(t('slots.every'))}">
-                                ${SLOT_PRESETS.map(value => `<button type="button" class="${value === hours.slot ? 'active' : ''}" data-set-slot="${value}" aria-pressed="${value === hours.slot}">${escapeHtml(I18N.formatNumber(value))}</button>`).join('')}
-                            </div>
-                            <span class="money-input hours-minutes">
-                                <input type="number" name="slot" min="5" max="240" step="1" inputmode="numeric" value="${hours.slot}" aria-label="${escapeHtml(t('slots.customLabel'))}">
-                                <span>${escapeHtml(t('slots.min'))}</span>
-                            </span>
-                        </div>
-                        <small class="field-hint">${escapeHtml(t('hours.defaultSlotHint'))}</small>
-                    </div>
+                </div>
+                <div class="field">
+                    <span>${escapeHtml(t('hours.perBarber'))}</span>
+                    ${barberRows ? `<div class="barber-times">${barberRows}</div>` : `<p class="field-hint">${escapeHtml(t('hours.noBarbers'))}</p>`}
+                    <small class="field-hint">${escapeHtml(t('hours.perBarberHint'))}</small>
                 </div>
                 <div class="field">
                     <span>${escapeHtml(t('booking.closedDays'))}</span>
@@ -4664,18 +4797,25 @@ async function saveHours(form) {
         form.elements.close.focus();
         return false;
     }
-    const slot = clampInt(form.elements.slot.value, 5, 240, null);
-    if (slot == null) {
-        toast(t('slots.badLength'), 'error');
-        form.elements.slot.focus();
-        return false;
+    // Every barber's own time between clients.
+    const barberStatements = [];
+    for (const input of form.querySelectorAll('[data-barber-slot]')) {
+        const minutes = clampInt(input.value, 5, 240, null);
+        if (minutes == null) {
+            toast(t('slots.badLength'), 'error');
+            input.focus();
+            return false;
+        }
+        barberStatements.push(setOption(`slot.barber.${Number(input.dataset.barberSlot)}`, String(minutes)));
     }
-    await runStatements(bookingOptionStatements({
-        open,
-        close,
-        slot: String(slot),
-        closed: [...form.querySelectorAll('[name="closed"]:checked')].map(input => input.value).join(',')
-    }));
+    await runStatements([
+        ...bookingOptionStatements({
+            open,
+            close,
+            closed: [...form.querySelectorAll('[name="closed"]:checked')].map(input => input.value).join(',')
+        }),
+        ...barberStatements
+    ]);
     await loadBookingOptions();
     toast(t('toast.saved'));
     return true;
@@ -4765,16 +4905,19 @@ const actions = {
     'board-day': element => {
         state.boardDate = addDays(state.boardDate, Number(element.dataset.step || 0));
         state.slotForm = null;
+        state.addSlot = null;
         return renderPage();
     },
     'board-today': () => {
         state.boardDate = todayString();
         state.slotForm = null;
+        state.addSlot = null;
         return renderPage();
     },
     'board-goto': element => {
         if (isValidDate(element.dataset.date)) state.boardDate = element.dataset.date;
         state.slotForm = null;
+        state.addSlot = null;
         return renderPage();
     },
     'slot-add': element => openSlotForm(Number(element.dataset.barber), element.dataset.time),
@@ -4783,6 +4926,16 @@ const actions = {
     'slot-remove': element => removeOpenClient(Number(element.dataset.id)),
     'slot-length': element => saveSlotLength(element.dataset.barber, element.dataset.value),
     'toggle-work': element => toggleWork(element.dataset.barber, element.dataset.off === '1'),
+    'add-slot-open': element => {
+        state.addSlot = Number(element.dataset.barber);
+        state.addSlotFocus = true;
+        return renderPage({ keepScroll: true });
+    },
+    'add-slot-cancel': () => {
+        state.addSlot = null;
+        return renderPage({ keepScroll: true });
+    },
+    'remove-extra-slot': element => removeExtraSlot(element.dataset.barber, element.dataset.time),
     'toggle-past': () => {
         state.showPast = !state.showPast;
         return renderPage({ keepScroll: true });
@@ -4866,7 +5019,7 @@ const actions = {
 };
 
 const busyActions = new Set([
-    'take-client', 'back-to-waiting', 'undo-pay', 'done-client', 'slot-add', 'slot-edit', 'slot-remove', 'slot-length', 'toggle-work',
+    'take-client', 'back-to-waiting', 'undo-pay', 'done-client', 'slot-add', 'slot-edit', 'slot-remove', 'slot-length', 'toggle-work', 'remove-extra-slot',
     'edit-finished', 'delete-finished', 'delete-sale', 'sell-done', 'barber-account', 'booking-sync', 'clear-history'
 ]);
 
@@ -4886,9 +5039,9 @@ document.addEventListener('click', event => {
     // Quick choices for the time between clients in Settings.
     const preset = event.target.closest('[data-set-slot]');
     if (preset) {
-        const form = preset.closest('form');
-        form.elements.slot.value = preset.dataset.setSlot;
-        form.querySelectorAll('[data-set-slot]').forEach(button => {
+        const row = preset.closest('.hours-slot');
+        row.querySelector('input').value = preset.dataset.setSlot;
+        row.querySelectorAll('[data-set-slot]').forEach(button => {
             button.classList.toggle('active', button === preset);
             button.setAttribute('aria-pressed', String(button === preset));
         });
@@ -4921,9 +5074,9 @@ document.addEventListener('input', event => {
         return;
     }
     // Typing a number of minutes in Settings clears the quick choice that no longer matches.
-    if (event.target.matches('[data-form="hours"] [name="slot"]')) {
+    if (event.target.matches('[data-form="hours"] [data-barber-slot]')) {
         const value = Number(event.target.value);
-        event.target.form.querySelectorAll('[data-set-slot]').forEach(button => {
+        event.target.closest('.hours-slot').querySelectorAll('[data-set-slot]').forEach(button => {
             const active = Number(button.dataset.setSlot) === value;
             button.classList.toggle('active', active);
             button.setAttribute('aria-pressed', String(active));
@@ -4945,6 +5098,7 @@ document.addEventListener('change', event => {
     if (input.dataset.dateInput === 'board') {
         state.boardDate = input.value;
         state.slotForm = null;
+        state.addSlot = null;
     } else if (input.dataset.dateInput === 'history') {
         state.historyDay = input.value;
         state.historyPeriod = 'day';
@@ -4966,6 +5120,14 @@ document.addEventListener('submit', event => {
     event.preventDefault();
     if (form.dataset.form === 'slot') {
         saveSlotForm().catch(handleError);
+    } else if (form.dataset.form === 'add-slot') {
+        const button = form.querySelector('button[type="submit"]');
+        if (button) button.disabled = true;
+        addExtraSlot(form)
+            .catch(handleError)
+            .finally(() => {
+                if (button && document.contains(button)) button.disabled = false;
+            });
     } else if (form.dataset.form === 'add-barber') {
         addBarber(form.elements.name.value).catch(handleError);
     } else if (form.dataset.form === 'shop') {
@@ -5012,7 +5174,7 @@ document.addEventListener('keydown', event => {
 
 // The board refreshes by itself, but not while a form is open or a field is being typed in.
 function autoRefresh() {
-    if (!state.signedIn || modalStack.length || state.slotForm || document.visibilityState !== 'visible') return;
+    if (!state.signedIn || modalStack.length || state.slotForm || state.addSlot != null || document.visibilityState !== 'visible') return;
     if (!['cashier', 'dashboard'].includes(state.page)) return;
     if (document.activeElement && document.activeElement.matches('input, select, textarea')) return;
     renderPage({ keepScroll: true });

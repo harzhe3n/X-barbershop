@@ -411,10 +411,8 @@
             'sell.saved': 'Sold for {amount}.',
             'sell.deleted': 'Sale deleted. The products went back to stock.',
             'hours.title': 'Working hours and time slots',
-            'hours.text': 'The cashier makes time slots for every barber from opening to closing. Each barber chooses their own time between clients. The website shows the same free times.',
+            'hours.text': 'The cashier makes time slots for every barber from opening to closing, using each barber’s own time between clients. More slots can be added in Cashier with “Add slot”. The website shows the same free times.',
             'booking.hoursHint': 'Opening hours, time between clients and closed days are in “Working hours and time slots”.',
-            'hours.defaultSlot': 'Time between clients (default)',
-            'hours.defaultSlotHint': 'Each barber chooses their own at the top of their column in Cashier. This is used until they do.',
             'slots.everyShort': 'Every',
             'slots.everyLabel': 'Time between clients for {name}',
             'slots.everyMinutes': 'A client every {n} minutes',
@@ -424,7 +422,19 @@
             'work.toggleTitle': 'Tap to change it for {date}',
             'work.offNote': 'Not at work on this day. There are no free times, and the website takes no bookings for this barber.',
             'work.savedOn': '{name} is at work on {date}.',
-            'work.savedOff': '{name} is not at work on {date}.'
+            'work.savedOff': '{name} is not at work on {date}.',
+            'hours.perBarber': 'Time between clients, for each barber',
+            'hours.perBarberHint': 'Each barber can have a different time. Barbers can also change their own at the top of their column in Cashier.',
+            'hours.noBarbers': 'Add barbers first on the Barbers page.',
+            'slots.addSlot': 'Add slot',
+            'slots.addSlotTitle': 'Add a free time for {name}',
+            'slots.newSlotTime': 'Time',
+            'slots.extraTag': 'Added',
+            'slots.removeExtra': 'Remove this slot',
+            'slots.slotAdded': 'Free slot added at {time}.',
+            'slots.slotRemoved': 'Slot removed.',
+            'slots.slotExists': 'There is already a slot at {time}.',
+            'slots.badTime': 'Choose a time for the slot.'
         },
 
         ar: {
@@ -823,10 +833,8 @@
             'sell.saved': 'تم البيع بمبلغ {amount}.',
             'sell.deleted': 'تم حذف البيع. رجعت المنتجات إلى المخزون.',
             'hours.title': 'أوقات العمل والمواعيد',
-            'hours.text': 'يعرض الكاشير أوقاتًا لكل حلاق من الفتح إلى الإغلاق. كل حلاق يختار بنفسه المدة بين زبائنه. ويعرض الموقع نفس الأوقات الفارغة.',
+            'hours.text': 'يعرض الكاشير أوقاتًا لكل حلاق من الفتح إلى الإغلاق، حسب المدة التي اختارها كل حلاق. ويمكن إضافة أوقات أخرى في الكاشير بزر «إضافة وقت». ويعرض الموقع نفس الأوقات الفارغة.',
             'booking.hoursHint': 'أوقات الفتح والمدة بين الزبائن وأيام العطلة موجودة في «أوقات العمل والمواعيد».',
-            'hours.defaultSlot': 'المدة بين الزبائن (الافتراضية)',
-            'hours.defaultSlotHint': 'كل حلاق يختار مدته في أعلى عموده في الكاشير. تُستخدم هذه المدة إلى أن يختار.',
             'slots.everyShort': 'كل',
             'slots.everyLabel': 'المدة بين الزبائن لـ {name}',
             'slots.everyMinutes': 'زبون كل {n} دقيقة',
@@ -836,7 +844,19 @@
             'work.toggleTitle': 'اضغط للتغيير ليوم {date}',
             'work.offNote': 'ليس في العمل في هذا اليوم. لا توجد أوقات فارغة، والموقع لا يستقبل حجوزات لهذا الحلاق.',
             'work.savedOn': '{name} في العمل يوم {date}.',
-            'work.savedOff': '{name} ليس في العمل يوم {date}.'
+            'work.savedOff': '{name} ليس في العمل يوم {date}.',
+            'hours.perBarber': 'المدة بين الزبائن لكل حلاق',
+            'hours.perBarberHint': 'يمكن أن تكون لكل حلاق مدة مختلفة. ويستطيع كل حلاق أيضًا تغيير مدته في أعلى عموده في الكاشير.',
+            'hours.noBarbers': 'أضف الحلاقين أولًا من صفحة الحلاقين.',
+            'slots.addSlot': 'إضافة وقت',
+            'slots.addSlotTitle': 'إضافة وقت فارغ لـ {name}',
+            'slots.newSlotTime': 'الوقت',
+            'slots.extraTag': 'مضاف',
+            'slots.removeExtra': 'حذف هذا الوقت',
+            'slots.slotAdded': 'تمت إضافة وقت فارغ الساعة {time}.',
+            'slots.slotRemoved': 'تم حذف الوقت.',
+            'slots.slotExists': 'يوجد وقت مسبقًا الساعة {time}.',
+            'slots.badTime': 'اختر وقتًا للموعد.'
         },
 
         ckb: {
@@ -1235,10 +1255,8 @@
             'sell.saved': 'بە {amount} فرۆشرا.',
             'sell.deleted': 'فرۆشتنەکە سڕایەوە. بەرهەمەکان گەڕانەوە کۆگا.',
             'hours.title': 'کاتی کارکردن و نۆرەکان',
-            'hours.text': 'کاشێرەکە لە کاتی کردنەوە تا داخستن بۆ هەر باربەرێک کات دروست دەکات. هەر باربەرێک خۆی ماوەی نێوان کڕیارەکانی هەڵدەبژێرێت. ماڵپەڕەکەش هەمان کاتە بەتاڵەکان پیشان دەدات.',
+            'hours.text': 'کاشێرەکە لە کاتی کردنەوە تا داخستن بۆ هەر باربەرێک کات دروست دەکات، بەپێی ئەو ماوەیەی هەر باربەرێک هەڵیبژاردووە. دەتوانرێت لە کاشێر بە «زیادکردنی کات» کاتی تر زیاد بکرێت. ماڵپەڕەکەش هەمان کاتە بەتاڵەکان پیشان دەدات.',
             'booking.hoursHint': 'کاتی کردنەوە، ماوەی نێوان کڕیارەکان و ڕۆژانی پشوو لە «کاتی کارکردن و نۆرەکان»دان.',
-            'hours.defaultSlot': 'ماوەی نێوان کڕیارەکان (بنەڕەت)',
-            'hours.defaultSlotHint': 'هەر باربەرێک ماوەی خۆی لە سەرەوەی ستوونەکەی لە کاشێر هەڵدەبژێرێت. تا هەڵیدەبژێرێت ئەمە بەکاردێت.',
             'slots.everyShort': 'هەر',
             'slots.everyLabel': 'ماوەی نێوان کڕیارەکان بۆ {name}',
             'slots.everyMinutes': 'هەر {n} خولەک کڕیارێک',
@@ -1248,7 +1266,19 @@
             'work.toggleTitle': 'دابگرە بۆ گۆڕینی بۆ {date}',
             'work.offNote': 'لەم ڕۆژەدا لە کار نییە. هیچ کاتێکی بەتاڵ نییە و ماڵپەڕەکە نۆرە بۆ ئەم باربەرە وەرناگرێت.',
             'work.savedOn': '{name} لە {date} لە کارە.',
-            'work.savedOff': '{name} لە {date} لە کار نییە.'
+            'work.savedOff': '{name} لە {date} لە کار نییە.',
+            'hours.perBarber': 'ماوەی نێوان کڕیارەکان بۆ هەر باربەرێک',
+            'hours.perBarberHint': 'هەر باربەرێک دەتوانێت ماوەیەکی جیاوازی هەبێت. باربەرەکانیش دەتوانن ماوەی خۆیان لە سەرەوەی ستوونەکەیان لە کاشێر بگۆڕن.',
+            'hours.noBarbers': 'سەرەتا لە پەڕەی باربەرەکان باربەر زیاد بکە.',
+            'slots.addSlot': 'زیادکردنی کات',
+            'slots.addSlotTitle': 'زیادکردنی کاتێکی بەتاڵ بۆ {name}',
+            'slots.newSlotTime': 'کات',
+            'slots.extraTag': 'زیادکراو',
+            'slots.removeExtra': 'لابردنی ئەم کاتە',
+            'slots.slotAdded': 'کاتێکی بەتاڵ لە {time} زیاد کرا.',
+            'slots.slotRemoved': 'کاتەکە لابرا.',
+            'slots.slotExists': 'پێشتر کاتێک لە {time} هەیە.',
+            'slots.badTime': 'کاتێک بۆ نۆرەکە هەڵبژێرە.'
         }
     };
 
