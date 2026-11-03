@@ -6,7 +6,7 @@ This document is for whoever builds the booking website. The cashier app is alre
 
 Customers open xoshawi.com, choose a barber and a free time, and send their **name, phone number and the chosen time**. The website saves the booking. The cashier app picks it up on its own and adds the customer as a **waiting client in that barber's column at the chosen date and time**, with an "Online" badge.
 
-The cashier shows each barber's day as **time slots**, from opening to closing, one every *N* minutes (the admin chooses *N*: 10, 20, 30 or any other number). The website must show the **same free slots**. The cashier sends them in every sync (`slots`, below), so the website does not need to work them out.
+The cashier shows each barber's day as **time slots**, from opening to closing, one every *N* minutes. **Every barber chooses their own *N*** (10, 20, 30 or any other number), so two barbers can have different times. The website must show the **same free slots**. The cashier sends them in every sync (`slots`, below), so the website does not need to work them out.
 
 The cashier works offline and keeps its data on the shop's device, so the website never connects to the cashier. The cashier contacts the website instead:
 
@@ -36,7 +36,7 @@ The slots come from **Settings → Working hours and time slots** (the same valu
 | Field | Meaning |
 |---|---|
 | Opens at / Closes at | Opening hours, for example `10:00` to `22:00`. `00:00` as closing time means midnight. |
-| Time between clients | Minutes from one slot to the next: 10, 20, 30, or any number from 5 to 240. It can also be changed at the top of the Cashier page. |
+| Time between clients (default) | Minutes from one slot to the next for barbers who have not chosen their own: 10, 20, 30, or any number from 5 to 240. Each barber sets their own at the top of their column on the Cashier page. |
 | Closed days | Weekdays with no bookings. |
 
 "Check now" saves the form and syncs immediately. The status pill shows whether the last sync worked.
@@ -77,8 +77,8 @@ The website must:
     "closed_weekdays": [5]
   },
   "barbers": [
-    { "id": 1, "name": "Ahmed" },
-    { "id": 2, "name": "Karwan" }
+    { "id": 1, "name": "Ahmed", "slot_minutes": 20, "days_off": [] },
+    { "id": 2, "name": "Karwan", "slot_minutes": 30, "days_off": ["2026-11-05"] }
   ],
   "slots": [
     { "barber_id": 1, "date": "2026-11-03", "times": ["15:00", "15:30", "16:00", "17:00"] },
@@ -99,9 +99,9 @@ The website must:
 |---|---|
 | `cursor` | The `cursor` the website returned last time, or `null` on the first sync. |
 | `shop` | Shop details from the cashier's Settings. `timezone` is the cashier device's time zone. All dates and times in this API are local shop time. |
-| `hours` | Opening hours and slot rules. `slot_minutes` is the time between clients (5 to 240). `close` `00:00` means midnight. `closed_weekdays` uses 0 = Sunday … 6 = Saturday. |
-| `barbers` | Active barbers. Show only these on the website. `id` is the barber's id in the cashier; use it in bookings. |
-| `slots` | **The free times to show**, per barber and day, from today up to `days_ahead`. These are exactly the free slots on the cashier board. Closed days are left out, and for today slots that have already started are left out. A barber or day with no free time has no entry. |
+| `hours` | Opening hours and slot rules. `slot_minutes` is the default time between clients (5 to 240). `close` `00:00` means midnight. `closed_weekdays` uses 0 = Sunday … 6 = Saturday. |
+| `barbers` | Active barbers. Show only these on the website. `id` is the barber's id in the cashier; use it in bookings. `slot_minutes` is **this barber's own** time between clients. `days_off` lists the days (from today up to `days_ahead`) the barber marked **Not at work**; take no bookings for the barber on those days. |
+| `slots` | **The free times to show**, per barber and day, from today up to `days_ahead`, using each barber's own time between clients. These are exactly the free slots on the cashier board. Closed days and the barber's `days_off` are left out, and for today slots that have already started are left out. A barber or day with no free time has no entry. |
 | `busy` | Times already taken in the cashier, from today up to `days_ahead`. It includes clients added at the shop (walk-ins and phone calls), and bookings that are already in the cashier. `slots` already takes these into account; `busy` is there for a website that wants to work the slots out itself. |
 | `updates` | Status changes of bookings the cashier received earlier (see below). Apply them to your bookings. |
 
@@ -161,7 +161,7 @@ For a barber and a day, show the `times` of the matching entry in `slots` from t
 2. For today, remove slots that have started since the request was sent.
 3. Send bookings at one of these times, so the client lands in a free slot in the cashier.
 
-How the cashier makes the slots, in case the website wants to check: slots run from `open` to `close`, one every `slot_minutes` minutes, and the last slot must end by `close`. A slot is taken when a client's time is inside it (from its start time up to the next slot).
+How the cashier makes the slots, in case the website wants to check: slots run from `open` to `close`, one every `slot_minutes` minutes of that barber (`barbers[].slot_minutes`), and the last slot must end by `close`. A slot is taken when a client's time is inside it (from its start time up to the next slot).
 
 If no sync has arrived for a while (for example 10 minutes), the shop may be offline. Keep taking bookings: they will arrive later.
 

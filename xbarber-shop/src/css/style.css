@@ -3771,39 +3771,6 @@ body[data-signed-in] #offline-status[data-state="error"] {
     font-weight: 800;
 }
 
-.slot-presets button {
-    height: 32px;
-    padding: 0 12px;
-}
-
-.slot-custom {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    height: 40px;
-    padding: 0 6px 0 12px;
-    border: 1px solid var(--line-2);
-    border-radius: 12px;
-    color: var(--ink-2);
-    font-size: 13.5px;
-    font-weight: 700;
-}
-
-.slot-custom.active {
-    border-color: var(--ink);
-    color: var(--ink);
-}
-
-.slot-custom input {
-    width: 64px;
-    height: 30px;
-    padding: 0 8px;
-    border-radius: 8px;
-    font-size: 15px;
-    font-weight: 700;
-    text-align: center;
-}
-
 .slot-bar-hours {
     color: var(--ink-2);
     font-size: 13.5px;
@@ -3844,6 +3811,166 @@ body[data-signed-in] #offline-status[data-state="error"] {
 
 .col-stats .stat-done {
     box-shadow: inset 0 3px 0 var(--done);
+}
+
+/* "At work" / "Not at work" under the barber's name. */
+.col-tags {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+}
+
+.col-tags .tag {
+    align-self: center;
+}
+
+.work-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 26px;
+    padding: 0 10px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+button.work-pill {
+    cursor: pointer;
+}
+
+.work-pill.is-on {
+    border-color: #b7e0b7;
+    background: var(--done-bg);
+    color: var(--done-ink);
+}
+
+.work-pill.is-off {
+    border-color: var(--line-2);
+    background: #fff;
+    color: var(--ink-2);
+}
+
+button.work-pill:hover {
+    border-color: currentColor;
+}
+
+.work-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+}
+
+.work-pill.is-off .work-dot {
+    background: transparent;
+    box-shadow: inset 0 0 0 1.5px currentColor;
+}
+
+.col-off {
+    background: #e2e1dc;
+}
+
+.col-off .col-head .avatar {
+    background: #8d8c86;
+}
+
+.col-off-note {
+    display: flex;
+    flex-shrink: 0;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 0;
+    padding: 12px;
+    border: 1.5px dashed #c4c3bb;
+    border-radius: 14px;
+    color: var(--ink-2);
+    font-size: 13.5px;
+    font-weight: 700;
+    line-height: 1.4;
+}
+
+.col-off-note .icon {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+}
+
+/* Each barber's own time between clients, at the top of their column. */
+.col-slot {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 4px 4px 10px;
+    border-radius: 12px;
+    background: #fff;
+}
+
+.col-slot-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--ink-2);
+    font-size: 13px;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.col-slot-label .icon,
+.col-slot-readonly .icon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+}
+
+.col-slot-presets {
+    padding: 3px;
+}
+
+.col-slot-presets button {
+    height: 30px;
+    padding: 0 9px;
+    font-size: 13.5px;
+}
+
+.col-slot-custom {
+    display: inline-flex;
+    flex: 1;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+    min-width: 0;
+    color: var(--muted);
+    font-size: 12.5px;
+    font-weight: 700;
+}
+
+.col-slot-custom input {
+    width: 52px;
+    height: 32px;
+    padding: 0 6px;
+    border-radius: 8px;
+    font-size: 14.5px;
+    font-weight: 700;
+    text-align: center;
+}
+
+.col-slot-custom.active input {
+    border-color: var(--ink);
+    box-shadow: inset 0 0 0 1px var(--ink);
+}
+
+.col-slot-readonly {
+    gap: 6px;
+    padding: 8px 10px;
+    color: var(--ink-2);
+    font-size: 13px;
+    font-weight: 700;
 }
 
 /* A free time: tap it to add a client there. */
@@ -4571,35 +4698,10 @@ button.slot:focus-visible .slot-plus {
 }
 
 @media (max-width: 600px) {
-    /* One short row on phones: icon, 10 / 20 / 30 and other. */
     .slot-bar {
         gap: 6px;
         margin-bottom: 10px;
         padding: 6px 8px;
-    }
-
-    .slot-bar-label > span,
-    .slot-custom > span:first-child {
-        display: none;
-    }
-
-    .slot-presets button {
-        padding: 0 8px;
-        font-size: 13px;
-    }
-
-    .slot-custom {
-        height: 38px;
-        padding: 0 6px;
-    }
-
-    .slot-custom input {
-        width: 48px;
-    }
-
-    /* Working hours stay in Settings on phones. */
-    .slot-bar button.slot-bar-hours {
-        display: none;
     }
 
     .slot-bar .spacer {

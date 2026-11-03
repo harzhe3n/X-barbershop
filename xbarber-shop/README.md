@@ -6,7 +6,7 @@ The same app can also be published as a static, installable PWA. The PWA keeps i
 
 ## Features
 
-- **Cashier board with time slots**: Every barber has a column with one time slot every 10, 20 or 30 minutes (or any other number), from opening to closing, in time order. Tap a free time and a small form opens right there (no pop-up): name, phone, service and, for the admin, the money received. All of them are optional. Tap **Done** when the client is finished, then confirm **Yes, done**.
+- **Cashier board with time slots**: Every barber has a column of time slots from opening to closing, in time order. **Each barber chooses their own time between clients** (10, 20, 30 minutes or any other number) at the top of their column, and has an **At work / Not at work** button for the day shown. On a day off the barber has no free times and the website takes no bookings for them. Tap a free time and a small form opens right there (no pop-up): name, phone, service and, for the admin, the money received. All of them are optional. Tap **Done** when the client is finished, then confirm **Yes, done**.
 - **Money received**: When the admin types the money received, only that money is counted, not the service price. Without it, the service price counts.
 - **Client status at a glance**: Waiting (amber), With barber (black card, after **Start**), Done (green row in its slot). Payments can be undone.
 - **Product cashier**: The **Products** page sells products on their own, without a client name. Tap products, then **Done** and confirm. Stock goes down, and the page shows what was sold today.
@@ -180,7 +180,7 @@ xbarber-shop/
 | | Admin | Barber |
 |---|---|---|
 | Pages | All | Cashier and History |
-| Cashier | Every column; types the money received; sets the time between clients | Sees every column; adds, starts, edits and finishes only their own clients; can take a client from "Any barber". No money field: the service price counts |
+| Cashier | Every column; types the money received; can set any barber's time between clients and At work / Not at work | Sees every column; sets their own time between clients and At work / Not at work; adds, starts, edits and finishes only their own clients; can take a client from "Any barber". No money field: the service price counts |
 | Products (product cashier) | Yes | No |
 | History | Every barber, plus product sales | Only their own column |
 | Finished clients | Edit, undo payment, delete (with the history password) | The same, for their own clients only |
@@ -194,7 +194,7 @@ Editing a finished (paid) client or undoing a payment asks for the history passw
 
 1. **Barbers**: add each barber. Each one gets a column in Cashier and History.
 2. **Catalog**: add your services (name and price) and products (photo, price, stock).
-3. **Settings → Working hours and time slots**: set opening and closing times, the time between clients and closed days. The time between clients can also be changed at the top of the Cashier page (10, 20, 30 or **Other**).
+3. **Settings → Working hours and time slots**: set opening and closing times, closed days and the default time between clients. Each barber then picks their own time at the top of their column on the Cashier page (10, 20, 30 or any number in the box).
 4. **Cashier**: tap a free time in a barber's column. Type the name and phone (optional), choose the service (optional) and, as admin, the money received (optional). Tap **Add client**.
 5. When the client sits down, tap **Start** (optional). When they are done, tap **Done**, check the money and Cash or Card, then **Yes, done**.
 6. **Products**: sell products without a client. Tap the products, then **Done** and **Yes, sold**.
@@ -209,7 +209,7 @@ Each client visit is a row in `orders` with status `waiting`, `in-service`, or `
 These tables were added; existing tables and data are unchanged, and older databases get the new tables automatically when the app opens them:
 
 - `barber_accounts`: barber sign-ins (passwords are stored as salted SHA-256 hashes)
-- `app_options`: settings such as the history password, working hours, time between clients and online booking
+- `app_options`: settings such as the history password, working hours, each barber's time between clients (`slot.barber.<id>`), days a barber is not at work (`off.<id>.<date>`) and online booking
 - `online_bookings`: bookings received from the website and the status last reported back
 - `product_sales` and `product_sale_items`: products sold at the product cashier, without a client
 

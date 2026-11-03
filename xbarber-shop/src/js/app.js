@@ -754,12 +754,45 @@ function shopHours(options = state.booking || BOOKING_DEFAULTS) {
 }
 
 // Start times (in minutes) of every slot from opening to closing. The last slot ends by closing time.
-function slotGrid(hours) {
+function slotGrid(hours, step = hours.slot) {
     const start = toMinutes(hours.open);
     const end = closingMinutes(hours.close);
     const list = [];
-    for (let minutes = start; minutes + hours.slot <= end && list.length < 300; minutes += hours.slot) list.push(minutes);
+    for (let minutes = start; minutes + step <= end && list.length < 300; minutes += step) list.push(minutes);
     return list;
+}
+
+// Each barber chooses their own time between clients. It is saved as app_options "slot.barber.<id>".
+const BARBER_SLOT_QUERY = { query: "SELECT key, value FROM app_options WHERE key LIKE 'slot.barber.%'" };
+
+function parseBarberSlots(rows) {
+    const map = new Map();
+    rows.forEach(row => {
+        const id = Number(String(row.key).slice('slot.barber.'.length));
+        const minutes = clampInt(row.value, 5, 240, null);
+        if (Number.isInteger(id) && minutes != null) map.set(id, minutes);
+    });
+    return map;
+}
+
+// A barber who has not chosen yet uses the shop's default from Settings.
+function barberStep(hours, barberSlots, barberId) {
+    return barberSlots.get(Number(barberId)) ?? hours.slot;
+}
+
+// Days a barber is not at work, saved as app_options "off.<barber id>.<YYYY-MM-DD>" = 1.
+// Without that row the barber is at work.
+function offKey(barberId, date) {
+    return `off.${Number(barberId)}.${date}`;
+}
+
+function parseOffDays(rows) {
+    const set = new Set();
+    rows.forEach(row => {
+        const match = /^off\.(\d+)\.(\d{4}-\d{2}-\d{2})$/.exec(String(row.key));
+        if (match && row.value === '1') set.add(`${Number(match[1])}|${match[2]}`);
+    });
+    return set;
 }
 
 /* ------------------------------------------------------------------ */
@@ -772,7 +805,7 @@ async function renderCashier() {
     const options = await loadBookingOptions();
     const hours = shopHours(options);
     const mineOnly = isAdmin() ? '' : ' AND (o.barber_id = ? OR o.barber_id IS NULL)';
-    const [barbers, ticketRows, itemRows, upcomingRows, services] = await queryMany([
+    const [barbers, ticketRows, itemRows, upcomingRows, services, slotRows, offRows] = await queryMany([
         { query: 'SELECT id, name, is_active FROM barbers ORDER BY id' },
         {
             query: `SELECT ${TICKET_COLUMNS}
@@ -795,7 +828,9 @@ async function renderCashier() {
                     GROUP BY o.date ORDER BY o.date LIMIT 1`,
             params: isAdmin() ? [date] : [date, myBarberId()]
         },
-        { query: 'SELECT id, name, price FROM services WHERE is_active = 1 ORDER BY name' }
+        { query: 'SELECT id, name, price FROM services WHERE is_active = 1 ORDER BY name' },
+        BARBER_SLOT_QUERY,
+        { query: "SELECT key, value FROM app_options WHERE key LIKE ?", params: [`off.%.${date}`] }
     ]);
 
     // A form left open on another day is closed.
@@ -870,17 +905,20 @@ async function renderCashier() {
     }
 
     const now = nowMinutes();
+    const barberSlots = parseBarberSlots(slotRows);
+    const offDays = parseOffDays(offRows);
     const ctx = {
         date,
+        isOff: barberId => offDays.has(`${Number(barberId)}|${date}`),
         today: date === today,
         hours,
-        grid: slotGrid(hours),
         now,
         services,
         barbers: activeBarbers,
         pastFree: 0,
+        stepFor: barberId => barberStep(hours, barberSlots, barberId),
         // A slot is over once it has ended. On earlier days every slot is over.
-        isPast: minutes => date < today || (date === today && minutes + hours.slot <= now)
+        isPast: (minutes, step) => date < today || (date === today && minutes + step <= now)
     };
     const columnsHtml = columns.map(column => renderColumn(column, ctx)).join('');
     // The slot was taken meanwhile (for example by an online booking): the form closes.
@@ -908,40 +946,76 @@ async function renderCashier() {
     return { actions, body, after: cashierAfterRender };
 }
 
-// The admin chooses the time between clients here: 10, 20, 30 minutes or any other number.
+// Working hours above the board, and the button that shows free times that are already over.
 function renderSlotBar(hours, pastFree) {
-    const custom = !SLOT_PRESETS.includes(hours.slot);
     const hoursText = t('slots.hours', { open: I18N.formatTime(hours.open), close: I18N.formatTime(hours.close) });
     const pastToggle = pastFree || state.showPast ? `
         <button type="button" class="btn btn-ghost btn-sm slot-past-toggle" data-action="toggle-past" aria-pressed="${state.showPast}">
             ${icon('clock')}
             <span>${escapeHtml(state.showPast ? t('slots.hidePast') : t('slots.showPast', { n: pastFree }))}</span>
         </button>` : '';
-
-    if (!isAdmin()) {
-        return `
-            <div class="slot-bar">
-                <span class="slot-bar-label">${icon('clock')}<span>${escapeHtml(t('slots.every'))}</span><strong>${escapeHtml(t('slots.minutesShort', { n: hours.slot }))}</strong></span>
-                <span class="slot-bar-hours">${escapeHtml(hoursText)}</span>
-                <span class="spacer"></span>
-                ${pastToggle}
-            </div>`;
-    }
+    const hoursPart = isAdmin()
+        ? `<button type="button" class="btn btn-ghost btn-sm slot-bar-hours" data-action="open-hours" title="${escapeHtml(t('slots.editHours'))}">${icon('calendar')}<span>${escapeHtml(hoursText)}</span></button>`
+        : `<span class="slot-bar-label">${icon('calendar')}<strong>${escapeHtml(hoursText)}</strong></span>`;
     return `
         <div class="slot-bar">
-            <span class="slot-bar-label">${icon('clock')}<span>${escapeHtml(t('slots.every'))}</span></span>
-            <div class="segmented slot-presets" role="group" aria-label="${escapeHtml(t('slots.every'))}">
-                ${SLOT_PRESETS.map(value => `
-                    <button type="button" class="${value === hours.slot ? 'active' : ''}" data-action="slot-length" data-value="${value}" aria-pressed="${value === hours.slot}">${escapeHtml(t('slots.minutesShort', { n: value }))}</button>`).join('')}
-            </div>
-            <label class="slot-custom ${custom ? 'active' : ''}">
-                <span>${escapeHtml(t('slots.custom'))}</span>
-                <input type="number" min="5" max="240" step="1" inputmode="numeric" value="${custom ? hours.slot : ''}" data-slot-custom aria-label="${escapeHtml(t('slots.customLabel'))}">
-                <span>${escapeHtml(t('slots.min'))}</span>
-            </label>
-            <button type="button" class="btn btn-ghost btn-sm slot-bar-hours" data-action="open-hours" title="${escapeHtml(t('slots.editHours'))}">${icon('calendar')}<span>${escapeHtml(hoursText)}</span></button>
+            ${hoursPart}
             <span class="spacer"></span>
             ${pastToggle}
+        </div>`;
+}
+
+// "At work" / "Not at work" for the day on the board. The barber changes their own, the admin anyone's.
+function renderWorkButton(barber, off, editable, date) {
+    const label = t(off ? 'work.off' : 'work.at');
+    const className = `work-pill ${off ? 'is-off' : 'is-on'}`;
+    if (!editable) return `<span class="${className}"><span class="work-dot"></span>${escapeHtml(label)}</span>`;
+    return `
+        <button type="button" class="${className}" data-action="toggle-work" data-barber="${barber.id}" data-off="${off ? '1' : '0'}"
+            aria-pressed="${!off}" title="${escapeHtml(t('work.toggleTitle', { date: I18N.formatDate(date, { weekday: true }) }))}">
+            <span class="work-dot"></span>${escapeHtml(label)}
+        </button>`;
+}
+
+async function toggleWork(barberId, wasOff) {
+    const id = Number(barberId);
+    if (!Number.isInteger(id) || (!isAdmin() && !isMine(id))) {
+        denyNotYours();
+        return;
+    }
+    const barber = await queryOne('SELECT name FROM barbers WHERE id = ?', [id]);
+    if (!barber) return;
+    const date = state.boardDate;
+    const key = offKey(id, date);
+    await runStatements([wasOff
+        ? { query: 'DELETE FROM app_options WHERE key = ?', params: [key] }
+        : setOption(key, '1')]);
+    if (state.slotForm && state.slotForm.barberId === id && !state.slotForm.ticketId) state.slotForm = null;
+    toast(t(wasOff ? 'work.savedOn' : 'work.savedOff', { name: barber.name, date: I18N.formatDate(date, { weekday: true }) }));
+    await renderPage({ keepScroll: true });
+    // The website stops (or starts again) offering this barber's times.
+    if (state.booking?.enabled === '1') syncOnlineBookings();
+}
+
+// The time between clients of one barber, at the top of their column.
+// The barber (or the admin) picks 10, 20, 30 minutes or types any other number.
+function renderColumnSlot(column, step, editable) {
+    const name = column.barber.name;
+    if (!editable) {
+        return `<div class="col-slot col-slot-readonly">${icon('clock')}<span>${escapeHtml(t('slots.everyMinutes', { n: step }))}</span></div>`;
+    }
+    const custom = !SLOT_PRESETS.includes(step);
+    return `
+        <div class="col-slot" role="group" aria-label="${escapeHtml(t('slots.everyLabel', { name }))}">
+            <span class="col-slot-label">${icon('clock')}<span>${escapeHtml(t('slots.everyShort'))}</span></span>
+            <div class="segmented col-slot-presets">
+                ${SLOT_PRESETS.map(value => `
+                    <button type="button" class="${value === step ? 'active' : ''}" data-action="slot-length" data-barber="${column.barber.id}" data-value="${value}" aria-pressed="${value === step}" title="${escapeHtml(t('slots.minutesShort', { n: value }))}">${escapeHtml(I18N.formatNumber(value))}</button>`).join('')}
+            </div>
+            <label class="col-slot-custom ${custom ? 'active' : ''}">
+                <input type="number" min="5" max="240" step="1" inputmode="numeric" value="${custom ? step : ''}" data-slot-custom data-barber="${column.barber.id}" aria-label="${escapeHtml(t('slots.customLabel'))}">
+                <span>${escapeHtml(t('slots.min'))}</span>
+            </label>
         </div>`;
 }
 
@@ -963,22 +1037,21 @@ function cashierAfterRender({ keepScroll }) {
 }
 
 // Rows of a column, sorted by time: free slots, and clients (in their slot, or at their own time).
-function columnRows(column, ctx) {
+function columnRows(column, grid, step) {
     const withSlots = Boolean(column.barber && Number(column.barber.is_active));
-    const step = ctx.hours.slot;
-    const start = ctx.grid.length ? ctx.grid[0] : 0;
+    const start = grid.length ? grid[0] : 0;
     const taken = new Set();
     const rows = [];
     column.tickets.forEach(ticket => {
         const minutes = toMinutes(ticket.time);
-        if (withSlots && minutes != null && ctx.grid.length) {
+        if (withSlots && minutes != null && grid.length) {
             const index = Math.floor((minutes - start) / step);
-            if (index >= 0 && index < ctx.grid.length) taken.add(index);
+            if (index >= 0 && index < grid.length) taken.add(index);
         }
         rows.push({ kind: 'ticket', minutes: minutes == null ? -1 : minutes, ticket });
     });
     if (withSlots) {
-        ctx.grid.forEach((minutes, index) => {
+        grid.forEach((minutes, index) => {
             if (!taken.has(index)) rows.push({ kind: 'free', minutes });
         });
     }
@@ -999,26 +1072,31 @@ function renderColumn(column, ctx) {
     const barberId = column.barber ? Number(column.barber.id) : null;
     const doneTickets = column.tickets.filter(ticket => ticket.status === 'completed');
     const waiting = column.tickets.filter(ticket => ticket.status === 'waiting').length;
+    // Every barber has their own time between clients, so their own slots.
+    // A barber who is not at work on this day has no free slots.
+    const off = Boolean(column.barber && !removed && ctx.isOff(column.barber.id));
+    const step = column.barber ? ctx.stepFor(column.barber.id) : ctx.hours.slot;
+    const grid = column.barber && !off ? slotGrid(ctx.hours, step) : [];
 
     let free = 0;
     let marked = false;
     // The first row that is not over yet; the column starts there on today.
     const markNow = (minutes, isTicket) => {
         if (marked || !ctx.today) return '';
-        const current = isTicket ? minutes >= ctx.now - ctx.hours.slot : minutes + ctx.hours.slot > ctx.now;
+        const current = isTicket ? minutes >= ctx.now - step : minutes + step > ctx.now;
         if (!current) return '';
         marked = true;
         return 'data-now';
     };
 
-    const rowsHtml = columnRows(column, ctx).map(row => {
+    const rowsHtml = columnRows(column, grid, step).map(row => {
         if (row.kind === 'ticket') {
             const now = markNow(row.minutes, true);
             if (form && form.ticketId === row.ticket.id) return renderSlotForm(form, ctx, now);
             return renderTicket(row.ticket, access, now);
         }
         const time = fromMinutes(row.minutes);
-        const past = ctx.isPast(row.minutes);
+        const past = ctx.isPast(row.minutes, step);
         if (form && !form.ticketId && form.barberId === barberId && form.time === time) {
             return renderSlotForm(form, ctx, markNow(row.minutes, false));
         }
@@ -1046,17 +1124,21 @@ function renderColumn(column, ctx) {
     }).join('');
 
     const emptyText = column.barber
-        ? (ctx.grid.length ? t('slots.noneLeft') : t('slots.noHours'))
+        ? (off ? '' : grid.length ? t('slots.noneLeft') : t('slots.noHours'))
         : t('cashier.emptyColumn');
+    const offNote = off ? `<p class="col-off-note">${icon('alert')}<span>${escapeHtml(t('work.offNote'))}</span></p>` : '';
 
     return `
-        <section class="col ${column.barber ? '' : 'col-unassigned'} ${mine ? 'col-mine' : ''} ${editable ? '' : 'col-readonly'}" data-col="${column.key}">
+        <section class="col ${column.barber ? '' : 'col-unassigned'} ${mine ? 'col-mine' : ''} ${editable ? '' : 'col-readonly'} ${off ? 'col-off' : ''}" data-col="${column.key}">
             <header class="col-head">
                 <div class="col-id">
                     <span class="avatar ${column.barber ? '' : 'avatar-muted'}">${column.barber ? escapeHtml(initials(name)) : icon('users')}</span>
                     <div class="col-name">
                         <h3>${escapeHtml(name)}</h3>
-                        ${mine ? `<span class="tag tag-mine">${escapeHtml(t('cashier.you'))}</span>` : ''}
+                        <div class="col-tags">
+                            ${column.barber && !removed ? renderWorkButton(column.barber, off, editable, ctx.date) : ''}
+                            ${mine ? `<span class="tag tag-mine">${escapeHtml(t('cashier.you'))}</span>` : ''}
+                        </div>
                         ${removed ? `<span class="tag">${escapeHtml(t('cashier.removedBarber'))}</span>` : ''}
                         ${!column.barber ? `<span class="col-note">${escapeHtml(t('cashier.anyBarberNote'))}</span>` : ''}
                     </div>
@@ -1064,12 +1146,14 @@ function renderColumn(column, ctx) {
                 ${editable ? `<div class="col-money">${money(sum(doneTickets, ticket => ticket.total))}</div>` : ''}
             </header>
             <div class="col-stats">
-                <div class="stat-free"><strong>${column.barber && !removed ? free : '–'}</strong><span>${escapeHtml(t('slots.free'))}</span></div>
+                <div class="stat-free"><strong>${column.barber && !removed && !off ? free : '–'}</strong><span>${escapeHtml(t('slots.free'))}</span></div>
                 <div class="stat-waiting"><strong>${waiting}</strong><span>${escapeHtml(t('status.waiting'))}</span></div>
                 <div class="stat-done"><strong>${doneTickets.length}</strong><span>${escapeHtml(t('status.completed'))}</span></div>
             </div>
+            ${column.barber && !removed && !off ? renderColumnSlot(column, step, editable) : ''}
             <div class="col-body" data-scroll-key="${column.key}">
-                ${rowsHtml || `<p class="col-empty">${escapeHtml(emptyText)}</p>`}
+                ${offNote}
+                ${rowsHtml || (emptyText ? `<p class="col-empty">${escapeHtml(emptyText)}</p>` : '')}
             </div>
         </section>`;
 }
@@ -1531,17 +1615,25 @@ async function removeOpenClient(id) {
     await renderPage({ keepScroll: true });
 }
 
-async function saveSlotLength(value) {
-    if (!isAdmin()) return;
+// A barber changes only their own time between clients; the admin can change anyone's.
+async function saveSlotLength(barberId, value) {
+    const id = Number(barberId);
+    if (!Number.isInteger(id) || (!isAdmin() && !isMine(id))) {
+        denyNotYours();
+        return;
+    }
     const minutes = clampInt(value, 5, 240, null);
     if (minutes == null) {
         toast(t('slots.badLength'), 'error');
         return;
     }
-    await runStatements([setOption('booking.slot', String(minutes))]);
-    await loadBookingOptions();
-    toast(t('slots.saved', { n: minutes }));
+    const barber = await queryOne('SELECT name FROM barbers WHERE id = ?', [id]);
+    if (!barber) return;
+    await runStatements([setOption(`slot.barber.${id}`, String(minutes))]);
+    toast(t('slots.savedFor', { name: barber.name, n: minutes }));
     await renderPage({ keepScroll: true });
+    // The website gets the new free times right away.
+    if (state.booking?.enabled === '1') syncOnlineBookings();
 }
 
 async function getActiveBarbers() {
@@ -4042,7 +4134,7 @@ function bookingLocalStatus(row) {
 async function buildBookingPayload(options) {
     const today = todayString();
     const daysAhead = clampInt(options.days, 1, 60, 14);
-    const [barbers, busyRows, bookingRows, shopRows] = await queryMany([
+    const [barbers, busyRows, bookingRows, shopRows, slotRows, offRows] = await queryMany([
         { query: 'SELECT id, name FROM barbers WHERE is_active = 1 ORDER BY id' },
         {
             query: `SELECT barber_id, date, time FROM orders
@@ -4059,8 +4151,18 @@ async function buildBookingPayload(options) {
                     LIMIT 2000`,
             params: [addDays(today, -60)]
         },
-        { query: 'SELECT shop_name, phone, address FROM settings ORDER BY id DESC LIMIT 1' }
+        { query: 'SELECT shop_name, phone, address FROM settings ORDER BY id DESC LIMIT 1' },
+        BARBER_SLOT_QUERY,
+        { query: "SELECT key, value FROM app_options WHERE key LIKE 'off.%'" }
     ]);
+    const barberSlots = parseBarberSlots(slotRows);
+    const offDays = parseOffDays(offRows);
+    const lastDay = addDays(today, daysAhead);
+    const daysOff = barberId => [...offDays]
+        .map(item => item.split('|'))
+        .filter(([id, date]) => Number(id) === Number(barberId) && date >= today && date <= lastDay)
+        .map(([, date]) => date)
+        .sort();
 
     const updates = [];
     bookingRows.forEach(row => {
@@ -4098,18 +4200,23 @@ async function buildBookingPayload(options) {
                 days_ahead: daysAhead,
                 closed_weekdays: hours.closed
             },
-            barbers: barbers.map(barber => ({ id: Number(barber.id), name: barber.name })),
+            barbers: barbers.map(barber => ({
+                id: Number(barber.id),
+                name: barber.name,
+                slot_minutes: barberStep(hours, barberSlots, barber.id),
+                days_off: daysOff(barber.id)
+            })),
             busy: busyRows.map(row => ({ barber_id: Number(row.barber_id), date: row.date, time: String(row.time).slice(0, 5) })),
-            slots: freeSlots(hours, barbers, busyRows, today, daysAhead),
+            slots: freeSlots(hours, barberSlots, offDays, barbers, busyRows, today, daysAhead),
             updates
         }
     };
 }
 
-// The same free times the cashier shows: every slot of every open day that has no client yet.
-// For today, slots that have already started are left out.
-function freeSlots(hours, barbers, busyRows, today, daysAhead) {
-    const grid = slotGrid(hours);
+// The same free times the cashier shows: every slot of every open day that has no client yet,
+// using each barber's own time between clients. Days a barber is not at work, and for today
+// slots that have already started, are left out.
+function freeSlots(hours, barberSlots, offDays, barbers, busyRows, today, daysAhead) {
     const taken = new Map();
     busyRows.forEach(row => {
         const key = `${row.barber_id}|${row.date}`;
@@ -4123,10 +4230,13 @@ function freeSlots(hours, barbers, busyRows, today, daysAhead) {
         const date = addDays(today, day);
         if (hours.closed.includes(parseDate(date).getDay())) continue;
         barbers.forEach(barber => {
+            // Not at work on this day: no free times.
+            if (offDays.has(`${Number(barber.id)}|${date}`)) return;
+            const step = barberStep(hours, barberSlots, barber.id);
             const busy = taken.get(`${barber.id}|${date}`) || [];
-            const times = grid
+            const times = slotGrid(hours, step)
                 .filter(start => !(day === 0 && start <= now))
-                .filter(start => !busy.some(minutes => minutes != null && minutes >= start && minutes < start + hours.slot))
+                .filter(start => !busy.some(minutes => minutes != null && minutes >= start && minutes < start + step))
                 .map(fromMinutes);
             if (times.length) slots.push({ barber_id: Number(barber.id), date, times });
         });
@@ -4518,7 +4628,7 @@ function renderHoursCard(options) {
                         <input type="time" name="close" value="${escapeHtml(hours.close)}">
                     </label>
                     <div class="field">
-                        <span>${escapeHtml(t('slots.every'))}</span>
+                        <span>${escapeHtml(t('hours.defaultSlot'))}</span>
                         <div class="hours-slot">
                             <div class="segmented" role="group" aria-label="${escapeHtml(t('slots.every'))}">
                                 ${SLOT_PRESETS.map(value => `<button type="button" class="${value === hours.slot ? 'active' : ''}" data-set-slot="${value}" aria-pressed="${value === hours.slot}">${escapeHtml(I18N.formatNumber(value))}</button>`).join('')}
@@ -4528,6 +4638,7 @@ function renderHoursCard(options) {
                                 <span>${escapeHtml(t('slots.min'))}</span>
                             </span>
                         </div>
+                        <small class="field-hint">${escapeHtml(t('hours.defaultSlotHint'))}</small>
                     </div>
                 </div>
                 <div class="field">
@@ -4670,7 +4781,8 @@ const actions = {
     'slot-edit': element => openSlotEdit(Number(element.dataset.id)),
     'slot-cancel': () => closeSlotForm(),
     'slot-remove': element => removeOpenClient(Number(element.dataset.id)),
-    'slot-length': element => saveSlotLength(element.dataset.value),
+    'slot-length': element => saveSlotLength(element.dataset.barber, element.dataset.value),
+    'toggle-work': element => toggleWork(element.dataset.barber, element.dataset.off === '1'),
     'toggle-past': () => {
         state.showPast = !state.showPast;
         return renderPage({ keepScroll: true });
@@ -4754,7 +4866,7 @@ const actions = {
 };
 
 const busyActions = new Set([
-    'take-client', 'back-to-waiting', 'undo-pay', 'done-client', 'slot-add', 'slot-edit', 'slot-remove', 'slot-length',
+    'take-client', 'back-to-waiting', 'undo-pay', 'done-client', 'slot-add', 'slot-edit', 'slot-remove', 'slot-length', 'toggle-work',
     'edit-finished', 'delete-finished', 'delete-sale', 'sell-done', 'barber-account', 'booking-sync', 'clear-history'
 ]);
 
@@ -4825,7 +4937,7 @@ document.addEventListener('change', event => {
         return;
     }
     if (event.target.matches('[data-slot-custom]')) {
-        if (event.target.value.trim() !== '') saveSlotLength(event.target.value).catch(handleError);
+        if (event.target.value.trim() !== '') saveSlotLength(event.target.dataset.barber, event.target.value).catch(handleError);
         return;
     }
     const input = event.target.closest('[data-date-input]');

@@ -37,7 +37,7 @@
             'nav.signOut': 'Sign out',
 
             'page.cashier.title': 'Cashier',
-            'page.cashier.subtitle': 'Each barber has a column of time slots. Tap a free time to add a client, then tap Done.',
+            'page.cashier.subtitle': 'Each barber has their own column of time slots and chooses their own time between clients. Tap a free time to add a client, then tap Done.',
             'page.dashboard.title': 'Dashboard',
             'page.dashboard.subtitle': 'Clients and money at a glance.',
             'page.history.title': 'History',
@@ -411,8 +411,20 @@
             'sell.saved': 'Sold for {amount}.',
             'sell.deleted': 'Sale deleted. The products went back to stock.',
             'hours.title': 'Working hours and time slots',
-            'hours.text': 'The cashier makes a time slot for every barber from opening to closing. The website shows the same free times.',
-            'booking.hoursHint': 'Opening hours, time between clients and closed days are in “Working hours and time slots”.'
+            'hours.text': 'The cashier makes time slots for every barber from opening to closing. Each barber chooses their own time between clients. The website shows the same free times.',
+            'booking.hoursHint': 'Opening hours, time between clients and closed days are in “Working hours and time slots”.',
+            'hours.defaultSlot': 'Time between clients (default)',
+            'hours.defaultSlotHint': 'Each barber chooses their own at the top of their column in Cashier. This is used until they do.',
+            'slots.everyShort': 'Every',
+            'slots.everyLabel': 'Time between clients for {name}',
+            'slots.everyMinutes': 'A client every {n} minutes',
+            'slots.savedFor': '{name}: a client every {n} minutes.',
+            'work.at': 'At work',
+            'work.off': 'Not at work',
+            'work.toggleTitle': 'Tap to change it for {date}',
+            'work.offNote': 'Not at work on this day. There are no free times, and the website takes no bookings for this barber.',
+            'work.savedOn': '{name} is at work on {date}.',
+            'work.savedOff': '{name} is not at work on {date}.'
         },
 
         ar: {
@@ -441,7 +453,7 @@
             'nav.signOut': 'خروج',
 
             'page.cashier.title': 'الكاشير',
-            'page.cashier.subtitle': 'لكل حلاق عمود من الأوقات. اضغط على وقت فارغ لإضافة زبون، ثم اضغط «تم».',
+            'page.cashier.subtitle': 'لكل حلاق عمود من الأوقات ويختار بنفسه المدة بين زبائنه. اضغط على وقت فارغ لإضافة زبون، ثم اضغط «تم».',
             'page.dashboard.title': 'لوحة التحكم',
             'page.dashboard.subtitle': 'الزبائن والأموال بنظرة واحدة.',
             'page.history.title': 'السجل',
@@ -811,8 +823,20 @@
             'sell.saved': 'تم البيع بمبلغ {amount}.',
             'sell.deleted': 'تم حذف البيع. رجعت المنتجات إلى المخزون.',
             'hours.title': 'أوقات العمل والمواعيد',
-            'hours.text': 'يعرض الكاشير أوقاتًا لكل حلاق من الفتح إلى الإغلاق. ويعرض الموقع نفس الأوقات الفارغة.',
-            'booking.hoursHint': 'أوقات الفتح والمدة بين الزبائن وأيام العطلة موجودة في «أوقات العمل والمواعيد».'
+            'hours.text': 'يعرض الكاشير أوقاتًا لكل حلاق من الفتح إلى الإغلاق. كل حلاق يختار بنفسه المدة بين زبائنه. ويعرض الموقع نفس الأوقات الفارغة.',
+            'booking.hoursHint': 'أوقات الفتح والمدة بين الزبائن وأيام العطلة موجودة في «أوقات العمل والمواعيد».',
+            'hours.defaultSlot': 'المدة بين الزبائن (الافتراضية)',
+            'hours.defaultSlotHint': 'كل حلاق يختار مدته في أعلى عموده في الكاشير. تُستخدم هذه المدة إلى أن يختار.',
+            'slots.everyShort': 'كل',
+            'slots.everyLabel': 'المدة بين الزبائن لـ {name}',
+            'slots.everyMinutes': 'زبون كل {n} دقيقة',
+            'slots.savedFor': '{name}: زبون كل {n} دقيقة.',
+            'work.at': 'في العمل',
+            'work.off': 'ليس في العمل',
+            'work.toggleTitle': 'اضغط للتغيير ليوم {date}',
+            'work.offNote': 'ليس في العمل في هذا اليوم. لا توجد أوقات فارغة، والموقع لا يستقبل حجوزات لهذا الحلاق.',
+            'work.savedOn': '{name} في العمل يوم {date}.',
+            'work.savedOff': '{name} ليس في العمل يوم {date}.'
         },
 
         ckb: {
@@ -841,7 +865,7 @@
             'nav.signOut': 'چوونەدەرەوە',
 
             'page.cashier.title': 'کاشێر',
-            'page.cashier.subtitle': 'هەر باربەرێک ستوونێکی کاتەکانی هەیە. کاتێکی بەتاڵ دابگرە بۆ زیادکردنی کڕیار، پاشان «تەواو» دابگرە.',
+            'page.cashier.subtitle': 'هەر باربەرێک ستوونێکی کاتەکانی هەیە و خۆی ماوەی نێوان کڕیارەکانی هەڵدەبژێرێت. کاتێکی بەتاڵ دابگرە بۆ زیادکردنی کڕیار، پاشان «تەواو» دابگرە.',
             'page.dashboard.title': 'داشبۆرد',
             'page.dashboard.subtitle': 'کڕیاران و پارە بە یەک سەیرکردن.',
             'page.history.title': 'مێژوو',
@@ -1211,8 +1235,20 @@
             'sell.saved': 'بە {amount} فرۆشرا.',
             'sell.deleted': 'فرۆشتنەکە سڕایەوە. بەرهەمەکان گەڕانەوە کۆگا.',
             'hours.title': 'کاتی کارکردن و نۆرەکان',
-            'hours.text': 'کاشێرەکە لە کاتی کردنەوە تا داخستن بۆ هەر باربەرێک کات دروست دەکات. ماڵپەڕەکەش هەمان کاتە بەتاڵەکان پیشان دەدات.',
-            'booking.hoursHint': 'کاتی کردنەوە، ماوەی نێوان کڕیارەکان و ڕۆژانی پشوو لە «کاتی کارکردن و نۆرەکان»دان.'
+            'hours.text': 'کاشێرەکە لە کاتی کردنەوە تا داخستن بۆ هەر باربەرێک کات دروست دەکات. هەر باربەرێک خۆی ماوەی نێوان کڕیارەکانی هەڵدەبژێرێت. ماڵپەڕەکەش هەمان کاتە بەتاڵەکان پیشان دەدات.',
+            'booking.hoursHint': 'کاتی کردنەوە، ماوەی نێوان کڕیارەکان و ڕۆژانی پشوو لە «کاتی کارکردن و نۆرەکان»دان.',
+            'hours.defaultSlot': 'ماوەی نێوان کڕیارەکان (بنەڕەت)',
+            'hours.defaultSlotHint': 'هەر باربەرێک ماوەی خۆی لە سەرەوەی ستوونەکەی لە کاشێر هەڵدەبژێرێت. تا هەڵیدەبژێرێت ئەمە بەکاردێت.',
+            'slots.everyShort': 'هەر',
+            'slots.everyLabel': 'ماوەی نێوان کڕیارەکان بۆ {name}',
+            'slots.everyMinutes': 'هەر {n} خولەک کڕیارێک',
+            'slots.savedFor': '{name}: هەر {n} خولەک کڕیارێک.',
+            'work.at': 'لە کارە',
+            'work.off': 'لە کار نییە',
+            'work.toggleTitle': 'دابگرە بۆ گۆڕینی بۆ {date}',
+            'work.offNote': 'لەم ڕۆژەدا لە کار نییە. هیچ کاتێکی بەتاڵ نییە و ماڵپەڕەکە نۆرە بۆ ئەم باربەرە وەرناگرێت.',
+            'work.savedOn': '{name} لە {date} لە کارە.',
+            'work.savedOff': '{name} لە {date} لە کار نییە.'
         }
     };
 
