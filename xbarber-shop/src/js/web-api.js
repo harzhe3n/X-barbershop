@@ -286,14 +286,14 @@
                 .some(column => column.name === 'is_active');
             const hasOrderBarberColumn = queryRows(database, 'PRAGMA table_info(orders)')
                 .some(column => column.name === 'barber_id');
-            // Tables added later (barber accounts, app options, online bookings) are created by the schema.
+            // Tables added later (barber accounts, app options, online bookings, product sales) are created by the schema.
             const newerTables = queryRows(
                 database,
-                "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name IN ('barber_accounts', 'app_options', 'online_bookings')"
+                "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name IN ('barber_accounts', 'app_options', 'online_bookings', 'product_sales', 'product_sale_items')"
             )[0].count;
             database.run('PRAGMA foreign_keys = ON');
             if (!hasCategoryTable || !hasCategoryColumn || !hasProductImageColumn || !hasCustomerImageColumn
-                || !hasCustomerActiveColumn || !hasOrderBarberColumn || Number(newerTables) < 3) {
+                || !hasCustomerActiveColumn || !hasOrderBarberColumn || Number(newerTables) < 5) {
                 await ensureSchema(database);
                 databaseChanged = true;
             }
@@ -485,7 +485,9 @@
                 { query: "DELETE FROM appointments WHERE date < ? OR (date = ? AND status IN ('completed', 'cancelled'))", params: [today, today] },
                 { query: 'DELETE FROM payments', params: [] },
                 { query: 'DELETE FROM order_items', params: [] },
-                { query: 'DELETE FROM orders', params: [] }
+                { query: 'DELETE FROM orders', params: [] },
+                { query: 'DELETE FROM product_sale_items', params: [] },
+                { query: 'DELETE FROM product_sales', params: [] }
             ]);
             return true;
         },

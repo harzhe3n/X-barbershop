@@ -6,13 +6,15 @@ This document is for whoever builds the booking website. The cashier app is alre
 
 Customers open xoshawi.com, choose a barber and a free time, and send their **name, phone number and the chosen time**. The website saves the booking. The cashier app picks it up on its own and adds the customer as a **waiting client in that barber's column at the chosen date and time**, with an "Online" badge.
 
+The cashier shows each barber's day as **time slots**, from opening to closing, one every *N* minutes (the admin chooses *N*: 10, 20, 30 or any other number). The website must show the **same free slots**. The cashier sends them in every sync (`slots`, below), so the website does not need to work them out.
+
 The cashier works offline and keeps its data on the shop's device, so the website never connects to the cashier. The cashier contacts the website instead:
 
 ```
 cashier app  ──POST /api/cashier/sync──►  xoshawi.com
    (every 60 seconds while online, after sign-in, when the internet comes back, and on "Check now")
 
-request:  barbers, opening hours, taken times, status changes of earlier bookings
+request:  barbers, opening hours, free slots, taken times, status changes of earlier bookings
 response: new, changed or cancelled bookings
 ```
 
@@ -27,9 +29,14 @@ In the cashier, the admin opens **Settings → Online booking (website)** and fi
 | Receive bookings from the website | On or off. Leave it off until the website is live. |
 | Website address | `https://xoshawi.com` (default). Must be `https://` on xoshawi.com or one of its subdomains. |
 | Connection key | A secret the website gives the shop. It is sent as `Authorization: Bearer <key>`. |
-| Opens at / Closes at | Opening hours, for example `10:00` to `22:00`. |
-| Time per booking | Length of one booking slot in minutes (15, 20, 30, 45 or 60). |
 | Book up to | How many days ahead customers may book (7, 14 or 30). |
+
+The slots come from **Settings → Working hours and time slots** (the same values the cashier board uses):
+
+| Field | Meaning |
+|---|---|
+| Opens at / Closes at | Opening hours, for example `10:00` to `22:00`. `00:00` as closing time means midnight. |
+| Time between clients | Minutes from one slot to the next: 10, 20, 30, or any number from 5 to 240. It can also be changed at the top of the Cashier page. |
 | Closed days | Weekdays with no bookings. |
 
 "Check now" saves the form and syncs immediately. The status pill shows whether the last sync worked.
@@ -73,6 +80,10 @@ The website must:
     { "id": 1, "name": "Ahmed" },
     { "id": 2, "name": "Karwan" }
   ],
+  "slots": [
+    { "barber_id": 1, "date": "2026-11-03", "times": ["15:00", "15:30", "16:00", "17:00"] },
+    { "barber_id": 2, "date": "2026-11-04", "times": ["10:00", "10:30", "11:30", "12:00"] }
+  ],
   "busy": [
     { "barber_id": 1, "date": "2026-11-03", "time": "14:30" },
     { "barber_id": 2, "date": "2026-11-04", "time": "11:00" }
@@ -88,9 +99,10 @@ The website must:
 |---|---|
 | `cursor` | The `cursor` the website returned last time, or `null` on the first sync. |
 | `shop` | Shop details from the cashier's Settings. `timezone` is the cashier device's time zone. All dates and times in this API are local shop time. |
-| `hours` | Opening hours and slot rules. `closed_weekdays` uses 0 = Sunday … 6 = Saturday. |
+| `hours` | Opening hours and slot rules. `slot_minutes` is the time between clients (5 to 240). `close` `00:00` means midnight. `closed_weekdays` uses 0 = Sunday … 6 = Saturday. |
 | `barbers` | Active barbers. Show only these on the website. `id` is the barber's id in the cashier; use it in bookings. |
-| `busy` | Times already taken in the cashier, from today up to `days_ahead`. Each entry blocks one slot starting at that time. It includes clients added at the shop (walk-ins and phone calls), and bookings that are already in the cashier. |
+| `slots` | **The free times to show**, per barber and day, from today up to `days_ahead`. These are exactly the free slots on the cashier board. Closed days are left out, and for today slots that have already started are left out. A barber or day with no free time has no entry. |
+| `busy` | Times already taken in the cashier, from today up to `days_ahead`. It includes clients added at the shop (walk-ins and phone calls), and bookings that are already in the cashier. `slots` already takes these into account; `busy` is there for a website that wants to work the slots out itself. |
 | `updates` | Status changes of bookings the cashier received earlier (see below). Apply them to your bookings. |
 
 ### Response body (sent by the website)
@@ -143,15 +155,15 @@ Each change is sent once, after it happens. If a sync fails, the change is sent 
 
 ## Showing free times on the website
 
-For a barber and a day:
+For a barber and a day, show the `times` of the matching entry in `slots` from the latest request. Then:
 
-1. Skip the day if its weekday is in `closed_weekdays`, or if it is more than `days_ahead` days ahead.
-2. Make slots from `open` to `close`, every `slot_minutes` minutes. The last slot must end by `close`.
-3. Remove slots that start at a `busy` time for that barber.
-4. Also remove slots held by your own bookings that the cashier has not received yet (bookings with no `received` update).
-5. For today, remove slots that have already started.
+1. Remove slots held by your own bookings that the cashier has not received yet (bookings with no `received` update).
+2. For today, remove slots that have started since the request was sent.
+3. Send bookings at one of these times, so the client lands in a free slot in the cashier.
 
-Use the latest request from the cashier. If no sync has arrived for a while (for example 10 minutes), the shop may be offline. Keep taking bookings: they will arrive later.
+How the cashier makes the slots, in case the website wants to check: slots run from `open` to `close`, one every `slot_minutes` minutes, and the last slot must end by `close`. A slot is taken when a client's time is inside it (from its start time up to the next slot).
+
+If no sync has arrived for a while (for example 10 minutes), the shop may be offline. Keep taking bookings: they will arrive later.
 
 ## Good to know
 

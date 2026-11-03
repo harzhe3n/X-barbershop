@@ -3,14 +3,17 @@
 /*
  * XBARBER SHOP
  *
- * Pages: Cashier (one column per barber), Dashboard, History, Catalog, Barbers, Settings.
+ * Pages: Cashier (one column of time slots per barber), Products (product cashier), Dashboard,
+ * History, Catalog, Barbers, Settings.
  *
  * A client visit is a row in `orders`:
- *   waiting     -> client added, not started
- *   in-service  -> client is with the barber ("Take client")
- *   completed   -> finished and paid
- * Its services and products live in `order_items`. The Electron app, the local servers and
- * the PWA all share this schema.
+ *   waiting     -> client added to a time slot, not started
+ *   in-service  -> client is with the barber ("Start")
+ *   completed   -> finished ("Done", then "Are you sure?")
+ * Its services (and products, on older visits) live in `order_items`. When the admin types the
+ * money received, the order total is that money instead of the service prices.
+ * Products sold on their own, without a client, are in `product_sales` / `product_sale_items`.
+ * The Electron app, the local servers and the PWA all share this schema.
  *
  * Who can do what:
  *   admin  (admin / admin123) -> every page, every client, creates barber sign-ins
@@ -30,7 +33,7 @@ const t = I18N.t;
 const XAuth = window.XAuth;
 
 const OPEN_STATUSES = ['waiting', 'in-service'];
-const ADMIN_PAGES = ['cashier', 'dashboard', 'history', 'catalog', 'barbers', 'settings'];
+const ADMIN_PAGES = ['cashier', 'sell', 'dashboard', 'history', 'catalog', 'barbers', 'settings'];
 const BARBER_PAGES = ['cashier', 'history'];
 const ADMIN_USERNAME = 'admin';
 const ADMIN_PASSWORD = 'admin123';
@@ -39,6 +42,7 @@ const DEFAULT_HISTORY_PASSWORD_HASH = 'sha256i$2000$e5c1d0a94b7f3c2a6d18f0b9$a3b
 const EDIT_UNLOCK_MS = 5 * 60 * 1000;
 const PAGE_ICONS = {
     cashier: 'columns',
+    sell: 'bag',
     dashboard: 'chart',
     history: 'history',
     catalog: 'tag',
@@ -61,7 +65,15 @@ const state = {
     catalogTab: 'services',
     productCategory: 'all',
     shopName: 'XBARBER SHOP',
-    openDone: new Set(),
+    // The client form open inside a time slot: { ticketId, barberId, date, time, name, phone, ... }
+    slotForm: null,
+    showPast: false,
+    // Product cashier: product id -> quantity
+    cart: new Map(),
+    sellMethod: 'cash',
+    sellCategory: 'all',
+    sellSearch: '',
+    focusHours: false,
     renderToken: 0
 };
 
@@ -556,6 +568,8 @@ function signOut() {
     state.signedIn = false;
     state.user = null;
     state.editUnlockedUntil = 0;
+    state.slotForm = null;
+    state.cart.clear();
     stopBookingSync();
     delete document.body.dataset.signedIn;
     delete document.body.dataset.role;
@@ -577,6 +591,7 @@ async function loadShopName() {
 
 async function go(page) {
     state.page = allowedPages().includes(page) ? page : 'cashier';
+    state.slotForm = null;
     await renderPage();
 }
 
@@ -601,6 +616,7 @@ function restoreScroll(saved) {
 
 const renderers = {
     cashier: renderCashier,
+    sell: renderSell,
     dashboard: renderDashboard,
     history: renderHistory,
     catalog: renderCatalog,
@@ -625,7 +641,7 @@ async function renderPage({ keepScroll = false } = {}) {
         dom.page.innerHTML = view.body;
         if (keepScroll) restoreScroll(saved);
         else dom.page.scrollTop = 0;
-        if (typeof view.after === 'function') view.after();
+        if (typeof view.after === 'function') view.after({ keepScroll });
     } catch (error) {
         if (token !== state.renderToken) return;
         dom.title.textContent = t(`page.${page}.title`);
@@ -684,18 +700,79 @@ function buildTickets(tickets, items) {
     return [...map.values()];
 }
 
-function sortOpenTickets(tickets) {
-    const rank = ticket => (ticket.status === 'in-service' ? 0 : 1);
-    return [...tickets].sort((a, b) => rank(a) - rank(b)
-        || String(a.time || '99:99').localeCompare(String(b.time || '99:99'))
-        || a.id - b.id);
+// The money of a visit. When the admin types the money received, only that money counts
+// for the services, not their prices. It is saved as the order total (plus any products).
+function ticketMoney(ticket) {
+    const lineTotal = item => Number(item.price || 0) * Number(item.quantity || 1);
+    const services = sum(ticket.items.filter(item => item.item_type === 'service'), lineTotal);
+    const products = sum(ticket.items.filter(item => item.item_type === 'product'), lineTotal);
+    const servicesMoney = Number(ticket.total || 0) - products;
+    const entered = Math.abs(servicesMoney - services) >= 0.01 ? Math.max(servicesMoney, 0) : null;
+    return { services, products, entered };
 }
+
+/* ------------------------------------------------------------------ */
+/* Time slots                                                          */
+/* ------------------------------------------------------------------ */
+
+const SLOT_PRESETS = [10, 20, 30];
+
+function toMinutes(time) {
+    const match = /^(\d{1,2}):(\d{2})/.exec(String(time || ''));
+    return match ? Number(match[1]) * 60 + Number(match[2]) : null;
+}
+
+function fromMinutes(minutes) {
+    return `${pad(Math.floor(minutes / 60) % 24)}:${pad(minutes % 60)}`;
+}
+
+function nowMinutes() {
+    const now = new Date();
+    return now.getHours() * 60 + now.getMinutes();
+}
+
+// Closing at 00:00 means midnight.
+function closingMinutes(time) {
+    const minutes = toMinutes(time);
+    return minutes === 0 ? 24 * 60 : minutes;
+}
+
+// Opening hours and the time between clients. The cashier and the website use the same values.
+function shopHours(options = state.booking || BOOKING_DEFAULTS) {
+    let open = isValidTime(options.open) ? String(options.open).slice(0, 5) : BOOKING_DEFAULTS.open;
+    let close = isValidTime(options.close) ? String(options.close).slice(0, 5) : BOOKING_DEFAULTS.close;
+    if (closingMinutes(close) <= toMinutes(open)) {
+        open = BOOKING_DEFAULTS.open;
+        close = BOOKING_DEFAULTS.close;
+    }
+    return {
+        open,
+        close,
+        slot: clampInt(options.slot, 5, 240, 30),
+        closed: parseWeekdays(options.closed)
+    };
+}
+
+// Start times (in minutes) of every slot from opening to closing. The last slot ends by closing time.
+function slotGrid(hours) {
+    const start = toMinutes(hours.open);
+    const end = closingMinutes(hours.close);
+    const list = [];
+    for (let minutes = start; minutes + hours.slot <= end && list.length < 300; minutes += hours.slot) list.push(minutes);
+    return list;
+}
+
+/* ------------------------------------------------------------------ */
+/* Cashier board                                                       */
+/* ------------------------------------------------------------------ */
 
 async function renderCashier() {
     const date = state.boardDate;
     const today = todayString();
+    const options = await loadBookingOptions();
+    const hours = shopHours(options);
     const mineOnly = isAdmin() ? '' : ' AND (o.barber_id = ? OR o.barber_id IS NULL)';
-    const [barbers, ticketRows, itemRows, upcomingRows] = await queryMany([
+    const [barbers, ticketRows, itemRows, upcomingRows, services] = await queryMany([
         { query: 'SELECT id, name, is_active FROM barbers ORDER BY id' },
         {
             query: `SELECT ${TICKET_COLUMNS}
@@ -717,8 +794,13 @@ async function renderCashier() {
                     WHERE o.status = 'waiting' AND o.date > ?${mineOnly}
                     GROUP BY o.date ORDER BY o.date LIMIT 1`,
             params: isAdmin() ? [date] : [date, myBarberId()]
-        }
+        },
+        { query: 'SELECT id, name, price FROM services WHERE is_active = 1 ORDER BY name' }
     ]);
+
+    // A form left open on another day is closed.
+    if (state.slotForm && state.slotForm.date !== date) state.slotForm = null;
+    slotCatalog = services;
 
     const tickets = buildTickets(ticketRows, itemRows);
     const upcoming = upcomingRows[0];
@@ -787,6 +869,24 @@ async function renderCashier() {
         };
     }
 
+    const now = nowMinutes();
+    const ctx = {
+        date,
+        today: date === today,
+        hours,
+        grid: slotGrid(hours),
+        now,
+        services,
+        barbers: activeBarbers,
+        pastFree: 0,
+        // A slot is over once it has ended. On earlier days every slot is over.
+        isPast: minutes => date < today || (date === today && minutes + hours.slot <= now)
+    };
+    const columnsHtml = columns.map(column => renderColumn(column, ctx)).join('');
+    // The slot was taken meanwhile (for example by an online booking): the form closes.
+    if (state.slotForm && !ctx.formShown) state.slotForm = null;
+    const closedDay = hours.closed.includes(parseDate(date).getDay());
+
     const body = `
         <div class="day-strip">
             <div class="day-stat"><span class="status-dot status-dot-waiting"></span><span>${escapeHtml(t('status.waiting'))}</span><strong>${waiting}</strong></div>
@@ -794,8 +894,10 @@ async function renderCashier() {
             <div class="day-stat"><span class="status-dot status-dot-done"></span><span>${escapeHtml(t('status.completed'))}</span><strong>${done.length}</strong></div>
             <div class="day-stat day-stat-money"><span>${escapeHtml(t(isAdmin() ? 'cashier.moneyToday' : 'cashier.myMoneyToday'))}</span><strong>${money(sum(done, ticket => ticket.total))}</strong></div>
         </div>
+        ${renderSlotBar(hours, ctx.pastFree)}
+        ${closedDay ? `<p class="notice notice-slim">${icon('calendar')}<span>${escapeHtml(t('slots.closedDay'))}</span></p>` : ''}
         <div class="board" data-scroll-x>
-            ${columns.map(renderColumn).join('')}
+            ${columnsHtml}
             ${isAdmin() ? `
                 <button type="button" class="col col-ghost" data-action="add-barber">
                     <span class="col-ghost-icon">${icon('plus')}</span>
@@ -803,23 +905,149 @@ async function renderCashier() {
                 </button>` : ''}
         </div>`;
 
-    return { actions, body };
+    return { actions, body, after: cashierAfterRender };
 }
 
-function renderColumn(column) {
-    const openTickets = sortOpenTickets(column.tickets.filter(ticket => OPEN_STATUSES.includes(ticket.status)));
-    const doneTickets = column.tickets.filter(ticket => ticket.status === 'completed')
-        .sort((a, b) => String(b.time || '').localeCompare(String(a.time || '')) || b.id - a.id);
-    const waiting = openTickets.filter(ticket => ticket.status === 'waiting').length;
-    const active = openTickets.length - waiting;
+// The admin chooses the time between clients here: 10, 20, 30 minutes or any other number.
+function renderSlotBar(hours, pastFree) {
+    const custom = !SLOT_PRESETS.includes(hours.slot);
+    const hoursText = t('slots.hours', { open: I18N.formatTime(hours.open), close: I18N.formatTime(hours.close) });
+    const pastToggle = pastFree || state.showPast ? `
+        <button type="button" class="btn btn-ghost btn-sm slot-past-toggle" data-action="toggle-past" aria-pressed="${state.showPast}">
+            ${icon('clock')}
+            <span>${escapeHtml(state.showPast ? t('slots.hidePast') : t('slots.showPast', { n: pastFree }))}</span>
+        </button>` : '';
+
+    if (!isAdmin()) {
+        return `
+            <div class="slot-bar">
+                <span class="slot-bar-label">${icon('clock')}<span>${escapeHtml(t('slots.every'))}</span><strong>${escapeHtml(t('slots.minutesShort', { n: hours.slot }))}</strong></span>
+                <span class="slot-bar-hours">${escapeHtml(hoursText)}</span>
+                <span class="spacer"></span>
+                ${pastToggle}
+            </div>`;
+    }
+    return `
+        <div class="slot-bar">
+            <span class="slot-bar-label">${icon('clock')}<span>${escapeHtml(t('slots.every'))}</span></span>
+            <div class="segmented slot-presets" role="group" aria-label="${escapeHtml(t('slots.every'))}">
+                ${SLOT_PRESETS.map(value => `
+                    <button type="button" class="${value === hours.slot ? 'active' : ''}" data-action="slot-length" data-value="${value}" aria-pressed="${value === hours.slot}">${escapeHtml(t('slots.minutesShort', { n: value }))}</button>`).join('')}
+            </div>
+            <label class="slot-custom ${custom ? 'active' : ''}">
+                <span>${escapeHtml(t('slots.custom'))}</span>
+                <input type="number" min="5" max="240" step="1" inputmode="numeric" value="${custom ? hours.slot : ''}" data-slot-custom aria-label="${escapeHtml(t('slots.customLabel'))}">
+                <span>${escapeHtml(t('slots.min'))}</span>
+            </label>
+            <button type="button" class="btn btn-ghost btn-sm slot-bar-hours" data-action="open-hours" title="${escapeHtml(t('slots.editHours'))}">${icon('calendar')}<span>${escapeHtml(hoursText)}</span></button>
+            <span class="spacer"></span>
+            ${pastToggle}
+        </div>`;
+}
+
+// After the board is drawn: focus a form that was just opened, and on today start each column at the current time.
+function cashierAfterRender({ keepScroll }) {
+    const form = dom.page.querySelector('[data-form="slot"]');
+    if (form && state.slotForm?.focus) {
+        state.slotForm.focus = false;
+        const input = form.querySelector('[name="name"]');
+        if (input) input.focus({ preventScroll: true });
+        form.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        return;
+    }
+    if (keepScroll) return;
+    dom.page.querySelectorAll('.col-body').forEach(body => {
+        const target = body.querySelector('[data-now]');
+        if (target) body.scrollTop = Math.max(target.offsetTop - 6, 0);
+    });
+}
+
+// Rows of a column, sorted by time: free slots, and clients (in their slot, or at their own time).
+function columnRows(column, ctx) {
+    const withSlots = Boolean(column.barber && Number(column.barber.is_active));
+    const step = ctx.hours.slot;
+    const start = ctx.grid.length ? ctx.grid[0] : 0;
+    const taken = new Set();
+    const rows = [];
+    column.tickets.forEach(ticket => {
+        const minutes = toMinutes(ticket.time);
+        if (withSlots && minutes != null && ctx.grid.length) {
+            const index = Math.floor((minutes - start) / step);
+            if (index >= 0 && index < ctx.grid.length) taken.add(index);
+        }
+        rows.push({ kind: 'ticket', minutes: minutes == null ? -1 : minutes, ticket });
+    });
+    if (withSlots) {
+        ctx.grid.forEach((minutes, index) => {
+            if (!taken.has(index)) rows.push({ kind: 'free', minutes });
+        });
+    }
+    return rows.sort((a, b) => a.minutes - b.minutes
+        || (a.kind === b.kind ? 0 : a.kind === 'ticket' ? -1 : 1)
+        || (a.ticket && b.ticket ? a.ticket.id - b.ticket.id : 0));
+}
+
+function renderColumn(column, ctx) {
     const removed = column.barber && !Number(column.barber.is_active);
     const name = column.barber ? column.barber.name : t('cashier.anyBarber');
     const mine = column.barber && isMine(column.barber.id);
     // Admin: every column. Barber: only their own column (and taking clients who have no barber).
     const editable = isAdmin() || mine;
-    const canAdd = !removed && editable;
-    const doneOpen = state.openDone.has(column.key);
+    const canAdd = Boolean(column.barber) && !removed && editable;
     const access = { editable, takeable: !column.barber && myBarberId() != null };
+    const form = state.slotForm;
+    const barberId = column.barber ? Number(column.barber.id) : null;
+    const doneTickets = column.tickets.filter(ticket => ticket.status === 'completed');
+    const waiting = column.tickets.filter(ticket => ticket.status === 'waiting').length;
+
+    let free = 0;
+    let marked = false;
+    // The first row that is not over yet; the column starts there on today.
+    const markNow = (minutes, isTicket) => {
+        if (marked || !ctx.today) return '';
+        const current = isTicket ? minutes >= ctx.now - ctx.hours.slot : minutes + ctx.hours.slot > ctx.now;
+        if (!current) return '';
+        marked = true;
+        return 'data-now';
+    };
+
+    const rowsHtml = columnRows(column, ctx).map(row => {
+        if (row.kind === 'ticket') {
+            const now = markNow(row.minutes, true);
+            if (form && form.ticketId === row.ticket.id) return renderSlotForm(form, ctx, now);
+            return renderTicket(row.ticket, access, now);
+        }
+        const time = fromMinutes(row.minutes);
+        const past = ctx.isPast(row.minutes);
+        if (form && !form.ticketId && form.barberId === barberId && form.time === time) {
+            return renderSlotForm(form, ctx, markNow(row.minutes, false));
+        }
+        if (past) {
+            ctx.pastFree += 1;
+            if (!state.showPast) return '';
+        } else {
+            free += 1;
+        }
+        const now = past ? '' : markNow(row.minutes, false);
+        if (!canAdd) {
+            return `
+                <div class="slot slot-readonly ${past ? 'is-past' : ''}" ${now}>
+                    <span class="slot-time">${timeLabel(time)}</span>
+                    <span class="slot-free">${escapeHtml(t('slots.free'))}</span>
+                </div>`;
+        }
+        return `
+            <button type="button" class="slot ${past ? 'is-past' : ''}" data-action="slot-add" data-barber="${barberId}" data-time="${time}" ${now}
+                aria-label="${escapeHtml(t('slots.addAt', { time: I18N.formatTime(time) }))}">
+                <span class="slot-time">${timeLabel(time)}</span>
+                <span class="slot-free">${escapeHtml(t('slots.free'))}</span>
+                <span class="slot-plus">${icon('plus')}<span>${escapeHtml(t('slots.add'))}</span></span>
+            </button>`;
+    }).join('');
+
+    const emptyText = column.barber
+        ? (ctx.grid.length ? t('slots.noneLeft') : t('slots.noHours'))
+        : t('cashier.emptyColumn');
 
     return `
         <section class="col ${column.barber ? '' : 'col-unassigned'} ${mine ? 'col-mine' : ''} ${editable ? '' : 'col-readonly'}" data-col="${column.key}">
@@ -836,21 +1064,12 @@ function renderColumn(column) {
                 ${editable ? `<div class="col-money">${money(sum(doneTickets, ticket => ticket.total))}</div>` : ''}
             </header>
             <div class="col-stats">
-                <div><strong>${waiting}</strong><span>${escapeHtml(t('status.waiting'))}</span></div>
-                <div><strong>${active}</strong><span>${escapeHtml(t('status.in-service'))}</span></div>
-                <div><strong>${doneTickets.length}</strong><span>${escapeHtml(t('status.completed'))}</span></div>
+                <div class="stat-free"><strong>${column.barber && !removed ? free : '–'}</strong><span>${escapeHtml(t('slots.free'))}</span></div>
+                <div class="stat-waiting"><strong>${waiting}</strong><span>${escapeHtml(t('status.waiting'))}</span></div>
+                <div class="stat-done"><strong>${doneTickets.length}</strong><span>${escapeHtml(t('status.completed'))}</span></div>
             </div>
-            ${canAdd ? `
-                <button type="button" class="btn btn-add-client" data-action="new-client" data-barber="${column.barber ? column.barber.id : ''}">
-                    ${icon('plus')}<span>${escapeHtml(t('cashier.newClient'))}</span>
-                </button>` : ''}
             <div class="col-body" data-scroll-key="${column.key}">
-                ${openTickets.map(ticket => renderTicket(ticket, access)).join('') || `<p class="col-empty">${escapeHtml(t('cashier.emptyColumn'))}</p>`}
-                ${doneTickets.length && editable ? `
-                    <details class="done-group" data-done-key="${column.key}" ${doneOpen ? 'open' : ''}>
-                        <summary>${icon('check')}<span>${escapeHtml(t('cashier.finishedList', { n: doneTickets.length }))}</span>${icon('chevronRight', 'summary-chevron')}</summary>
-                        <div class="done-list">${doneTickets.map(ticket => renderTicket(ticket, access)).join('')}</div>
-                    </details>` : ''}
+                ${rowsHtml || `<p class="col-empty">${escapeHtml(emptyText)}</p>`}
             </div>
         </section>`;
 }
@@ -874,71 +1093,455 @@ function itemChip(item) {
     return `<span class="chip chip-${item.item_type}">${thumb}<span>${escapeHtml(item.name || t('client.removedItem'))}</span>${quantity > 1 ? `<b>×${quantity}</b>` : ''}</span>`;
 }
 
-function renderTicket(ticket, access = { editable: true, takeable: false }) {
-    const isDone = ticket.status === 'completed';
+function itemNames(items) {
+    return items.map(item => `${item.name || t('client.removedItem')}${Number(item.quantity) > 1 ? ` ×${Number(item.quantity)}` : ''}`)
+        .join(I18N.listSeparator());
+}
+
+function renderTicket(ticket, access = { editable: true, takeable: false }, nowMark = '') {
     const canEdit = access.editable;
     const services = ticket.items.filter(item => item.item_type === 'service');
     const products = ticket.items.filter(item => item.item_type === 'product');
     const name = String(ticket.customer_name || '').trim() || t('cashier.walkIn');
-    const stateClass = ticket.status === 'in-service' ? 'is-active' : isDone ? 'is-done' : 'is-waiting';
+    const clock = ticket.time
+        ? `<span class="ticket-clock">${timeLabel(ticket.time)}</span>`
+        : `<span class="ticket-clock ticket-clock-none">${escapeHtml(t('slots.noTime'))}</span>`;
+    const online = ticket.online_id ? `<span class="badge badge-online" title="${escapeHtml(t('booking.badgeTitle'))}">${icon('globe')}${escapeHtml(t('booking.badge'))}</span>` : '';
 
-    const addChip = (focus, empty) => `
-        <button type="button" class="chip chip-add" data-action="edit-client" data-id="${ticket.id}" data-focus="${focus}">
-            ${icon('plus')}${empty ? `<span>${escapeHtml(t(focus === 'products' ? 'cashier.addProduct' : 'cashier.addService'))}</span>` : ''}
-        </button>`;
+    // Finished clients are a short green row in their slot.
+    if (ticket.status === 'completed') {
+        const method = ticket.payment_method === 'card' ? 'card' : 'cash';
+        return `
+            <article class="ticket ticket-compact is-done" data-ticket="${ticket.id}" ${nowMark}>
+                ${clock}
+                <div class="ticket-compact-main">
+                    <strong>${escapeHtml(name)}</strong>
+                    ${ticket.items.length ? `<span>${escapeHtml(itemNames(ticket.items))}</span>` : ''}
+                </div>
+                <div class="ticket-compact-end">
+                    <span class="ticket-compact-money" title="${escapeHtml(t(`pay.${method}`))}">${icon('check')}${money(ticket.total)}</span>
+                    ${canEdit ? `<button type="button" class="btn-icon btn-icon-sm" data-action="edit-finished" data-id="${ticket.id}" aria-label="${escapeHtml(t('history.editLocked'))}" title="${escapeHtml(t('history.editLocked'))}">${icon('pencil')}</button>` : ''}
+                </div>
+            </article>`;
+    }
 
+    const isActive = ticket.status === 'in-service';
+    const amounts = ticketMoney(ticket);
     const line = (kind, list) => {
         const label = t(kind === 'products' ? 'client.products' : 'client.services');
-        const chips = list.map(itemChip).join('');
-        const none = list.length ? '' : `<span class="chip-none">${escapeHtml(t(kind === 'products' ? 'cashier.noProducts' : 'cashier.noServices'))}</span>`;
-        const tail = isDone || !canEdit ? none : addChip(kind, !list.length);
         return `
             <div class="ticket-line" title="${escapeHtml(label)}">
                 <span class="line-icon" aria-label="${escapeHtml(label)}">${icon(kind === 'products' ? 'bag' : 'scissors')}</span>
-                <div class="chips">${chips}${tail}</div>
+                <div class="chips">${list.map(itemChip).join('')}</div>
             </div>`;
     };
+    const serviceLine = services.length
+        ? line('services', services)
+        : canEdit
+            ? `<div class="ticket-line"><span class="line-icon">${icon('scissors')}</span><div class="chips"><button type="button" class="chip chip-add" data-action="slot-edit" data-id="${ticket.id}">${icon('plus')}<span>${escapeHtml(t('cashier.addService'))}</span></button></div></div>`
+            : '';
 
-    let actions = '';
-    const editButton = `<button type="button" class="btn-icon" data-action="edit-client" data-id="${ticket.id}" aria-label="${escapeHtml(t('common.edit'))}" title="${escapeHtml(t('common.edit'))}">${icon('pencil')}</button>`;
-    if (ticket.status === 'waiting') {
-        if (canEdit || access.takeable) {
-            actions = `
-                <button type="button" class="btn btn-primary btn-sm" data-action="take-client" data-id="${ticket.id}">${icon('scissors')}<span>${escapeHtml(t('cashier.take'))}</span></button>
-                ${canEdit ? editButton : ''}`;
-        }
-    } else if (ticket.status === 'in-service') {
-        if (canEdit) {
-            actions = `
-                <button type="button" class="btn btn-light btn-sm" data-action="pay-client" data-id="${ticket.id}">${icon('check')}<span>${escapeHtml(t('cashier.finish'))}</span></button>
-                <button type="button" class="btn-icon" data-action="back-to-waiting" data-id="${ticket.id}" aria-label="${escapeHtml(t('cashier.backToWaiting'))}" title="${escapeHtml(t('cashier.backToWaiting'))}">${icon('undo')}</button>
-                ${editButton}`;
-        }
-    } else {
-        const method = ticket.payment_method === 'card' ? 'card' : ticket.payment_method === 'cash' ? 'cash' : 'other';
-        actions = `
-            <span class="paid-label">${icon(method === 'card' ? 'card' : 'cash')}${escapeHtml(t(`pay.${method}`))}</span>
-            ${canEdit ? `<button type="button" class="btn-icon" data-action="edit-finished" data-id="${ticket.id}" aria-label="${escapeHtml(t('history.editLocked'))}" title="${escapeHtml(t('history.editLocked'))}">${icon('pencil')}</button>` : ''}`;
+    const buttons = [];
+    if (ticket.status === 'waiting' && (canEdit || access.takeable)) {
+        buttons.push(`<button type="button" class="btn btn-outline btn-sm" data-action="take-client" data-id="${ticket.id}" title="${escapeHtml(t('cashier.take'))}">${icon('scissors')}<span>${escapeHtml(t('cashier.start'))}</span></button>`);
+    }
+    if (isActive && canEdit) {
+        buttons.push(`<button type="button" class="btn-icon" data-action="back-to-waiting" data-id="${ticket.id}" aria-label="${escapeHtml(t('cashier.backToWaiting'))}" title="${escapeHtml(t('cashier.backToWaiting'))}">${icon('undo')}</button>`);
+    }
+    if (canEdit) {
+        buttons.push(`<button type="button" class="btn ${isActive ? 'btn-light' : 'btn-primary'} btn-sm btn-done" data-action="done-client" data-id="${ticket.id}">${icon('check')}<span>${escapeHtml(t('done.button'))}</span></button>`);
     }
 
     return `
-        <article class="ticket ${stateClass}" data-ticket="${ticket.id}">
+        <article class="ticket ${isActive ? 'is-active' : 'is-waiting'}" data-ticket="${ticket.id}" ${nowMark}>
             <div class="ticket-top">
+                ${clock}
                 ${statusBadge(ticket)}
-                ${ticket.online_id ? `<span class="badge badge-online" title="${escapeHtml(t('booking.badgeTitle'))}">${icon('globe')}${escapeHtml(t('booking.badge'))}</span>` : ''}
-                ${ticket.time ? `<span class="ticket-time">${icon('clock')}${timeLabel(ticket.time)}</span>` : ''}
+                ${online}
+                ${canEdit ? `<button type="button" class="btn-icon btn-icon-sm ticket-edit" data-action="slot-edit" data-id="${ticket.id}" aria-label="${escapeHtml(t('common.edit'))}" title="${escapeHtml(t('common.edit'))}">${icon('pencil')}</button>` : ''}
             </div>
             <div class="ticket-who">
                 <strong>${escapeHtml(name)}</strong>
                 ${ticket.customer_phone ? `<bdi dir="ltr">${escapeHtml(ticket.customer_phone)}</bdi>` : ''}
             </div>
-            ${line('services', services)}
-            ${line('products', products)}
+            ${serviceLine}
+            ${products.length ? line('products', products) : ''}
             <div class="ticket-foot">
-                <strong class="ticket-total">${money(ticket.total)}</strong>
-                <div class="ticket-actions">${actions}</div>
+                <div class="ticket-money">
+                    <strong class="ticket-total">${money(ticket.total)}</strong>
+                    ${amounts.entered != null ? `<small class="money-tag">${escapeHtml(t('slotForm.enteredTag'))}</small>` : ''}
+                </div>
+                ${buttons.length ? `<div class="ticket-actions">${buttons.join('')}</div>` : ''}
             </div>
         </article>`;
+}
+
+/* ------------------------------------------------------------------ */
+/* Add or edit a client inside a slot (no pop-up)                      */
+/* ------------------------------------------------------------------ */
+
+let slotCustomers = [];
+// Active services, from the last time the board was drawn.
+let slotCatalog = [];
+let slotSaving = false;
+
+async function loadSlotCustomers() {
+    slotCustomers = await api.dbQuery('SELECT id, name, phone FROM customers WHERE is_active = 1 ORDER BY id DESC LIMIT 3000');
+}
+
+async function openSlotForm(barberId, time) {
+    if (!isAdmin() && !isMine(barberId)) {
+        denyNotYours();
+        return;
+    }
+    if (!isValidTime(time)) return;
+    await loadSlotCustomers();
+    state.slotForm = {
+        ticketId: null,
+        barberId: Number(barberId),
+        date: state.boardDate,
+        time,
+        name: '',
+        phone: '',
+        customerId: null,
+        services: [],
+        prices: {},
+        extra: [],
+        amount: '',
+        products: 0,
+        focus: true
+    };
+    await renderPage({ keepScroll: true });
+}
+
+async function openSlotEdit(id) {
+    const ticket = await loadTicket(id);
+    if (!ticket || !OPEN_STATUSES.includes(ticket.status)) {
+        toast(t('client.notEditable'), 'error');
+        await renderPage({ keepScroll: true });
+        return;
+    }
+    if (!canManageTicket(ticket)) {
+        denyNotYours();
+        return;
+    }
+    await loadSlotCustomers();
+    const services = ticket.items.filter(item => item.item_type === 'service');
+    const prices = {};
+    services.forEach(item => {
+        prices[Number(item.item_id)] = Number(item.price || 0);
+    });
+    const amounts = ticketMoney(ticket);
+    state.slotForm = {
+        ticketId: ticket.id,
+        barberId: ticket.barber_id == null ? null : Number(ticket.barber_id),
+        date: ticket.date,
+        time: String(ticket.time || '').slice(0, 5),
+        name: ticket.customer_name || '',
+        phone: ticket.customer_phone || '',
+        customerId: ticket.customer_id ? Number(ticket.customer_id) : null,
+        services: [...new Set(services.map(item => Number(item.item_id)))],
+        prices,
+        // Services that were removed from the catalog stay on the visit.
+        extra: services.map(item => ({ id: Number(item.item_id), name: item.name || t('client.removedItem'), price: Number(item.price || 0) })),
+        amount: amounts.entered == null ? '' : String(amounts.entered),
+        products: amounts.products,
+        focus: true
+    };
+    if (state.boardDate !== ticket.date) state.boardDate = ticket.date;
+    await renderPage({ keepScroll: true });
+}
+
+function closeSlotForm() {
+    state.slotForm = null;
+    return renderPage({ keepScroll: true });
+}
+
+function slotServices(form, catalog) {
+    const list = catalog.map(service => ({ id: Number(service.id), name: service.name, price: Number(service.price || 0) }));
+    form.extra.forEach(item => {
+        if (!list.some(service => service.id === item.id)) list.push(item);
+    });
+    return list;
+}
+
+function slotServicesTotal(form, catalog) {
+    return sum(form.services, id => form.prices[id] ?? catalog.find(service => Number(service.id) === id)?.price ?? 0);
+}
+
+function slotSuggestionsHtml(form) {
+    if (form.customerId) {
+        const label = form.name || form.phone || t('cashier.walkIn');
+        return `
+            <span class="linked-pill">${icon('user')}<span>${escapeHtml(t('client.linked', { name: label }))}</span>
+                <button type="button" data-slot-unlink aria-label="${escapeHtml(t('client.unlink'))}" title="${escapeHtml(t('client.unlink'))}">${icon('x')}</button>
+            </span>`;
+    }
+    const name = form.name.trim().toLowerCase();
+    const phone = digits(form.phone);
+    if (name.length < 2 && phone.length < 3) return '';
+    const matches = slotCustomers.filter(customer =>
+        (name.length >= 2 && String(customer.name || '').toLowerCase().includes(name))
+        || (phone.length >= 3 && digits(customer.phone).includes(phone))
+    ).slice(0, 3);
+    return matches.map(customer => `
+        <button type="button" class="suggest" data-slot-customer="${customer.id}">
+            ${icon('user')}<span>${escapeHtml(customer.name || t('cashier.walkIn'))}</span>
+            ${customer.phone ? `<bdi dir="ltr">${escapeHtml(customer.phone)}</bdi>` : ''}
+        </button>`).join('');
+}
+
+function renderSlotForm(form, ctx, nowMark = '') {
+    ctx.formShown = true;
+    const editing = form.ticketId != null;
+    const services = slotServices(form, ctx.services);
+    const selected = new Set(form.services);
+    const servicesTotal = slotServicesTotal(form, ctx.services);
+    const barberOptions = editing && isAdmin() ? `
+        <label class="field"><span>${escapeHtml(t('client.barber'))}</span>
+            <select name="barber">
+                <option value="">${escapeHtml(t('cashier.anyBarber'))}</option>
+                ${ctx.barbers.map(barber => `<option value="${barber.id}" ${Number(barber.id) === form.barberId ? 'selected' : ''}>${escapeHtml(barber.name)}</option>`).join('')}
+            </select>
+        </label>` : '';
+
+    return `
+        <form class="slot-form" data-form="slot" autocomplete="off" ${nowMark}>
+            <div class="slot-form-head">
+                <span class="ticket-clock">${form.time ? timeLabel(form.time) : escapeHtml(t('slots.noTime'))}</span>
+                <strong>${escapeHtml(t(editing ? 'slotForm.edit' : 'slotForm.new'))}</strong>
+                <button type="button" class="btn-icon btn-icon-sm" data-action="slot-cancel" aria-label="${escapeHtml(t('common.cancel'))}">${icon('x')}</button>
+            </div>
+            <input type="text" name="name" maxlength="80" autocomplete="off" placeholder="${escapeHtml(t('slotForm.namePh'))}" aria-label="${escapeHtml(t('client.name'))}" value="${escapeHtml(form.name)}">
+            <input type="tel" name="phone" maxlength="30" inputmode="tel" dir="ltr" autocomplete="off" placeholder="${escapeHtml(t('slotForm.phonePh'))}" aria-label="${escapeHtml(t('client.phone'))}" value="${escapeHtml(form.phone)}">
+            <div class="slot-suggestions" data-slot-suggestions>${slotSuggestionsHtml(form)}</div>
+            <div class="slot-form-section">
+                <span class="slot-form-label">${icon('scissors')}${escapeHtml(t('slotForm.service'))}</span>
+                ${services.length ? `
+                    <div class="svc-chips">
+                        ${services.map(service => `
+                            <button type="button" class="svc-chip ${selected.has(service.id) ? 'selected' : ''}" data-slot-svc="${service.id}" aria-pressed="${selected.has(service.id)}">
+                                <span>${escapeHtml(service.name)}</span><small>${escapeHtml(I18N.formatNumber(form.prices[service.id] ?? service.price))}</small>
+                            </button>`).join('')}
+                    </div>` : `<p class="slot-form-hint">${escapeHtml(t('client.noServices'))}</p>`}
+            </div>
+            ${isAdmin() ? `
+                <label class="slot-form-section">
+                    <span class="slot-form-label">${icon('wallet')}${escapeHtml(t('slotForm.money'))}</span>
+                    <span class="money-input">
+                        <input type="number" name="amount" min="0" step="any" inputmode="decimal" value="${escapeHtml(form.amount)}" placeholder="${escapeHtml(I18N.formatNumber(servicesTotal))}" data-slot-amount>
+                        <span>${escapeHtml(I18N.currency())}</span>
+                    </span>
+                    <small class="slot-form-hint">${escapeHtml(t('slotForm.moneyHint'))}</small>
+                </label>` : ''}
+            ${editing ? `
+                <div class="slot-form-move ${barberOptions ? 'grid-2' : ''}">
+                    <label class="field"><span>${escapeHtml(t('client.time'))}</span>
+                        <input type="time" name="time" value="${escapeHtml(form.time)}">
+                    </label>
+                    ${barberOptions}
+                </div>` : ''}
+            ${form.products ? `<p class="slot-form-hint">${icon('bag')}<span>${escapeHtml(t('slotForm.productsKept'))}</span></p>` : ''}
+            <div class="slot-form-actions">
+                ${editing ? `<button type="button" class="btn btn-ghost-danger btn-sm" data-action="slot-remove" data-id="${form.ticketId}">${icon('trash')}<span>${escapeHtml(t('client.remove'))}</span></button>` : ''}
+                <span class="spacer"></span>
+                <button type="button" class="btn btn-ghost btn-sm" data-action="slot-cancel">${escapeHtml(t('common.cancel'))}</button>
+                <button type="submit" class="btn btn-primary btn-sm">${icon(editing ? 'check' : 'plus')}<span>${escapeHtml(t(editing ? 'common.save' : 'client.addClient'))}</span></button>
+            </div>
+        </form>`;
+}
+
+// Typing in the slot form keeps its values in state, so a refresh of the board does not lose them.
+function onSlotFormInput(element) {
+    const form = state.slotForm;
+    if (!form) return;
+    const box = element.closest('[data-form="slot"]');
+    if (element.name === 'name' || element.name === 'phone') {
+        form[element.name] = element.value;
+        const suggestions = box.querySelector('[data-slot-suggestions]');
+        if (suggestions) suggestions.innerHTML = slotSuggestionsHtml(form);
+    } else if (element.name === 'amount') {
+        form.amount = element.value;
+    } else if (element.name === 'time') {
+        form.time = element.value;
+    } else if (element.name === 'barber') {
+        form.barberId = element.value ? Number(element.value) : null;
+    }
+}
+
+function onSlotFormClick(event) {
+    const form = state.slotForm;
+    const box = event.target.closest('[data-form="slot"]');
+    if (!form || !box) return false;
+    const chip = event.target.closest('[data-slot-svc]');
+    if (chip) {
+        const id = Number(chip.dataset.slotSvc);
+        if (form.services.includes(id)) form.services = form.services.filter(item => item !== id);
+        else form.services.push(id);
+        const selected = form.services.includes(id);
+        chip.classList.toggle('selected', selected);
+        chip.setAttribute('aria-pressed', String(selected));
+        const amount = box.querySelector('[data-slot-amount]');
+        if (amount) amount.placeholder = I18N.formatNumber(slotServicesTotal(form, slotCatalog));
+        return true;
+    }
+    const suggestion = event.target.closest('[data-slot-customer]');
+    if (suggestion) {
+        const customer = slotCustomers.find(item => Number(item.id) === Number(suggestion.dataset.slotCustomer));
+        if (customer) {
+            form.customerId = Number(customer.id);
+            form.name = customer.name || '';
+            form.phone = customer.phone || '';
+            box.querySelector('[name="name"]').value = form.name;
+            box.querySelector('[name="phone"]').value = form.phone;
+            box.querySelector('[data-slot-suggestions]').innerHTML = slotSuggestionsHtml(form);
+        }
+        return true;
+    }
+    if (event.target.closest('[data-slot-unlink]')) {
+        form.customerId = null;
+        form.name = '';
+        form.phone = '';
+        box.querySelector('[name="name"]').value = '';
+        box.querySelector('[name="phone"]').value = '';
+        box.querySelector('[data-slot-suggestions]').innerHTML = '';
+        box.querySelector('[name="name"]').focus();
+        return true;
+    }
+    return false;
+}
+
+async function saveSlotForm() {
+    const form = state.slotForm;
+    if (!form || slotSaving) return;
+    const name = form.name.trim();
+    const phone = form.phone.trim();
+    let amount = null;
+    if (isAdmin() && String(form.amount).trim() !== '') {
+        amount = parsePrice(form.amount);
+        if (amount == null) {
+            toast(t('slotForm.badMoney'), 'error');
+            dom.page.querySelector('[data-slot-amount]')?.focus();
+            return;
+        }
+    }
+
+    slotSaving = true;
+    try {
+        const catalog = await api.dbQuery('SELECT id, price FROM services');
+        let current = null;
+        if (form.ticketId) {
+            current = await loadTicket(form.ticketId);
+            if (!current || !OPEN_STATUSES.includes(current.status) || !canManageTicket(current)) {
+                toast(t('client.notEditable'), 'error');
+                state.slotForm = null;
+                await renderPage({ keepScroll: true });
+                return;
+            }
+            // Only the admin types the money; a barber's change keeps it.
+            if (!isAdmin()) amount = ticketMoney(current).entered;
+        }
+
+        const statements = [];
+        let customerRef = null;
+        if (form.customerId) {
+            if (name || phone) {
+                statements.push({
+                    query: 'UPDATE customers SET name = ?, phone = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                    params: [name || null, phone || null, form.customerId]
+                });
+                customerRef = form.customerId;
+            }
+        } else if (name || phone) {
+            const phoneDigits = digits(phone);
+            const match = phoneDigits ? slotCustomers.find(customer => digits(customer.phone) === phoneDigits) : null;
+            if (match) {
+                customerRef = Number(match.id);
+                if (name && !String(match.name || '').trim()) {
+                    statements.push({ query: 'UPDATE customers SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', params: [name, customerRef] });
+                }
+            } else {
+                statements.push({ query: 'INSERT INTO customers (name, phone, total_visits, total_spent) VALUES (?, ?, 0, 0)', params: [name || null, phone || null] });
+                customerRef = { lastIDFrom: statements.length - 1 };
+            }
+        }
+
+        const priceOf = id => form.prices[id] ?? Number(catalog.find(service => Number(service.id) === id)?.price || 0);
+        const services = form.services.map(id => ({ id, price: priceOf(id) }));
+        const products = current ? ticketMoney(current).products : 0;
+        const total = (amount ?? sum(services, item => item.price)) + products;
+
+        let orderRef;
+        let time = form.time;
+        if (current) {
+            time = isValidTime(form.time) ? form.time.slice(0, 5) : String(current.time || '').slice(0, 5);
+            const barberId = isAdmin() ? form.barberId : Number(current.barber_id);
+            const status = barberId ? current.status : 'waiting';
+            statements.push({
+                query: `UPDATE orders SET customer_id = ?, time = ?, total = ?, barber_id = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ? AND status IN ('waiting', 'in-service')`,
+                params: [customerRef, time, total, barberId, status, current.id]
+            });
+            statements.push({ query: "DELETE FROM order_items WHERE order_id = ? AND item_type = 'service'", params: [current.id] });
+            orderRef = current.id;
+        } else {
+            statements.push({
+                query: "INSERT INTO orders (customer_id, date, time, total, discount, status, payment_method, barber_id) VALUES (?, ?, ?, ?, 0, 'waiting', NULL, ?)",
+                params: [customerRef, form.date, time, total, form.barberId]
+            });
+            orderRef = { lastIDFrom: statements.length - 1 };
+        }
+        services.forEach(item => {
+            statements.push({
+                query: "INSERT INTO order_items (order_id, item_type, item_id, quantity, price) VALUES (?, 'service', ?, 1, ?)",
+                params: [orderRef, item.id, item.price]
+            });
+        });
+
+        await runStatements(statements);
+        state.slotForm = null;
+        toast(current ? t('toast.clientSaved') : t('toast.clientAddedAt', { time: I18N.formatTime(time) }));
+        await renderPage({ keepScroll: true });
+    } catch (error) {
+        handleError(error);
+    } finally {
+        slotSaving = false;
+    }
+}
+
+async function removeOpenClient(id) {
+    const ticket = await loadTicket(id);
+    if (!ticket || !OPEN_STATUSES.includes(ticket.status)) {
+        state.slotForm = null;
+        await renderPage({ keepScroll: true });
+        return;
+    }
+    if (!canManageTicket(ticket)) {
+        denyNotYours();
+        return;
+    }
+    if (!await confirmDialog(t('confirm.removeClient'), { okLabel: t('client.remove'), danger: true })) return;
+    await runStatements([
+        { query: 'DELETE FROM order_items WHERE order_id = ?', params: [id] },
+        { query: 'DELETE FROM payments WHERE order_id = ?', params: [id] },
+        { query: "DELETE FROM orders WHERE id = ? AND status IN ('waiting', 'in-service')", params: [id] }
+    ]);
+    state.slotForm = null;
+    toast(t('toast.clientRemoved'));
+    await renderPage({ keepScroll: true });
+}
+
+async function saveSlotLength(value) {
+    if (!isAdmin()) return;
+    const minutes = clampInt(value, 5, 240, null);
+    if (minutes == null) {
+        toast(t('slots.badLength'), 'error');
+        return;
+    }
+    await runStatements([setOption('booking.slot', String(minutes))]);
+    await loadBookingOptions();
+    toast(t('slots.saved', { n: minutes }));
+    await renderPage({ keepScroll: true });
 }
 
 async function getActiveBarbers() {
@@ -1102,8 +1705,9 @@ function lockEditing() {
 }
 
 // Asks for the password, unless it was entered in the last few minutes.
-async function requireEditPassword() {
-    if (editUnlocked()) {
+// always = true asks every time (deleting from History, clearing history).
+async function requireEditPassword({ always = false, text = t('lock.text'), okLabel = t('lock.unlock'), danger = false } = {}) {
+    if (!always && editUnlocked()) {
         unlockEditing();
         return true;
     }
@@ -1116,7 +1720,7 @@ async function requireEditPassword() {
             autofocus: true,
             body: `
                 <form class="stack lock-form" data-lock-form>
-                    <div class="lock-hero">${icon('lock')}<p>${escapeHtml(t('lock.text'))}</p></div>
+                    <div class="lock-hero">${icon('lock')}<p>${escapeHtml(text)}</p></div>
                     <label class="field"><span>${escapeHtml(t('lock.password'))}</span>
                         <input type="password" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="100" data-lock-input>
                     </label>
@@ -1125,7 +1729,7 @@ async function requireEditPassword() {
             footer: `
                 <span class="spacer"></span>
                 <button type="button" class="btn btn-ghost" data-modal-close>${escapeHtml(t('common.cancel'))}</button>
-                <button type="button" class="btn btn-primary" data-lock-ok>${icon('unlock')}<span>${escapeHtml(t('lock.unlock'))}</span></button>`,
+                <button type="button" class="btn ${danger ? 'btn-danger' : 'btn-primary'}" data-lock-ok>${icon(danger ? 'trash' : 'unlock')}<span>${escapeHtml(okLabel)}</span></button>`,
             onClose: () => resolve(unlocked)
         });
         const input = entry.modal.querySelector('[data-lock-input]');
@@ -1167,7 +1771,57 @@ async function editFinished(id) {
         return;
     }
     if (!await requireEditPassword()) return;
-    await openClientModal({ ticketId: id, finished: true });
+    await openFinishedModal(id);
+}
+
+// Deleting a finished client always asks for the password, even when editing is unlocked.
+async function deleteFinishedClient(id) {
+    const ticket = await loadTicket(id);
+    if (!ticket || ticket.status !== 'completed') {
+        toast(t('client.notEditable'), 'error');
+        await renderPage({ keepScroll: true });
+        return false;
+    }
+    if (!canManageTicket(ticket)) {
+        denyNotYours();
+        return false;
+    }
+    const name = String(ticket.customer_name || '').trim() || t('cashier.walkIn');
+    const ok = await requireEditPassword({
+        always: true,
+        text: t('lock.deleteText', { name, amount: moneyText(ticket.total) }),
+        okLabel: t('common.delete'),
+        danger: true
+    });
+    if (!ok) return false;
+    const current = await loadTicket(id);
+    if (!current || current.status !== 'completed') {
+        await renderPage({ keepScroll: true });
+        return false;
+    }
+    const statements = [];
+    current.items.filter(item => item.item_type === 'product').forEach(item => {
+        statements.push({
+            query: 'UPDATE products SET stock = COALESCE(stock, 0) + ? WHERE id = ?',
+            params: [Number(item.quantity || 1), Number(item.item_id)]
+        });
+    });
+    if (current.customer_id) {
+        statements.push({
+            query: `UPDATE customers SET total_visits = MAX(COALESCE(total_visits, 0) - 1, 0),
+                    total_spent = MAX(COALESCE(total_spent, 0) - ?, 0), updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+            params: [Number(current.total || 0), Number(current.customer_id)]
+        });
+    }
+    statements.push(
+        { query: 'DELETE FROM payments WHERE order_id = ?', params: [id] },
+        { query: 'DELETE FROM order_items WHERE order_id = ?', params: [id] },
+        { query: "DELETE FROM orders WHERE id = ? AND COALESCE(status, 'completed') = 'completed'", params: [id] }
+    );
+    await runStatements(statements);
+    toast(t('toast.finishedDeleted'));
+    await renderPage({ keepScroll: true });
+    return true;
 }
 
 async function saveHistoryPassword(form) {
@@ -1196,51 +1850,46 @@ async function saveHistoryPassword(form) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Client form (new / edit)                                            */
+/* Finished client form (after the password)                           */
 /* ------------------------------------------------------------------ */
 
-// finished = true edits a paid client (opened from History after the password).
-async function openClientModal({ ticketId = null, barberId = null, focus = null, finished = false } = {}) {
-    const queries = [
+// Edits a paid client (opened from History or the board after the password).
+async function openFinishedModal(ticketId) {
+    const [services, products, categories, customers, allBarbers] = await queryMany([
         { query: 'SELECT id, name, price FROM services WHERE is_active = 1 ORDER BY name' },
         { query: 'SELECT id, name, price, stock, image_data, category_id FROM products WHERE is_active = 1 ORDER BY name' },
         { query: 'SELECT id, name FROM categories ORDER BY name' },
         { query: 'SELECT id, name, phone FROM customers WHERE is_active = 1 ORDER BY id DESC LIMIT 3000' },
         { query: 'SELECT id, name, is_active FROM barbers ORDER BY id' }
-    ];
-    const [services, products, categories, customers, allBarbers] = await queryMany(queries);
-    const ticket = ticketId ? await loadTicket(ticketId) : null;
-
-    const editableStatus = ticket && (finished ? ticket.status === 'completed' : OPEN_STATUSES.includes(ticket.status));
-    if (ticketId && !editableStatus) {
+    ]);
+    const ticket = await loadTicket(ticketId);
+    if (!ticket || ticket.status !== 'completed') {
         toast(t('client.notEditable'), 'error');
         await renderPage({ keepScroll: true });
         return;
     }
-    if (ticket && !canManageTicket(ticket)) {
+    if (!canManageTicket(ticket)) {
         denyNotYours();
         await renderPage({ keepScroll: true });
         return;
     }
-    // A barber always adds clients to their own column.
-    if (!ticket && !isAdmin()) barberId = myBarberId();
 
-    // Active barbers, plus the client's current barber if that barber was removed (finished clients).
+    // Active barbers, plus the client's own barber if that barber was removed.
     const barbers = allBarbers.filter(barber => Number(barber.is_active)
-        || (finished && ticket?.barber_id != null && Number(barber.id) === Number(ticket.barber_id)));
+        || (ticket.barber_id != null && Number(barber.id) === Number(ticket.barber_id)));
 
     const draft = {
-        id: ticket ? ticket.id : null,
-        status: ticket ? ticket.status : 'waiting',
-        finished: Boolean(finished && ticket),
-        method: ticket?.payment_method === 'card' ? 'card' : 'cash',
-        customerId: ticket?.customer_id ? Number(ticket.customer_id) : null,
+        id: ticket.id,
+        method: ticket.payment_method === 'card' ? 'card' : 'cash',
+        customerId: ticket.customer_id ? Number(ticket.customer_id) : null,
+        // Money the admin typed for this visit (null = the service prices count).
+        entered: ticketMoney(ticket).entered,
         services: new Map(),
         products: new Map()
     };
 
     // Keep items on the visit even if they were later removed from the catalog.
-    (ticket?.items || []).forEach(item => {
+    ticket.items.forEach(item => {
         const id = Number(item.item_id);
         const quantity = Number(item.quantity || 1);
         const price = Number(item.price || 0);
@@ -1259,11 +1908,9 @@ async function openClientModal({ ticketId = null, barberId = null, focus = null,
         }
     });
 
-    const selectedBarber = ticket
-        ? (ticket.barber_id != null && barbers.some(barber => Number(barber.id) === Number(ticket.barber_id)) ? String(ticket.barber_id) : '')
-        : (barberId ? String(barberId) : '');
-    const dateValue = ticket ? ticket.date : state.boardDate;
-    const timeValue = ticket ? String(ticket.time || '').slice(0, 5) : (state.boardDate === todayString() ? nowTime() : '');
+    const selectedBarber = ticket.barber_id != null && barbers.some(barber => Number(barber.id) === Number(ticket.barber_id))
+        ? String(ticket.barber_id) : '';
+    const timeValue = String(ticket.time || '').slice(0, 5);
     const showProductFilters = products.length > 8 || categories.length > 0;
     const usedCategories = categories.filter(category => products.some(product => Number(product.category_id) === Number(category.id)));
 
@@ -1277,7 +1924,7 @@ async function openClientModal({ ticketId = null, barberId = null, focus = null,
                     <span class="choice-price">${money(selected ? selected.price : service.price)}</span>
                 </button>`;
         }).join('')}</div>`
-        : `<div class="inline-empty">${escapeHtml(t('client.noServices'))} ${isAdmin() ? `<button type="button" class="link" data-goto-catalog="services">${escapeHtml(t('client.openCatalog'))}</button>` : ''}</div>`;
+        : `<div class="inline-empty">${escapeHtml(t('client.noServices'))}</div>`;
 
     const productChoices = products.length
         ? `
@@ -1310,36 +1957,28 @@ async function openClientModal({ ticketId = null, barberId = null, focus = null,
                         </div>
                     </div>`;
             }).join('')}</div>`
-        : `<div class="inline-empty">${escapeHtml(t('client.noProducts'))} ${isAdmin() ? `<button type="button" class="link" data-goto-catalog="products">${escapeHtml(t('client.openCatalog'))}</button>` : ''}</div>`;
+        : `<div class="inline-empty">${escapeHtml(t('client.noProducts'))}</div>`;
 
     const optional = `<em>${escapeHtml(t('common.optional'))}</em>`;
     const barberField = isAdmin()
         ? `<select data-field="barber">
-                <option value="">${escapeHtml(t(draft.finished ? 'history.noBarber' : 'cashier.anyBarber'))}</option>
+                <option value="">${escapeHtml(t('history.noBarber'))}</option>
                 ${barbers.map(barber => `<option value="${barber.id}" ${String(barber.id) === selectedBarber ? 'selected' : ''}>${escapeHtml(barber.name)}${Number(barber.is_active) ? '' : ` (${escapeHtml(t('cashier.removedBarber'))})`}</option>`).join('')}
            </select>`
         : `<select data-field="barber" disabled>
                 ${barbers.filter(barber => isMine(barber.id)).map(barber => `<option value="${barber.id}" selected>${escapeHtml(barber.name)}</option>`).join('')}
            </select>`;
-    const paymentSection = draft.finished ? `
-            <section class="form-section">
-                <h3 class="section-title">${icon('wallet')}${escapeHtml(t('pay.method'))}</h3>
-                <div class="segmented segmented-lg" data-finish-method>
-                    <button type="button" class="${draft.method === 'cash' ? 'active' : ''}" data-method="cash" aria-pressed="${draft.method === 'cash'}">${icon('cash')}${escapeHtml(t('pay.cash'))}</button>
-                    <button type="button" class="${draft.method === 'card' ? 'active' : ''}" data-method="card" aria-pressed="${draft.method === 'card'}">${icon('card')}${escapeHtml(t('pay.card'))}</button>
-                </div>
-            </section>` : '';
     const body = `
         <div class="client-form">
-            ${draft.finished ? `<p class="notice notice-unlocked">${icon('unlock')}<span>${escapeHtml(t('client.finishedNotice'))}</span></p>` : ''}
+            <p class="notice notice-unlocked">${icon('unlock')}<span>${escapeHtml(t('client.finishedNotice'))}</span></p>
             <section class="form-section">
                 <h3 class="section-title">${icon('user')}${escapeHtml(t('client.who'))}</h3>
                 <div class="grid-2">
                     <label class="field"><span>${escapeHtml(t('client.name'))} ${optional}</span>
-                        <input type="text" data-field="name" maxlength="80" autocomplete="off" value="${escapeHtml(ticket?.customer_name || '')}">
+                        <input type="text" data-field="name" maxlength="80" autocomplete="off" value="${escapeHtml(ticket.customer_name || '')}">
                     </label>
                     <label class="field"><span>${escapeHtml(t('client.phone'))} ${optional}</span>
-                        <input type="tel" data-field="phone" maxlength="30" inputmode="tel" dir="ltr" autocomplete="off" value="${escapeHtml(ticket?.customer_phone || '')}">
+                        <input type="tel" data-field="phone" maxlength="30" inputmode="tel" dir="ltr" autocomplete="off" value="${escapeHtml(ticket.customer_phone || '')}">
                     </label>
                 </div>
                 <div class="linked-row" data-linked></div>
@@ -1351,15 +1990,29 @@ async function openClientModal({ ticketId = null, barberId = null, focus = null,
                     <label class="field"><span>${escapeHtml(t('client.barber'))}</span>
                         ${barberField}
                     </label>
-                    <label class="field"><span>${escapeHtml(t('client.date'))} ${optional}</span>
-                        <input type="date" data-field="date" value="${escapeHtml(dateValue)}">
+                    <label class="field"><span>${escapeHtml(t('client.date'))}</span>
+                        <input type="date" data-field="date" value="${escapeHtml(ticket.date)}">
                     </label>
                     <label class="field"><span>${escapeHtml(t('client.time'))} ${optional}</span>
                         <input type="time" data-field="time" value="${escapeHtml(timeValue)}">
                     </label>
                 </div>
             </section>
-            ${paymentSection}
+            <section class="form-section">
+                <h3 class="section-title">${icon('wallet')}${escapeHtml(t('pay.method'))}</h3>
+                <div class="segmented segmented-lg" data-finish-method>
+                    <button type="button" class="${draft.method === 'cash' ? 'active' : ''}" data-method="cash" aria-pressed="${draft.method === 'cash'}">${icon('cash')}${escapeHtml(t('pay.cash'))}</button>
+                    <button type="button" class="${draft.method === 'card' ? 'active' : ''}" data-method="card" aria-pressed="${draft.method === 'card'}">${icon('card')}${escapeHtml(t('pay.card'))}</button>
+                </div>
+                ${isAdmin() ? `
+                    <label class="field finished-money"><span>${escapeHtml(t('slotForm.money'))}</span>
+                        <span class="money-input">
+                            <input type="number" min="0" step="any" inputmode="decimal" data-field="amount" value="${draft.entered == null ? '' : escapeHtml(draft.entered)}">
+                            <span>${escapeHtml(I18N.currency())}</span>
+                        </span>
+                        <small class="field-hint">${escapeHtml(t('slotForm.moneyHint'))}</small>
+                    </label>` : ''}
+            </section>
             <section class="form-section" data-section="services">
                 <h3 class="section-title">${icon('scissors')}${escapeHtml(t('client.services'))} ${optional}</h3>
                 ${serviceChoices}
@@ -1377,25 +2030,15 @@ async function openClientModal({ ticketId = null, barberId = null, focus = null,
             <span class="foot-total">${escapeHtml(t('client.total'))} <b data-sum="total"></b></span>
         </div>
         <div class="foot-buttons">
-            ${draft.finished
-                ? `<button type="button" class="btn btn-ghost-danger" data-finished-delete>${icon('trash')}<span>${escapeHtml(t('common.delete'))}</span></button>
-                   <button type="button" class="btn btn-ghost" data-finished-reopen>${icon('undo')}<span>${escapeHtml(t('cashier.undoPay'))}</span></button>
-                   <span class="spacer"></span>
-                   <button type="button" class="btn btn-ghost" data-modal-close>${escapeHtml(t('common.cancel'))}</button>
-                   <button type="button" class="btn btn-primary" data-client-save>${icon('check')}<span>${escapeHtml(t('client.saveChanges'))}</span></button>`
-                : draft.id
-                ? `<button type="button" class="btn btn-ghost-danger" data-client-remove>${icon('trash')}<span>${escapeHtml(t('client.remove'))}</span></button>
-                   <span class="spacer"></span>
-                   <button type="button" class="btn btn-ghost" data-modal-close>${escapeHtml(t('common.cancel'))}</button>
-                   <button type="button" class="btn btn-primary" data-client-save>${icon('check')}<span>${escapeHtml(t('client.saveChanges'))}</span></button>`
-                : `<button type="button" class="btn btn-ghost" data-modal-close>${escapeHtml(t('common.cancel'))}</button>
-                   <span class="spacer"></span>
-                   <button type="button" class="btn btn-outline" data-client-save="take">${icon('scissors')}<span>${escapeHtml(t('client.saveAndTake'))}</span></button>
-                   <button type="button" class="btn btn-primary" data-client-save>${icon('plus')}<span>${escapeHtml(t('client.addClient'))}</span></button>`}
+            <button type="button" class="btn btn-ghost-danger" data-finished-delete>${icon('trash')}<span>${escapeHtml(t('common.delete'))}</span></button>
+            <button type="button" class="btn btn-ghost" data-finished-reopen>${icon('undo')}<span>${escapeHtml(t('cashier.undoPay'))}</span></button>
+            <span class="spacer"></span>
+            <button type="button" class="btn btn-ghost" data-modal-close>${escapeHtml(t('common.cancel'))}</button>
+            <button type="button" class="btn btn-primary" data-client-save>${icon('check')}<span>${escapeHtml(t('client.saveChanges'))}</span></button>
         </div>`;
 
     const entry = openModal({
-        title: draft.finished ? t('client.editFinishedTitle') : draft.id ? t('client.editTitle') : t('client.newTitle'),
+        title: t('client.editFinishedTitle'),
         size: 'lg',
         dismissible: false,
         body,
@@ -1406,10 +2049,21 @@ async function openClientModal({ ticketId = null, barberId = null, focus = null,
     const field = name => modal.querySelector(`[data-field="${name}"]`);
     const servicePrice = id => Number(services.find(service => Number(service.id) === id)?.price || 0);
     const productPrice = id => Number(products.find(product => Number(product.id) === id)?.price || 0);
+    // The admin's typed money; a barber keeps what the admin typed.
+    const enteredMoney = () => {
+        if (!isAdmin()) return { value: draft.entered, valid: true };
+        const text = field('amount').value.trim();
+        if (text === '') return { value: null, valid: true };
+        const value = parsePrice(text);
+        return { value, valid: value != null };
+    };
 
     const updateSummary = () => {
-        const servicesTotal = sum([...draft.services.values()], item => item.price * item.quantity);
+        const servicePrices = sum([...draft.services.values()], item => item.price * item.quantity);
         const productsTotal = sum([...draft.products.values()], item => item.price * item.quantity);
+        const typed = enteredMoney().value;
+        const servicesTotal = typed ?? servicePrices;
+        if (isAdmin()) field('amount').placeholder = I18N.formatNumber(servicePrices);
         modal.querySelector('[data-sum="services"]').innerHTML = money(servicesTotal);
         modal.querySelector('[data-sum="products"]').innerHTML = money(productsTotal);
         modal.querySelector('[data-sum="total"]').innerHTML = money(servicesTotal + productsTotal);
@@ -1422,7 +2076,7 @@ async function openClientModal({ ticketId = null, barberId = null, focus = null,
             return;
         }
         const customer = customers.find(item => Number(item.id) === draft.customerId);
-        const label = customer ? (customer.name || customer.phone || t('cashier.walkIn')) : (ticket?.customer_name || ticket?.customer_phone || t('cashier.walkIn'));
+        const label = customer ? (customer.name || customer.phone || t('cashier.walkIn')) : (ticket.customer_name || ticket.customer_phone || t('cashier.walkIn'));
         container.innerHTML = `
             <span class="linked-pill">${icon('user')}<span>${escapeHtml(t('client.linked', { name: label }))}</span>
                 <button type="button" data-unlink aria-label="${escapeHtml(t('client.unlink'))}" title="${escapeHtml(t('client.unlink'))}">${icon('x')}</button>
@@ -1471,44 +2125,42 @@ async function openClientModal({ ticketId = null, barberId = null, focus = null,
     let saving = false;
     const setSaving = value => {
         saving = value;
-        modal.querySelectorAll('[data-client-save], [data-client-remove], [data-finished-delete], [data-finished-reopen]').forEach(button => {
+        modal.querySelectorAll('[data-client-save], [data-finished-delete], [data-finished-reopen]').forEach(button => {
             button.disabled = value;
         });
     };
 
-    const save = async takeNow => {
+    const save = async () => {
         if (saving) return;
+        const typed = enteredMoney();
+        if (!typed.valid) {
+            toast(t('slotForm.badMoney'), 'error');
+            field('amount').focus();
+            return;
+        }
         const name = field('name').value.trim();
         const phone = field('phone').value.trim();
-        const date = isValidDate(field('date').value) ? field('date').value : (ticket?.date || state.boardDate);
+        const date = isValidDate(field('date').value) ? field('date').value : ticket.date;
         const time = isValidTime(field('time').value) ? field('time').value.slice(0, 5) : '';
         const barberValue = field('barber').value;
         const chosenBarber = isAdmin() ? (barberValue ? Number(barberValue) : null) : myBarberId();
-        if (takeNow && !chosenBarber) {
-            toast(t('client.chooseBarberToTake'), 'error');
-            field('barber').focus();
-            return;
-        }
 
         const items = [
             ...[...draft.services.entries()].map(([id, item]) => ({ type: 'service', id, ...item })),
             ...[...draft.products.entries()].map(([id, item]) => ({ type: 'product', id, ...item }))
         ];
-        const total = sum(items, item => item.price * item.quantity);
+        const servicePrices = sum(items.filter(item => item.type === 'service'), item => item.price * item.quantity);
+        const productsTotal = sum(items.filter(item => item.type === 'product'), item => item.price * item.quantity);
+        const total = (typed.value ?? servicePrices) + productsTotal;
 
         setSaving(true);
         try {
-            let current = null;
-            if (draft.id) {
-                current = await loadTicket(draft.id);
-                const stillEditable = current && canManageTicket(current)
-                    && (draft.finished ? current.status === 'completed' : OPEN_STATUSES.includes(current.status));
-                if (!stillEditable) {
-                    toast(t('client.notEditable'), 'error');
-                    entry.close();
-                    await renderPage({ keepScroll: true });
-                    return;
-                }
+            const current = await loadTicket(draft.id);
+            if (!current || !canManageTicket(current) || current.status !== 'completed') {
+                toast(t('client.notEditable'), 'error');
+                entry.close();
+                await renderPage({ keepScroll: true });
+                return;
             }
 
             const statements = [];
@@ -1523,9 +2175,7 @@ async function openClientModal({ ticketId = null, barberId = null, focus = null,
                 }
             } else if (name || phone) {
                 const phoneDigits = digits(phone);
-                const match = phoneDigits
-                    ? customers.find(customer => digits(customer.phone) === phoneDigits)
-                    : null;
+                const match = phoneDigits ? customers.find(customer => digits(customer.phone) === phoneDigits) : null;
                 if (match) {
                     customerRef = Number(match.id);
                     if (name && !String(match.name || '').trim()) {
@@ -1543,49 +2193,22 @@ async function openClientModal({ ticketId = null, barberId = null, focus = null,
                 }
             }
 
-            if (draft.finished) {
-                const payments = await queryOne('SELECT COUNT(*) AS count FROM payments WHERE order_id = ?', [draft.id]);
-                finishedEditStatements(statements, {
-                    current,
-                    customerRef,
-                    items,
-                    total,
-                    date,
-                    time,
-                    barberId: chosenBarber,
-                    method: draft.method,
-                    hasPayment: Number(payments?.count || 0) > 0
-                });
-            } else {
-                let orderRef;
-                if (draft.id) {
-                    const status = chosenBarber ? draft.status : 'waiting';
-                    statements.push({
-                        query: 'UPDATE orders SET customer_id = ?, date = ?, time = ?, total = ?, barber_id = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-                        params: [customerRef, date, time, total, chosenBarber, status, draft.id]
-                    });
-                    statements.push({ query: 'DELETE FROM order_items WHERE order_id = ?', params: [draft.id] });
-                    orderRef = draft.id;
-                } else {
-                    statements.push({
-                        query: 'INSERT INTO orders (customer_id, date, time, total, discount, status, payment_method, barber_id) VALUES (?, ?, ?, ?, 0, ?, NULL, ?)',
-                        params: [customerRef, date, time, total, takeNow ? 'in-service' : 'waiting', chosenBarber]
-                    });
-                    orderRef = { lastIDFrom: statements.length - 1 };
-                }
-                items.forEach(item => {
-                    statements.push({
-                        query: 'INSERT INTO order_items (order_id, item_type, item_id, quantity, price) VALUES (?, ?, ?, ?, ?)',
-                        params: [orderRef, item.type, item.id, item.quantity, item.price]
-                    });
-                });
-            }
+            const payments = await queryOne('SELECT COUNT(*) AS count FROM payments WHERE order_id = ?', [draft.id]);
+            finishedEditStatements(statements, {
+                current,
+                customerRef,
+                items,
+                total,
+                date,
+                time,
+                barberId: chosenBarber,
+                method: draft.method,
+                hasPayment: Number(payments?.count || 0) > 0
+            });
 
             await runStatements(statements);
             entry.close();
-            if (!draft.finished && date !== state.boardDate) state.boardDate = date;
-            toast(draft.finished ? t('toast.finishedSaved')
-                : draft.id ? t('toast.clientSaved') : (takeNow ? t('toast.clientTaken') : t('toast.clientAdded')));
+            toast(t('toast.finishedSaved'));
             if (['cashier', 'history'].includes(state.page)) await renderPage({ keepScroll: true });
         } catch (error) {
             handleError(error);
@@ -1595,40 +2218,9 @@ async function openClientModal({ ticketId = null, barberId = null, focus = null,
     };
 
     const removeFinished = async () => {
-        const ok = await confirmDialog(t('confirm.deleteFinished'), { okLabel: t('common.delete'), danger: true });
-        if (!ok) return;
         setSaving(true);
         try {
-            const current = await loadTicket(draft.id);
-            if (!current || current.status !== 'completed' || !canManageTicket(current)) {
-                toast(t('client.notEditable'), 'error');
-                entry.close();
-                await renderPage({ keepScroll: true });
-                return;
-            }
-            const statements = [];
-            current.items.filter(item => item.item_type === 'product').forEach(item => {
-                statements.push({
-                    query: 'UPDATE products SET stock = COALESCE(stock, 0) + ? WHERE id = ?',
-                    params: [Number(item.quantity || 1), Number(item.item_id)]
-                });
-            });
-            if (current.customer_id) {
-                statements.push({
-                    query: `UPDATE customers SET total_visits = MAX(COALESCE(total_visits, 0) - 1, 0),
-                            total_spent = MAX(COALESCE(total_spent, 0) - ?, 0), updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
-                    params: [Number(current.total || 0), Number(current.customer_id)]
-                });
-            }
-            statements.push(
-                { query: 'DELETE FROM payments WHERE order_id = ?', params: [draft.id] },
-                { query: 'DELETE FROM order_items WHERE order_id = ?', params: [draft.id] },
-                { query: "DELETE FROM orders WHERE id = ? AND COALESCE(status, 'completed') = 'completed'", params: [draft.id] }
-            );
-            await runStatements(statements);
-            entry.close();
-            toast(t('toast.finishedDeleted'));
-            await renderPage({ keepScroll: true });
+            if (await deleteFinishedClient(draft.id)) entry.close();
         } catch (error) {
             handleError(error);
         } finally {
@@ -1640,26 +2232,6 @@ async function openClientModal({ ticketId = null, barberId = null, focus = null,
         setSaving(true);
         try {
             if (await undoPayment(draft.id)) entry.close();
-        } catch (error) {
-            handleError(error);
-        } finally {
-            setSaving(false);
-        }
-    };
-
-    const remove = async () => {
-        const ok = await confirmDialog(t('confirm.removeClient'), { okLabel: t('client.remove'), danger: true });
-        if (!ok) return;
-        setSaving(true);
-        try {
-            await runStatements([
-                { query: 'DELETE FROM order_items WHERE order_id = ?', params: [draft.id] },
-                { query: 'DELETE FROM payments WHERE order_id = ?', params: [draft.id] },
-                { query: "DELETE FROM orders WHERE id = ? AND status IN ('waiting', 'in-service')", params: [draft.id] }
-            ]);
-            entry.close();
-            toast(t('toast.clientRemoved'));
-            await renderPage({ keepScroll: true });
         } catch (error) {
             handleError(error);
         } finally {
@@ -1727,13 +2299,6 @@ async function openClientModal({ ticketId = null, barberId = null, focus = null,
             field('name').focus();
             return;
         }
-        const catalogLink = event.target.closest('[data-goto-catalog]');
-        if (catalogLink) {
-            state.catalogTab = catalogLink.dataset.gotoCatalog;
-            entry.close();
-            go('catalog');
-            return;
-        }
         const methodButton = event.target.closest('[data-finish-method] [data-method]');
         if (methodButton) {
             draft.method = methodButton.dataset.method === 'card' ? 'card' : 'cash';
@@ -1743,12 +2308,10 @@ async function openClientModal({ ticketId = null, barberId = null, focus = null,
             });
             return;
         }
-        const saveButton = event.target.closest('[data-client-save]');
-        if (saveButton) {
-            save(saveButton.dataset.clientSave === 'take');
+        if (event.target.closest('[data-client-save]')) {
+            save();
             return;
         }
-        if (event.target.closest('[data-client-remove]')) remove();
         if (event.target.closest('[data-finished-delete]')) removeFinished();
         if (event.target.closest('[data-finished-reopen]')) reopenFinished();
     });
@@ -1756,15 +2319,11 @@ async function openClientModal({ ticketId = null, barberId = null, focus = null,
     modal.addEventListener('input', event => {
         if (event.target.matches('[data-field="name"], [data-field="phone"]')) renderSuggestions();
         if (event.target.matches('[data-product-search]')) filterProducts();
+        if (event.target.matches('[data-field="amount"]')) updateSummary();
     });
 
     renderLinked();
     updateSummary();
-    if (focus === 'services' || focus === 'products') {
-        setTimeout(() => {
-            modal.querySelector(`[data-section="${focus}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
-        }, 80);
-    }
 }
 
 // Changes to a paid client: its items, product stock (only the difference), customer totals and payment.
@@ -1850,10 +2409,10 @@ function finishedEditStatements(statements, { current, customerRef, items, total
 }
 
 /* ------------------------------------------------------------------ */
-/* Finish & pay                                                        */
+/* Done: finish a client after "Are you sure?"                         */
 /* ------------------------------------------------------------------ */
 
-async function openPayModal(id) {
+async function openDoneDialog(id) {
     const ticket = await loadTicket(id);
     if (!ticket || !OPEN_STATUSES.includes(ticket.status)) {
         await renderPage({ keepScroll: true });
@@ -1864,14 +2423,17 @@ async function openPayModal(id) {
         await renderPage({ keepScroll: true });
         return;
     }
-    const total = sum(ticket.items, item => Number(item.price) * Number(item.quantity || 1));
+    const amounts = ticketMoney(ticket);
     const name = String(ticket.customer_name || '').trim() || t('cashier.walkIn');
+    const who = [ticket.barber_name || t('cashier.anyBarber'), ticket.time ? I18N.formatTime(String(ticket.time).slice(0, 5)) : '']
+        .filter(Boolean).join(' · ');
+    const admin = isAdmin();
 
     const body = `
-        <div class="pay">
+        <div class="pay done-dialog">
             <div class="pay-who">
                 <span class="avatar">${escapeHtml(initials(name))}</span>
-                <div><strong>${escapeHtml(name)}</strong><span>${escapeHtml(ticket.barber_name || t('cashier.anyBarber'))}</span></div>
+                <div><strong>${escapeHtml(name)}</strong><span>${escapeHtml(who)}</span></div>
             </div>
             ${ticket.items.length ? `
                 <ul class="pay-items">
@@ -1881,11 +2443,16 @@ async function openPayModal(id) {
                             <span class="pay-item-name">${escapeHtml(item.name || t('client.removedItem'))}${Number(item.quantity) > 1 ? ` <b>×${Number(item.quantity)}</b>` : ''}</span>
                             <span>${money(Number(item.price) * Number(item.quantity || 1))}</span>
                         </li>`).join('')}
-                </ul>` : `<p class="inline-empty">${escapeHtml(t('pay.noItems'))}</p>`}
-            <div class="pay-edit-row">
-                <button type="button" class="btn btn-ghost btn-sm" data-pay-edit>${icon('pencil')}<span>${escapeHtml(t('pay.editItems'))}</span></button>
-            </div>
-            <div class="pay-total"><span>${escapeHtml(t('client.total'))}</span><strong>${money(total)}</strong></div>
+                </ul>` : ''}
+            ${admin ? `
+                <label class="field"><span>${escapeHtml(t('slotForm.money'))}</span>
+                    <span class="money-input">
+                        <input type="number" min="0" step="any" inputmode="decimal" data-done-money value="${amounts.entered == null ? '' : escapeHtml(amounts.entered)}" placeholder="${escapeHtml(I18N.formatNumber(amounts.services))}">
+                        <span>${escapeHtml(I18N.currency())}</span>
+                    </span>
+                    <small class="field-hint">${escapeHtml(t('slotForm.moneyHint'))}</small>
+                </label>` : ''}
+            <div class="pay-total"><span>${escapeHtml(t('client.total'))}</span><strong data-done-total></strong></div>
             <div class="field">
                 <span>${escapeHtml(t('pay.method'))}</span>
                 <div class="segmented segmented-lg" data-pay-method>
@@ -1893,58 +2460,51 @@ async function openPayModal(id) {
                     <button type="button" data-method="card" aria-pressed="false">${icon('card')}${escapeHtml(t('pay.card'))}</button>
                 </div>
             </div>
-            <div class="grid-2" data-cash-only>
-                <label class="field"><span>${escapeHtml(t('pay.received'))} <em>${escapeHtml(t('common.optional'))}</em></span>
-                    <input type="number" min="0" step="any" inputmode="decimal" data-received>
-                </label>
-                <div class="pay-change"><span>${escapeHtml(t('pay.change'))}</span><strong data-change>${money(0)}</strong></div>
-            </div>
+            <p class="done-question">${icon('alert')}<span>${escapeHtml(t('done.question'))}</span></p>
         </div>`;
 
     const entry = openModal({
-        title: t('pay.title'),
+        title: t('done.title'),
         size: 'md',
         body,
         footer: `
             <span class="spacer"></span>
             <button type="button" class="btn btn-ghost" data-modal-close>${escapeHtml(t('common.cancel'))}</button>
-            <button type="button" class="btn btn-primary btn-lg" data-pay-confirm>${icon('check')}<span>${escapeHtml(t('pay.confirm'))}</span></button>`
+            <button type="button" class="btn btn-primary btn-lg" data-done-confirm>${icon('check')}<span>${escapeHtml(t('done.yes'))}</span></button>`
     });
     const modal = entry.modal;
+    const moneyInput = modal.querySelector('[data-done-money]');
     let method = 'cash';
-    const receivedInput = modal.querySelector('[data-received]');
 
-    const updateChange = () => {
-        const received = Number(receivedInput.value || 0);
-        const change = modal.querySelector('[data-change]');
-        const changeBox = modal.querySelector('.pay-change');
-        if (receivedInput.value !== '' && received < total) {
-            change.innerHTML = `${escapeHtml(t('pay.short'))} ${money(total - received)}`;
-            changeBox.classList.add('short');
-        } else {
-            change.innerHTML = money(Math.max(received - total, 0));
-            changeBox.classList.remove('short');
-        }
+    const servicesMoney = () => {
+        if (!moneyInput) return { value: amounts.entered ?? amounts.services, valid: true };
+        const text = moneyInput.value.trim();
+        if (text === '') return { value: amounts.services, valid: true };
+        const value = parsePrice(text);
+        return { value: value ?? 0, valid: value != null };
+    };
+    const updateTotal = () => {
+        modal.querySelector('[data-done-total]').innerHTML = money(servicesMoney().value + amounts.products);
     };
 
     modal.addEventListener('click', async event => {
         const methodButton = event.target.closest('[data-method]');
         if (methodButton) {
-            method = methodButton.dataset.method;
+            method = methodButton.dataset.method === 'card' ? 'card' : 'cash';
             modal.querySelectorAll('[data-method]').forEach(button => {
                 button.classList.toggle('active', button === methodButton);
                 button.setAttribute('aria-pressed', String(button === methodButton));
             });
-            modal.querySelector('[data-cash-only]').hidden = method !== 'cash';
             return;
         }
-        if (event.target.closest('[data-pay-edit]')) {
-            entry.close();
-            await openClientModal({ ticketId: id });
-            return;
-        }
-        const confirmButton = event.target.closest('[data-pay-confirm]');
+        const confirmButton = event.target.closest('[data-done-confirm]');
         if (!confirmButton || confirmButton.disabled) return;
+        const typed = servicesMoney();
+        if (!typed.valid) {
+            toast(t('slotForm.badMoney'), 'error');
+            moneyInput.focus();
+            return;
+        }
         confirmButton.disabled = true;
         try {
             const current = await queryOne("SELECT COALESCE(status, 'completed') AS status FROM orders WHERE id = ?", [id]);
@@ -1953,16 +2513,15 @@ async function openPayModal(id) {
                 await renderPage({ keepScroll: true });
                 return;
             }
-            const received = method === 'cash' && receivedInput.value !== '' ? Number(receivedInput.value) : total;
-            const change = method === 'cash' ? Math.max(received - total, 0) : 0;
+            const total = typed.value + amounts.products;
             const statements = [
                 {
                     query: "UPDATE orders SET status = 'completed', payment_method = ?, total = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                     params: [method, total, id]
                 },
                 {
-                    query: 'INSERT INTO payments (order_id, amount, method, received_amount, change_amount) VALUES (?, ?, ?, ?, ?)',
-                    params: [id, total, method, received, change]
+                    query: 'INSERT INTO payments (order_id, amount, method, received_amount, change_amount) VALUES (?, ?, ?, ?, 0)',
+                    params: [id, total, method, total]
                 }
             ];
             ticket.items.filter(item => item.item_type === 'product').forEach(item => {
@@ -1987,8 +2546,8 @@ async function openPayModal(id) {
             handleError(error);
         }
     });
-    receivedInput.addEventListener('input', updateChange);
-    updateChange();
+    if (moneyInput) moneyInput.addEventListener('input', updateTotal);
+    updateTotal();
 }
 
 /* ------------------------------------------------------------------ */
@@ -1998,7 +2557,15 @@ async function openPayModal(id) {
 async function renderDashboard() {
     const { start, end } = periodRange(state.dashPeriod);
     const completed = "COALESCE(o.status, 'completed') = 'completed' AND o.date BETWEEN ? AND ?";
-    const [summaryRows, openRows, splitRows, barberRows, topProducts, topServices] = await queryMany([
+    // Money of each paid visit split into services and products. When the admin typed the money
+    // received, the services part is that money (the order total without its products).
+    const visitTotals = `
+        SELECT order_id,
+               SUM(CASE WHEN item_type = 'service' THEN price * quantity ELSE 0 END) AS svc,
+               SUM(CASE WHEN item_type = 'service' THEN quantity ELSE 0 END) AS qty,
+               SUM(CASE WHEN item_type = 'product' THEN price * quantity ELSE 0 END) AS prod
+        FROM order_items GROUP BY order_id`;
+    const [summaryRows, openRows, splitRows, barberRows, topProducts, topServices, salesRows, saleItemRows] = await queryMany([
         { query: `SELECT COUNT(*) AS clients, COALESCE(SUM(o.total), 0) AS money FROM orders o WHERE ${completed}`, params: [start, end] },
         { query: "SELECT COUNT(*) AS total FROM orders o WHERE o.status IN ('waiting', 'in-service') AND o.date BETWEEN ? AND ?", params: [start, end] },
         {
@@ -2013,28 +2580,50 @@ async function renderDashboard() {
             params: [start, end]
         },
         {
-            query: `SELECT oi.item_id, p.name, p.image_data, SUM(oi.quantity) AS quantity, SUM(oi.price * oi.quantity) AS money
-                    FROM order_items oi JOIN orders o ON o.id = oi.order_id LEFT JOIN products p ON p.id = oi.item_id
-                    WHERE oi.item_type = 'product' AND ${completed}
+            // Products bought by clients and products sold at the product cashier.
+            query: `SELECT x.item_id, p.name, p.image_data, SUM(x.quantity) AS quantity, SUM(x.money) AS money FROM (
+                        SELECT oi.item_id, oi.quantity, oi.price * oi.quantity AS money
+                        FROM order_items oi JOIN orders o ON o.id = oi.order_id
+                        WHERE oi.item_type = 'product' AND ${completed}
+                        UNION ALL
+                        SELECT i.product_id, i.quantity, i.price * i.quantity
+                        FROM product_sale_items i JOIN product_sales ps ON ps.id = i.sale_id
+                        WHERE ps.date BETWEEN ? AND ?
+                    ) x LEFT JOIN products p ON p.id = x.item_id
+                    GROUP BY x.item_id ORDER BY quantity DESC, money DESC LIMIT 5`,
+            params: [start, end, start, end]
+        },
+        {
+            // A visit's service money is shared between its services by their prices.
+            query: `SELECT oi.item_id, s.name, SUM(oi.quantity) AS quantity,
+                           SUM(CASE WHEN v.svc > 0 THEN (o.total - v.prod) * (oi.price * oi.quantity) / v.svc
+                                    WHEN v.qty > 0 THEN (o.total - v.prod) * oi.quantity / v.qty ELSE 0 END) AS money
+                    FROM order_items oi JOIN orders o ON o.id = oi.order_id
+                    JOIN (${visitTotals}) v ON v.order_id = o.id
+                    LEFT JOIN services s ON s.id = oi.item_id
+                    WHERE oi.item_type = 'service' AND ${completed}
                     GROUP BY oi.item_id ORDER BY quantity DESC, money DESC LIMIT 5`,
             params: [start, end]
         },
+        { query: 'SELECT COUNT(*) AS sales, COALESCE(SUM(total), 0) AS money FROM product_sales WHERE date BETWEEN ? AND ?', params: [start, end] },
         {
-            query: `SELECT oi.item_id, s.name, SUM(oi.quantity) AS quantity, SUM(oi.price * oi.quantity) AS money
-                    FROM order_items oi JOIN orders o ON o.id = oi.order_id LEFT JOIN services s ON s.id = oi.item_id
-                    WHERE oi.item_type = 'service' AND ${completed}
-                    GROUP BY oi.item_id ORDER BY quantity DESC, money DESC LIMIT 5`,
+            query: `SELECT COALESCE(SUM(i.quantity), 0) AS quantity FROM product_sale_items i
+                    JOIN product_sales ps ON ps.id = i.sale_id WHERE ps.date BETWEEN ? AND ?`,
             params: [start, end]
         }
     ]);
 
     const clients = Number(summaryRows[0]?.clients || 0);
-    const total = Number(summaryRows[0]?.money || 0);
+    const clientsMoney = Number(summaryRows[0]?.money || 0);
+    const salesMoney = Number(salesRows[0]?.money || 0);
+    const total = clientsMoney + salesMoney;
     const open = Number(openRows[0]?.total || 0);
     const servicesRow = splitRows.find(row => row.item_type === 'service') || {};
     const productsRow = splitRows.find(row => row.item_type === 'product') || {};
-    const servicesMoney = Number(servicesRow.money || 0);
-    const productsMoney = Number(productsRow.money || 0);
+    const clientProducts = Number(productsRow.money || 0);
+    const servicesMoney = Math.max(clientsMoney - clientProducts, 0);
+    const productsMoney = clientProducts + salesMoney;
+    const productsSold = Number(productsRow.quantity || 0) + Number(saleItemRows[0]?.quantity || 0);
     const splitTotal = servicesMoney + productsMoney;
     const share = value => (splitTotal ? Math.round((value / splitTotal) * 100) : 0);
 
@@ -2060,7 +2649,7 @@ async function renderDashboard() {
             <article class="kpi">
                 <div class="kpi-label"><span class="swatch swatch-products"></span><span>${escapeHtml(t('dash.productsMoney'))}</span></div>
                 <div class="kpi-value">${money(productsMoney)}</div>
-                <div class="kpi-sub">${escapeHtml(t('dash.productsSub', { n: Number(productsRow.quantity || 0) }))}</div>
+                <div class="kpi-sub">${escapeHtml(t('dash.productsSub', { n: productsSold }))}</div>
             </article>
         </div>`;
 
@@ -2142,7 +2731,21 @@ async function renderHistory() {
     const where = `COALESCE(o.status, 'completed') = 'completed' AND o.date BETWEEN ? AND ?${own ? ' AND o.barber_id = ?' : ''}`;
     const params = own ? [start, end, myBarberId()] : [start, end];
     const limit = 3000;
-    const [allBarbers, ticketRows, itemRows] = await queryMany([
+    // Product sales (no client) are only for the admin.
+    const salesQueries = own ? [] : [
+        {
+            query: `SELECT id, date, time, total, payment_method FROM product_sales
+                    WHERE date BETWEEN ? AND ? ORDER BY date DESC, time DESC, id DESC LIMIT ${limit}`,
+            params: [start, end]
+        },
+        {
+            query: `SELECT i.sale_id, i.quantity, p.name FROM product_sale_items i
+                    JOIN product_sales ps ON ps.id = i.sale_id LEFT JOIN products p ON p.id = i.product_id
+                    WHERE ps.date BETWEEN ? AND ? ORDER BY i.id`,
+            params: [start, end]
+        }
+    ];
+    const [allBarbers, ticketRows, itemRows, saleRows = [], saleItemRows = []] = await queryMany([
         { query: 'SELECT id, name, is_active FROM barbers ORDER BY id' },
         {
             query: `SELECT ${TICKET_COLUMNS} FROM orders o LEFT JOIN customers c ON c.id = o.customer_id
@@ -2153,7 +2756,8 @@ async function renderHistory() {
             query: `SELECT ${ITEM_COLUMNS} FROM order_items oi JOIN orders o ON o.id = oi.order_id ${ITEM_JOINS}
                     WHERE ${where} ORDER BY oi.id`,
             params
-        }
+        },
+        ...salesQueries
     ]);
     const barbers = own ? allBarbers.filter(barber => isMine(barber.id)) : allBarbers;
     const tickets = buildTickets(ticketRows, itemRows.map(item => ({ ...item, image_data: null })));
@@ -2177,7 +2781,14 @@ async function renderHistory() {
     const orphaned = [...byKey.entries()].filter(([key]) => key === 'none' || !knownBarbers.has(key)).flatMap(([, list]) => list);
     if (orphaned.length) columns.push({ key: 'none', name: t('history.noBarber'), noBarber: true, tickets: orphaned });
 
-    const totalMoney = sum(tickets, ticket => ticket.total);
+    const salesMoney = sum(saleRows, sale => sale.total);
+    const totalMoney = sum(tickets, ticket => ticket.total) + salesMoney;
+    const saleItems = new Map();
+    saleItemRows.forEach(item => {
+        const list = saleItems.get(Number(item.sale_id)) || [];
+        list.push(item);
+        saleItems.set(Number(item.sale_id), list);
+    });
     const actions = `
         ${segmented(periodOptions(), period, 'history-period', t('dash.period'))}
         <label class="date-pill date-pill-sm ${period === 'day' ? 'active' : ''}">
@@ -2205,10 +2816,11 @@ async function renderHistory() {
         <div class="day-strip">
             <div class="day-stat"><span>${escapeHtml(periodLabel(period, state.historyDay))}</span></div>
             <div class="day-stat"><span>${escapeHtml(t('dash.clientsDone'))}</span><strong>${escapeHtml(I18N.formatNumber(tickets.length))}</strong></div>
+            ${!own ? `<div class="day-stat"><span class="swatch swatch-products"></span><span>${escapeHtml(t('history.productSales'))}</span><strong>${money(salesMoney)}</strong></div>` : ''}
             <div class="day-stat day-stat-money"><span>${escapeHtml(t('dash.totalMoney'))}</span><strong>${money(totalMoney)}</strong></div>
         </div>
         ${ticketRows.length >= limit ? `<p class="notice">${escapeHtml(t('history.limited', { n: limit }))}</p>` : ''}
-        ${columns.length ? `
+        ${columns.length || saleRows.length ? `
             <div class="board history-board" data-scroll-x>
                 ${columns.map(column => {
                     const earned = sum(column.tickets, ticket => ticket.total);
@@ -2243,13 +2855,18 @@ async function renderHistory() {
                                                 </div>
                                                 <div class="hrow-amount">
                                                     ${money(ticket.total)}
-                                                    ${canManageTicket(ticket) ? `<button type="button" class="hrow-edit" data-action="edit-finished" data-id="${ticket.id}" title="${escapeHtml(t('history.editLocked'))}">${icon(editUnlocked() ? 'pencil' : 'lock')}<span>${escapeHtml(t('common.edit'))}</span></button>` : ''}
+                                                    ${canManageTicket(ticket) ? `
+                                                        <span class="hrow-buttons">
+                                                            <button type="button" class="hrow-edit" data-action="edit-finished" data-id="${ticket.id}" title="${escapeHtml(t('history.editLocked'))}">${icon(editUnlocked() ? 'pencil' : 'lock')}<span>${escapeHtml(t('common.edit'))}</span></button>
+                                                            <button type="button" class="hrow-edit hrow-delete" data-action="delete-finished" data-id="${ticket.id}" title="${escapeHtml(t('history.deleteLocked'))}" aria-label="${escapeHtml(t('history.deleteLocked'))}">${icon('trash')}</button>
+                                                        </span>` : ''}
                                                 </div>
                                             </li>`).join('')}
                                     </ol>` : `<p class="col-empty">${escapeHtml(t('history.empty'))}</p>`}
                             </div>
                         </section>`;
                 }).join('')}
+                ${!own ? renderSalesColumn(saleRows, saleItems, multiDay) : ''}
             </div>` : `
             <div class="empty-hero">
                 <span class="empty-hero-icon">${icon('history')}</span>
@@ -2259,6 +2876,361 @@ async function renderHistory() {
             </div>`}`;
 
     return { actions, body };
+}
+
+// History column with the products sold at the product cashier (admin only).
+function renderSalesColumn(sales, itemsBySale, multiDay) {
+    const earned = sum(sales, sale => sale.total);
+    return `
+        <section class="col hcol hcol-sales">
+            <header class="col-head">
+                <div class="col-id">
+                    <span class="avatar avatar-products">${icon('bag')}</span>
+                    <div class="col-name">
+                        <h3>${escapeHtml(t('history.productSales'))}</h3>
+                        <span class="col-note">${escapeHtml(t('history.productSalesNote'))}</span>
+                    </div>
+                </div>
+            </header>
+            <div class="hcol-totals">
+                <div><span>${escapeHtml(t('history.earned'))}</span><strong>${money(earned)}</strong></div>
+                <div><span>${escapeHtml(t('history.salesCount'))}</span><strong>${escapeHtml(I18N.formatNumber(sales.length))}</strong></div>
+            </div>
+            <div class="col-body" data-scroll-key="h-sales">
+                ${sales.length ? `
+                    <ol class="hlist">
+                        ${sales.map(sale => `
+                            <li class="hrow">
+                                <div class="hrow-when">
+                                    ${sale.time ? `<span>${timeLabel(sale.time)}</span>` : ''}
+                                    ${multiDay ? `<small>${escapeHtml(I18N.formatDateShort(sale.date))}</small>` : ''}
+                                </div>
+                                <div class="hrow-main">
+                                    <span class="hrow-items hrow-products">${icon('bag')}${escapeHtml(itemNames(itemsBySale.get(Number(sale.id)) || []) || t('client.removedItem'))}</span>
+                                    <span class="hrow-phone">${escapeHtml(t(sale.payment_method === 'card' ? 'pay.card' : 'pay.cash'))}</span>
+                                </div>
+                                <div class="hrow-amount">
+                                    ${money(sale.total)}
+                                    <button type="button" class="hrow-edit hrow-delete" data-action="delete-sale" data-id="${sale.id}" title="${escapeHtml(t('history.deleteLocked'))}" aria-label="${escapeHtml(t('history.deleteLocked'))}">${icon('trash')}</button>
+                                </div>
+                            </li>`).join('')}
+                    </ol>` : `<p class="col-empty">${escapeHtml(t('history.noSales'))}</p>`}
+            </div>
+        </section>`;
+}
+
+/* ------------------------------------------------------------------ */
+/* Product cashier: products sold on their own, without a client       */
+/* ------------------------------------------------------------------ */
+
+// Products shown on the page, by id, from the last time it was drawn.
+let sellProducts = new Map();
+
+function cartLines() {
+    return [...state.cart.entries()]
+        .map(([id, quantity]) => ({ product: sellProducts.get(id), quantity }))
+        .filter(line => line.product && line.quantity > 0);
+}
+
+function cartTotals(lines = cartLines()) {
+    return {
+        count: sum(lines, line => line.quantity),
+        total: sum(lines, line => Number(line.product.price || 0) * line.quantity)
+    };
+}
+
+function productThumb(product) {
+    const image = safeImage(product?.image_data);
+    return `<span class="rank-thumb">${image ? `<img src="${escapeHtml(image)}" alt="">` : icon('package')}</span>`;
+}
+
+async function renderSell() {
+    const today = todayString();
+    const [products, categories, summaryRows, byProduct, sales, saleItems] = await queryMany([
+        { query: 'SELECT id, name, price, stock, image_data, category_id FROM products WHERE is_active = 1 ORDER BY name' },
+        { query: 'SELECT id, name FROM categories ORDER BY name' },
+        { query: 'SELECT COUNT(*) AS sales, COALESCE(SUM(total), 0) AS money FROM product_sales WHERE date = ?', params: [today] },
+        {
+            query: `SELECT i.product_id, p.name, p.image_data, SUM(i.quantity) AS quantity, SUM(i.price * i.quantity) AS money
+                    FROM product_sale_items i JOIN product_sales ps ON ps.id = i.sale_id LEFT JOIN products p ON p.id = i.product_id
+                    WHERE ps.date = ? GROUP BY i.product_id ORDER BY quantity DESC, money DESC`,
+            params: [today]
+        },
+        { query: 'SELECT id, time, total, payment_method FROM product_sales WHERE date = ? ORDER BY time DESC, id DESC LIMIT 50', params: [today] },
+        {
+            query: `SELECT i.sale_id, i.quantity, p.name FROM product_sale_items i
+                    JOIN product_sales ps ON ps.id = i.sale_id LEFT JOIN products p ON p.id = i.product_id
+                    WHERE ps.date = ? ORDER BY i.id`,
+            params: [today]
+        }
+    ]);
+
+    sellProducts = new Map(products.map(product => [Number(product.id), product]));
+    // Products removed from the catalog leave the sale.
+    [...state.cart.keys()].forEach(id => {
+        if (!sellProducts.has(id)) state.cart.delete(id);
+    });
+    const usedCategories = categories.filter(category => products.some(product => Number(product.category_id) === Number(category.id)));
+    if (state.sellCategory !== 'all' && !usedCategories.some(category => String(category.id) === state.sellCategory)) state.sellCategory = 'all';
+
+    const itemsBySale = new Map();
+    saleItems.forEach(item => {
+        const list = itemsBySale.get(Number(item.sale_id)) || [];
+        list.push(item);
+        itemsBySale.set(Number(item.sale_id), list);
+    });
+    const soldMoney = Number(summaryRows[0]?.money || 0);
+    const soldCount = Number(summaryRows[0]?.sales || 0);
+    const soldItems = sum(byProduct, row => row.quantity);
+
+    const grid = products.length ? `
+        <div class="filter-row sell-filters">
+            <label class="search-field">${icon('search')}<input type="search" data-sell-search value="${escapeHtml(state.sellSearch)}" placeholder="${escapeHtml(t('client.searchProducts'))}" aria-label="${escapeHtml(t('client.searchProducts'))}"></label>
+            ${usedCategories.length ? `
+                <div class="filter-chips">
+                    <button type="button" class="filter-chip ${state.sellCategory === 'all' ? 'active' : ''}" data-action="sell-category" data-value="all">${escapeHtml(t('catalog.all'))}</button>
+                    ${usedCategories.map(category => `<button type="button" class="filter-chip ${state.sellCategory === String(category.id) ? 'active' : ''}" data-action="sell-category" data-value="${category.id}">${escapeHtml(category.name)}</button>`).join('')}
+                </div>` : ''}
+        </div>
+        <div class="pick-grid sell-grid">
+            ${products.map(product => {
+                const quantity = state.cart.get(Number(product.id)) || 0;
+                const image = safeImage(product.image_data);
+                const stock = product.stock == null ? null : Number(product.stock);
+                return `
+                    <div class="pick ${quantity ? 'selected' : ''}" data-sell-prod="${product.id}" data-cat="${product.category_id || ''}" data-name="${escapeHtml(String(product.name || '').toLowerCase())}">
+                        <button type="button" class="pick-main" data-action="sell-add" data-id="${product.id}">
+                            <span class="pick-img">${image ? `<img src="${escapeHtml(image)}" alt="">` : icon('package')}</span>
+                            <span class="pick-name">${escapeHtml(product.name || t('catalog.unnamedProduct'))}</span>
+                            <span class="pick-price">${money(product.price)}</span>
+                            ${stock == null ? '' : `<span class="pick-stock ${stock <= 0 ? 'out' : ''}">${escapeHtml(stock <= 0 ? t('catalog.outOfStock') : t('catalog.inStock', { n: stock }))}</span>`}
+                        </button>
+                        <div class="pick-qty">
+                            <button type="button" data-action="sell-minus" data-id="${product.id}" aria-label="${escapeHtml(t('client.less'))}">${icon('minus')}</button>
+                            <span data-qty>${quantity}</span>
+                            <button type="button" data-action="sell-add" data-id="${product.id}" aria-label="${escapeHtml(t('client.more'))}">${icon('plus')}</button>
+                        </div>
+                    </div>`;
+            }).join('')}
+        </div>
+        <p class="card-empty" data-sell-none hidden>${escapeHtml(t('catalog.noneInCategory'))}</p>` : `
+        <div class="empty-hero">
+            <span class="empty-hero-icon">${icon('bag')}</span>
+            <h2>${escapeHtml(t('catalog.noProductsTitle'))}</h2>
+            <p>${escapeHtml(t('sell.noProducts'))}</p>
+            <button type="button" class="btn btn-primary" data-action="open-catalog-products">${icon('tag')}<span>${escapeHtml(t('client.openCatalog'))}</span></button>
+        </div>`;
+
+    const todayCard = `
+        <section class="card sell-today">
+            <h3 class="card-title">${icon('chart')}${escapeHtml(t('sell.today'))}</h3>
+            <div class="sell-stats">
+                <div class="sell-stat-money"><span>${escapeHtml(t('sell.todayMoney'))}</span><strong>${money(soldMoney)}</strong></div>
+                <div><span>${escapeHtml(t('sell.todayItems'))}</span><strong>${escapeHtml(I18N.formatNumber(soldItems))}</strong></div>
+                <div><span>${escapeHtml(t('sell.todaySales'))}</span><strong>${escapeHtml(I18N.formatNumber(soldCount))}</strong></div>
+            </div>
+            ${byProduct.length ? `
+                <ol class="rank-list">
+                    ${byProduct.map((row, index) => `
+                        <li>
+                            <span class="rank-num">${index + 1}</span>
+                            ${productThumb(row)}
+                            <span class="rank-name">${escapeHtml(row.name || t('client.removedItem'))}<small>${escapeHtml(t('dash.timesSold', { n: Number(row.quantity || 0) }))}</small></span>
+                            <span class="rank-value">${money(row.money)}</span>
+                        </li>`).join('')}
+                </ol>
+                <h4 class="sell-subtitle">${escapeHtml(t('sell.recent'))}</h4>
+                <ul class="sale-list">
+                    ${sales.map(sale => `
+                        <li>
+                            <span class="sale-time">${timeLabel(sale.time)}</span>
+                            <span class="sale-items">${escapeHtml(itemNames(itemsBySale.get(Number(sale.id)) || []))}</span>
+                            <span class="sale-money">${money(sale.total)}</span>
+                            <button type="button" class="btn-icon btn-icon-sm sale-delete" data-action="delete-sale" data-id="${sale.id}" aria-label="${escapeHtml(t('history.deleteLocked'))}" title="${escapeHtml(t('history.deleteLocked'))}">${icon('trash')}</button>
+                        </li>`).join('')}
+                </ul>` : `<p class="card-empty">${escapeHtml(t('sell.noneToday'))}</p>`}
+        </section>`;
+
+    const body = `
+        <div class="sell">
+            <section class="sell-main">${grid}</section>
+            <aside class="sell-side">
+                <section class="card sell-cart" data-sell-cart>${sellCartHtml()}</section>
+                ${todayCard}
+            </aside>
+            <div class="sell-bar" data-sell-bar>${sellBarHtml()}</div>
+        </div>`;
+
+    return { actions: '', body, after: filterSellGrid };
+}
+
+function sellCartHtml() {
+    const lines = cartLines();
+    const { count, total } = cartTotals(lines);
+    return `
+        <div class="sell-cart-head">
+            <h3 class="card-title">${icon('bag')}${escapeHtml(t('sell.cart'))}</h3>
+            ${lines.length ? `<button type="button" class="btn btn-ghost btn-sm" data-action="sell-clear">${icon('x')}<span>${escapeHtml(t('sell.clear'))}</span></button>` : ''}
+        </div>
+        ${lines.length ? `
+            <ul class="sell-lines">
+                ${lines.map(({ product, quantity }) => {
+                    const stock = product.stock == null ? null : Number(product.stock);
+                    return `
+                        <li>
+                            ${productThumb(product)}
+                            <span class="sell-line-name">${escapeHtml(product.name || t('catalog.unnamedProduct'))}
+                                <small>${money(product.price)}${stock != null && quantity > stock ? ` · <b class="sell-warn">${escapeHtml(t('sell.lowStock', { n: Math.max(stock, 0) }))}</b>` : ''}</small>
+                            </span>
+                            <span class="sell-qty">
+                                <button type="button" data-action="sell-minus" data-id="${product.id}" aria-label="${escapeHtml(t('client.less'))}">${icon('minus')}</button>
+                                <b>${quantity}</b>
+                                <button type="button" data-action="sell-add" data-id="${product.id}" aria-label="${escapeHtml(t('client.more'))}">${icon('plus')}</button>
+                            </span>
+                            <span class="sell-line-total">${money(Number(product.price || 0) * quantity)}</span>
+                        </li>`;
+                }).join('')}
+            </ul>` : `<p class="card-empty sell-empty">${icon('bag')}<span>${escapeHtml(t('sell.empty'))}</span></p>`}
+        <div class="pay-total"><span>${escapeHtml(t('client.total'))}${count ? ` · ${escapeHtml(t('sell.items', { n: count }))}` : ''}</span><strong>${money(total)}</strong></div>
+        <div class="segmented segmented-lg sell-method" role="group" aria-label="${escapeHtml(t('pay.method'))}">
+            <button type="button" class="${state.sellMethod === 'cash' ? 'active' : ''}" data-action="sell-method" data-value="cash" aria-pressed="${state.sellMethod === 'cash'}">${icon('cash')}${escapeHtml(t('pay.cash'))}</button>
+            <button type="button" class="${state.sellMethod === 'card' ? 'active' : ''}" data-action="sell-method" data-value="card" aria-pressed="${state.sellMethod === 'card'}">${icon('card')}${escapeHtml(t('pay.card'))}</button>
+        </div>
+        <button type="button" class="btn btn-primary btn-lg btn-block" data-action="sell-done" ${lines.length ? '' : 'disabled'}>${icon('check')}<span>${escapeHtml(t('done.button'))}</span></button>`;
+}
+
+// On small screens the total and Done stay at the bottom of the screen.
+function sellBarHtml() {
+    const { count, total } = cartTotals();
+    return `
+        <span class="sell-bar-count">${icon('bag')}<span>${escapeHtml(t('sell.items', { n: count }))}</span></span>
+        <strong class="sell-bar-total">${money(total)}</strong>
+        <button type="button" class="btn btn-primary" data-action="sell-done" ${count ? '' : 'disabled'}>${icon('check')}<span>${escapeHtml(t('done.button'))}</span></button>`;
+}
+
+function updateSellUi() {
+    const cart = dom.page.querySelector('[data-sell-cart]');
+    if (cart) cart.innerHTML = sellCartHtml();
+    const bar = dom.page.querySelector('[data-sell-bar]');
+    if (bar) bar.innerHTML = sellBarHtml();
+    dom.page.querySelectorAll('[data-sell-prod]').forEach(tile => {
+        const quantity = state.cart.get(Number(tile.dataset.sellProd)) || 0;
+        tile.classList.toggle('selected', quantity > 0);
+        tile.querySelector('[data-qty]').textContent = String(quantity);
+    });
+}
+
+function filterSellGrid() {
+    const search = state.sellSearch.trim().toLowerCase();
+    let shown = 0;
+    dom.page.querySelectorAll('[data-sell-prod]').forEach(tile => {
+        const visible = (!search || tile.dataset.name.includes(search))
+            && (state.sellCategory === 'all' || tile.dataset.cat === state.sellCategory);
+        tile.hidden = !visible;
+        if (visible) shown += 1;
+    });
+    const none = dom.page.querySelector('[data-sell-none]');
+    if (none) none.hidden = shown > 0 || !dom.page.querySelector('[data-sell-prod]');
+}
+
+function changeCart(id, step) {
+    if (!sellProducts.has(id)) return;
+    const quantity = Math.max((state.cart.get(id) || 0) + step, 0);
+    if (quantity) state.cart.set(id, Math.min(quantity, 999));
+    else state.cart.delete(id);
+    updateSellUi();
+}
+
+async function finishSale() {
+    if (!isAdmin()) return;
+    const lines = cartLines();
+    if (!lines.length) return;
+    if (lines.length * 2 + 1 > MAX_TRANSACTION_STATEMENTS) {
+        toast(t('err.tooManyItems'), 'error');
+        return;
+    }
+    const { count, total } = cartTotals(lines);
+    const ok = await new Promise(resolve => {
+        let accepted = false;
+        const entry = openModal({
+            title: t('sell.confirmTitle'),
+            size: 'sm',
+            body: `
+                <div class="pay">
+                    <ul class="pay-items">
+                        ${lines.map(({ product, quantity }) => `
+                            <li>
+                                <span class="pay-item-icon">${icon('bag')}</span>
+                                <span class="pay-item-name">${escapeHtml(product.name || t('catalog.unnamedProduct'))}${quantity > 1 ? ` <b>×${quantity}</b>` : ''}</span>
+                                <span>${money(Number(product.price || 0) * quantity)}</span>
+                            </li>`).join('')}
+                    </ul>
+                    <div class="pay-total"><span>${escapeHtml(t('client.total'))} · ${escapeHtml(t(state.sellMethod === 'card' ? 'pay.card' : 'pay.cash'))}</span><strong>${money(total)}</strong></div>
+                    <p class="done-question">${icon('alert')}<span>${escapeHtml(t('sell.confirmText', { n: count }))}</span></p>
+                </div>`,
+            footer: `
+                <span class="spacer"></span>
+                <button type="button" class="btn btn-ghost" data-modal-close>${escapeHtml(t('common.cancel'))}</button>
+                <button type="button" class="btn btn-primary" data-confirm-ok>${icon('check')}<span>${escapeHtml(t('sell.yes'))}</span></button>`,
+            onClose: () => resolve(accepted)
+        });
+        entry.modal.querySelector('[data-confirm-ok]').addEventListener('click', () => {
+            accepted = true;
+            entry.close();
+        });
+    });
+    if (!ok) return;
+
+    const statements = [{
+        query: 'INSERT INTO product_sales (date, time, total, payment_method) VALUES (?, ?, ?, ?)',
+        params: [todayString(), nowTime(), total, state.sellMethod === 'card' ? 'card' : 'cash']
+    }];
+    lines.forEach(({ product, quantity }) => {
+        statements.push({
+            query: 'INSERT INTO product_sale_items (sale_id, product_id, quantity, price) VALUES (?, ?, ?, ?)',
+            params: [{ lastIDFrom: 0 }, Number(product.id), quantity, Number(product.price || 0)]
+        });
+        statements.push({
+            query: 'UPDATE products SET stock = MAX(COALESCE(stock, 0) - ?, 0) WHERE id = ?',
+            params: [quantity, Number(product.id)]
+        });
+    });
+    await runStatements(statements);
+    state.cart.clear();
+    state.sellMethod = 'cash';
+    toast(t('sell.saved', { amount: moneyText(total) }));
+    await renderPage({ keepScroll: true });
+}
+
+// Deleting a sale always asks for the history password. Its products go back to stock.
+async function deleteProductSale(id) {
+    if (!isAdmin()) return;
+    const [saleRows, items] = await queryMany([
+        { query: 'SELECT id, total FROM product_sales WHERE id = ?', params: [id] },
+        { query: 'SELECT product_id, quantity FROM product_sale_items WHERE sale_id = ?', params: [id] }
+    ]);
+    if (!saleRows[0]) {
+        await renderPage({ keepScroll: true });
+        return;
+    }
+    const ok = await requireEditPassword({
+        always: true,
+        text: t('lock.deleteSaleText', { amount: moneyText(saleRows[0].total) }),
+        okLabel: t('common.delete'),
+        danger: true
+    });
+    if (!ok) return;
+    const statements = items.map(item => ({
+        query: 'UPDATE products SET stock = COALESCE(stock, 0) + ? WHERE id = ?',
+        params: [Number(item.quantity || 1), Number(item.product_id)]
+    }));
+    statements.push(
+        { query: 'DELETE FROM product_sale_items WHERE sale_id = ?', params: [id] },
+        { query: 'DELETE FROM product_sales WHERE id = ?', params: [id] }
+    );
+    await runStatements(statements);
+    toast(t('sell.deleted'));
+    await renderPage({ keepScroll: true });
 }
 
 /* ------------------------------------------------------------------ */
@@ -2874,6 +3846,7 @@ async function renderSettings() {
                     <div><button type="submit" class="btn btn-primary">${icon('check')}<span>${escapeHtml(t('common.save'))}</span></button></div>
                 </form>
             </section>
+            ${renderHoursCard(booking)}
             ${renderBookingCard(booking, Number(bookingCount?.count || 0))}
             <section class="card">
                 <h3 class="card-title">${icon('lock')}${escapeHtml(t('lock.settingsTitle'))}</h3>
@@ -2910,7 +3883,13 @@ async function renderSettings() {
                 </div>
             </section>
         </div>`;
-    return { actions: '', body };
+    return { actions: '', body, after: settingsAfterRender };
+}
+
+function settingsAfterRender() {
+    if (!state.focusHours) return;
+    state.focusHours = false;
+    dom.page.querySelector('.hours-card')?.scrollIntoView({ block: 'start' });
 }
 
 async function saveShop(form) {
@@ -2957,6 +3936,8 @@ async function restoreDatabase() {
 
 async function clearHistory() {
     if (!await confirmDialog(t('confirm.clearHistory'), { okLabel: t('settings.clearButton'), danger: true })) return;
+    const ok = await requireEditPassword({ always: true, text: t('lock.clearText'), okLabel: t('settings.clearButton'), danger: true });
+    if (!ok) return;
     const finished = "SELECT id FROM orders WHERE COALESCE(status, 'completed') IN ('completed', 'cancelled')";
     await runStatements([
         // Online bookings keep their last status so the website is not told they were cancelled.
@@ -2964,6 +3945,8 @@ async function clearHistory() {
         { query: `DELETE FROM payments WHERE order_id IN (${finished}) OR order_id NOT IN (SELECT id FROM orders)`, params: [] },
         { query: `DELETE FROM order_items WHERE order_id IN (${finished}) OR order_id NOT IN (SELECT id FROM orders)`, params: [] },
         { query: "DELETE FROM orders WHERE COALESCE(status, 'completed') IN ('completed', 'cancelled')", params: [] },
+        { query: 'DELETE FROM product_sale_items', params: [] },
+        { query: 'DELETE FROM product_sales', params: [] },
         { query: "DELETE FROM appointments WHERE date < ? OR COALESCE(status, 'scheduled') IN ('completed', 'cancelled', 'transferred')", params: [todayString()] }
     ]);
     toast(t('settings.cleared'));
@@ -3087,6 +4070,7 @@ async function buildBookingPayload(options) {
         }
     });
     const shop = shopRows[0] || {};
+    const hours = shopHours(options);
     let timezone = 'Asia/Baghdad';
     try {
         timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || timezone;
@@ -3108,17 +4092,46 @@ async function buildBookingPayload(options) {
                 currency: 'IQD'
             },
             hours: {
-                open: options.open,
-                close: options.close,
-                slot_minutes: clampInt(options.slot, 5, 240, 30),
+                open: hours.open,
+                close: hours.close,
+                slot_minutes: hours.slot,
                 days_ahead: daysAhead,
-                closed_weekdays: parseWeekdays(options.closed)
+                closed_weekdays: hours.closed
             },
             barbers: barbers.map(barber => ({ id: Number(barber.id), name: barber.name })),
             busy: busyRows.map(row => ({ barber_id: Number(row.barber_id), date: row.date, time: String(row.time).slice(0, 5) })),
+            slots: freeSlots(hours, barbers, busyRows, today, daysAhead),
             updates
         }
     };
+}
+
+// The same free times the cashier shows: every slot of every open day that has no client yet.
+// For today, slots that have already started are left out.
+function freeSlots(hours, barbers, busyRows, today, daysAhead) {
+    const grid = slotGrid(hours);
+    const taken = new Map();
+    busyRows.forEach(row => {
+        const key = `${row.barber_id}|${row.date}`;
+        const list = taken.get(key) || [];
+        list.push(toMinutes(row.time));
+        taken.set(key, list);
+    });
+    const now = nowMinutes();
+    const slots = [];
+    for (let day = 0; day <= daysAhead; day += 1) {
+        const date = addDays(today, day);
+        if (hours.closed.includes(parseDate(date).getDay())) continue;
+        barbers.forEach(barber => {
+            const busy = taken.get(`${barber.id}|${date}`) || [];
+            const times = grid
+                .filter(start => !(day === 0 && start <= now))
+                .filter(start => !busy.some(minutes => minutes != null && minutes >= start && minutes < start + hours.slot))
+                .map(fromMinutes);
+            if (times.length) slots.push({ barber_id: Number(barber.id), date, times });
+        });
+    }
+    return slots;
 }
 
 async function postBookingSync(endpoint, key, payload) {
@@ -3381,7 +4394,7 @@ function announceBookings(totals, manual) {
     } else if (manual) {
         toast(t('booking.upToDate'));
     }
-    if ((added.length || totals.changed || totals.cancelled) && !modalStack.length && ['cashier', 'dashboard'].includes(state.page)) {
+    if ((added.length || totals.changed || totals.cancelled) && !modalStack.length && !state.slotForm && ['cashier', 'dashboard'].includes(state.page)) {
         renderPage({ keepScroll: true });
     }
     refreshSettingsIfOpen();
@@ -3420,14 +4433,9 @@ function stopBookingSync() {
 
 function renderBookingCard(options, received) {
     const enabled = options.enabled === '1';
-    const closed = parseWeekdays(options.closed);
     const { status, text: statusText } = bookingStatusInfo(options);
-    const slot = clampInt(options.slot, 5, 240, 30);
     const days = clampInt(options.days, 1, 60, 14);
-    const slotChoices = [...new Set([15, 20, 30, 45, 60, slot])].sort((a, b) => a - b);
     const dayChoices = [...new Set([7, 14, 30, days])].sort((a, b) => a - b);
-    // The week starts on Saturday in Iraq.
-    const weekOrder = [6, 0, 1, 2, 3, 4, 5];
 
     return `
         <section class="card card-wide booking-card">
@@ -3450,29 +4458,11 @@ function renderBookingCard(options, received) {
                         <input type="text" name="key" maxlength="200" dir="ltr" spellcheck="false" autocomplete="off" value="${escapeHtml(options.key)}">
                     </label>
                 </div>
-                <div class="grid-4">
-                    <label class="field"><span>${escapeHtml(t('booking.open'))}</span>
-                        <input type="time" name="open" value="${escapeHtml(options.open)}">
-                    </label>
-                    <label class="field"><span>${escapeHtml(t('booking.close'))}</span>
-                        <input type="time" name="close" value="${escapeHtml(options.close)}">
-                    </label>
-                    <label class="field"><span>${escapeHtml(t('booking.slot'))}</span>
-                        <select name="slot">${slotChoices.map(value => `<option value="${value}" ${value === slot ? 'selected' : ''}>${escapeHtml(t('catalog.minutes', { n: value }))}</option>`).join('')}</select>
-                    </label>
+                <div class="grid-2">
                     <label class="field"><span>${escapeHtml(t('booking.daysAhead'))}</span>
                         <select name="days">${dayChoices.map(value => `<option value="${value}" ${value === days ? 'selected' : ''}>${escapeHtml(t('booking.days', { n: value }))}</option>`).join('')}</select>
                     </label>
-                </div>
-                <div class="field">
-                    <span>${escapeHtml(t('booking.closedDays'))}</span>
-                    <div class="day-checks">
-                        ${weekOrder.map(day => `
-                            <label class="day-check">
-                                <input type="checkbox" name="closed" value="${day}" ${closed.includes(day) ? 'checked' : ''}>
-                                <span>${escapeHtml(I18N.weekdayName(day))}</span>
-                            </label>`).join('')}
-                    </div>
+                    <p class="field-hint booking-hours-hint">${icon('clock')}<span>${escapeHtml(t('booking.hoursHint'))}</span></p>
                 </div>
                 <div class="button-row booking-actions">
                     <button type="submit" class="btn btn-primary">${icon('check')}<span>${escapeHtml(t('common.save'))}</span></button>
@@ -3490,23 +4480,12 @@ async function saveBookingSettings(form, { quiet = false } = {}) {
         form.elements.url.focus();
         return false;
     }
-    const open = isValidTime(form.elements.open.value) ? form.elements.open.value.slice(0, 5) : BOOKING_DEFAULTS.open;
-    const close = isValidTime(form.elements.close.value) ? form.elements.close.value.slice(0, 5) : BOOKING_DEFAULTS.close;
-    if (close <= open) {
-        toast(t('booking.badHours'), 'error');
-        form.elements.close.focus();
-        return false;
-    }
     const previous = state.booking || await loadBookingOptions();
     const values = {
         enabled: form.elements.enabled.checked ? '1' : '0',
         url,
         key: form.elements.key.value.trim(),
-        open,
-        close,
-        slot: String(clampInt(form.elements.slot.value, 5, 240, 30)),
-        days: String(clampInt(form.elements.days.value, 1, 60, 14)),
-        closed: [...form.querySelectorAll('[name="closed"]:checked')].map(input => input.value).join(',')
+        days: String(clampInt(form.elements.days.value, 1, 60, 14))
     };
     // A different website starts from the beginning.
     if (previous.url !== url) values.cursor = '';
@@ -3517,6 +4496,77 @@ async function saveBookingSettings(form, { quiet = false } = {}) {
     await runStatements(bookingOptionStatements(values));
     await loadBookingOptions();
     if (!quiet) toast(t('toast.saved'));
+    return true;
+}
+
+// Opening hours, time between clients and closed days. The cashier makes its time slots from
+// these, and the website shows the same free times.
+function renderHoursCard(options) {
+    const hours = shopHours(options);
+    // The week starts on Saturday in Iraq.
+    const weekOrder = [6, 0, 1, 2, 3, 4, 5];
+    return `
+        <section class="card card-wide hours-card">
+            <h3 class="card-title">${icon('clock')}${escapeHtml(t('hours.title'))}</h3>
+            <p class="card-text">${escapeHtml(t('hours.text'))}</p>
+            <form class="stack" data-form="hours" autocomplete="off">
+                <div class="grid-3">
+                    <label class="field"><span>${escapeHtml(t('booking.open'))}</span>
+                        <input type="time" name="open" value="${escapeHtml(hours.open)}">
+                    </label>
+                    <label class="field"><span>${escapeHtml(t('booking.close'))}</span>
+                        <input type="time" name="close" value="${escapeHtml(hours.close)}">
+                    </label>
+                    <div class="field">
+                        <span>${escapeHtml(t('slots.every'))}</span>
+                        <div class="hours-slot">
+                            <div class="segmented" role="group" aria-label="${escapeHtml(t('slots.every'))}">
+                                ${SLOT_PRESETS.map(value => `<button type="button" class="${value === hours.slot ? 'active' : ''}" data-set-slot="${value}" aria-pressed="${value === hours.slot}">${escapeHtml(I18N.formatNumber(value))}</button>`).join('')}
+                            </div>
+                            <span class="money-input hours-minutes">
+                                <input type="number" name="slot" min="5" max="240" step="1" inputmode="numeric" value="${hours.slot}" aria-label="${escapeHtml(t('slots.customLabel'))}">
+                                <span>${escapeHtml(t('slots.min'))}</span>
+                            </span>
+                        </div>
+                    </div>
+                </div>
+                <div class="field">
+                    <span>${escapeHtml(t('booking.closedDays'))}</span>
+                    <div class="day-checks">
+                        ${weekOrder.map(day => `
+                            <label class="day-check">
+                                <input type="checkbox" name="closed" value="${day}" ${hours.closed.includes(day) ? 'checked' : ''}>
+                                <span>${escapeHtml(I18N.weekdayName(day))}</span>
+                            </label>`).join('')}
+                    </div>
+                </div>
+                <div><button type="submit" class="btn btn-primary">${icon('check')}<span>${escapeHtml(t('common.save'))}</span></button></div>
+            </form>
+        </section>`;
+}
+
+async function saveHours(form) {
+    const open = isValidTime(form.elements.open.value) ? form.elements.open.value.slice(0, 5) : BOOKING_DEFAULTS.open;
+    const close = isValidTime(form.elements.close.value) ? form.elements.close.value.slice(0, 5) : BOOKING_DEFAULTS.close;
+    if (closingMinutes(close) <= toMinutes(open)) {
+        toast(t('booking.badHours'), 'error');
+        form.elements.close.focus();
+        return false;
+    }
+    const slot = clampInt(form.elements.slot.value, 5, 240, null);
+    if (slot == null) {
+        toast(t('slots.badLength'), 'error');
+        form.elements.slot.focus();
+        return false;
+    }
+    await runStatements(bookingOptionStatements({
+        open,
+        close,
+        slot: String(slot),
+        closed: [...form.querySelectorAll('[name="closed"]:checked')].map(input => input.value).join(',')
+    }));
+    await loadBookingOptions();
+    toast(t('toast.saved'));
     return true;
 }
 
@@ -3603,21 +4653,65 @@ const actions = {
     },
     'board-day': element => {
         state.boardDate = addDays(state.boardDate, Number(element.dataset.step || 0));
+        state.slotForm = null;
         return renderPage();
     },
     'board-today': () => {
         state.boardDate = todayString();
+        state.slotForm = null;
         return renderPage();
     },
     'board-goto': element => {
         if (isValidDate(element.dataset.date)) state.boardDate = element.dataset.date;
+        state.slotForm = null;
         return renderPage();
     },
+    'slot-add': element => openSlotForm(Number(element.dataset.barber), element.dataset.time),
+    'slot-edit': element => openSlotEdit(Number(element.dataset.id)),
+    'slot-cancel': () => closeSlotForm(),
+    'slot-remove': element => removeOpenClient(Number(element.dataset.id)),
+    'slot-length': element => saveSlotLength(element.dataset.value),
+    'toggle-past': () => {
+        state.showPast = !state.showPast;
+        return renderPage({ keepScroll: true });
+    },
+    'open-hours': () => {
+        state.focusHours = true;
+        return go('settings');
+    },
+    'done-client': element => openDoneDialog(Number(element.dataset.id)),
+    'take-client': element => takeClient(Number(element.dataset.id)),
+    'back-to-waiting': element => backToWaiting(Number(element.dataset.id)),
+    'undo-pay': element => undoPayment(Number(element.dataset.id)),
     'edit-finished': element => editFinished(Number(element.dataset.id)),
+    'delete-finished': element => deleteFinishedClient(Number(element.dataset.id)),
     'lock-editing': () => {
         lockEditing();
         toast(t('history.locked'));
         return renderPage({ keepScroll: true });
+    },
+    'sell-add': element => changeCart(Number(element.dataset.id), 1),
+    'sell-minus': element => changeCart(Number(element.dataset.id), -1),
+    'sell-clear': () => {
+        state.cart.clear();
+        updateSellUi();
+    },
+    'sell-method': element => {
+        state.sellMethod = element.dataset.value === 'card' ? 'card' : 'cash';
+        updateSellUi();
+    },
+    'sell-category': element => {
+        state.sellCategory = element.dataset.value || 'all';
+        dom.page.querySelectorAll('[data-action="sell-category"]').forEach(button => {
+            button.classList.toggle('active', button === element);
+        });
+        filterSellGrid();
+    },
+    'sell-done': () => finishSale(),
+    'delete-sale': element => deleteProductSale(Number(element.dataset.id)),
+    'open-catalog-products': () => {
+        state.catalogTab = 'products';
+        return go('catalog');
     },
     'barber-account': element => openAccountModal(Number(element.dataset.id)),
     'booking-sync': async () => {
@@ -3626,12 +4720,6 @@ const actions = {
         await syncOnlineBookings({ manual: true });
         if (state.page === 'settings' && !modalStack.length) await renderPage({ keepScroll: true });
     },
-    'new-client': element => openClientModal({ barberId: element.dataset.barber ? Number(element.dataset.barber) : null }),
-    'edit-client': element => openClientModal({ ticketId: Number(element.dataset.id), focus: element.dataset.focus || null }),
-    'take-client': element => takeClient(Number(element.dataset.id)),
-    'pay-client': element => openPayModal(Number(element.dataset.id)),
-    'back-to-waiting': element => backToWaiting(Number(element.dataset.id)),
-    'undo-pay': element => undoPayment(Number(element.dataset.id)),
     'add-barber': async () => {
         const name = await promptDialog({ title: t('barbers.addTitle'), label: t('barbers.name'), placeholder: t('barbers.namePlaceholder'), okLabel: t('barbers.add'), maxLength: 60 });
         if (name) await addBarber(name);
@@ -3665,7 +4753,10 @@ const actions = {
     'clear-history': () => clearHistory()
 };
 
-const busyActions = new Set(['take-client', 'back-to-waiting', 'undo-pay', 'pay-client', 'edit-client', 'new-client', 'edit-finished', 'barber-account', 'booking-sync']);
+const busyActions = new Set([
+    'take-client', 'back-to-waiting', 'undo-pay', 'done-client', 'slot-add', 'slot-edit', 'slot-remove', 'slot-length',
+    'edit-finished', 'delete-finished', 'delete-sale', 'sell-done', 'barber-account', 'booking-sync', 'clear-history'
+]);
 
 document.addEventListener('click', event => {
     const dateInput = event.target.closest('input[type="date"][data-date-input]');
@@ -3675,6 +4766,21 @@ document.addEventListener('click', event => {
         } catch (error) {
             // Some browsers only open the picker from the native control itself.
         }
+    }
+
+    // Choosing a service or a saved client inside the slot form.
+    if (onSlotFormClick(event)) return;
+
+    // Quick choices for the time between clients in Settings.
+    const preset = event.target.closest('[data-set-slot]');
+    if (preset) {
+        const form = preset.closest('form');
+        form.elements.slot.value = preset.dataset.setSlot;
+        form.querySelectorAll('[data-set-slot]').forEach(button => {
+            button.classList.toggle('active', button === preset);
+            button.setAttribute('aria-pressed', String(button === preset));
+        });
+        return;
     }
 
     const element = event.target.closest('[data-action]');
@@ -3692,11 +4798,41 @@ document.addEventListener('click', event => {
         });
 });
 
+document.addEventListener('input', event => {
+    if (event.target.closest('[data-form="slot"]')) {
+        onSlotFormInput(event.target);
+        return;
+    }
+    if (event.target.matches('[data-sell-search]')) {
+        state.sellSearch = event.target.value;
+        filterSellGrid();
+        return;
+    }
+    // Typing a number of minutes in Settings clears the quick choice that no longer matches.
+    if (event.target.matches('[data-form="hours"] [name="slot"]')) {
+        const value = Number(event.target.value);
+        event.target.form.querySelectorAll('[data-set-slot]').forEach(button => {
+            const active = Number(button.dataset.setSlot) === value;
+            button.classList.toggle('active', active);
+            button.setAttribute('aria-pressed', String(active));
+        });
+    }
+});
+
 document.addEventListener('change', event => {
+    if (event.target.closest('[data-form="slot"]')) {
+        onSlotFormInput(event.target);
+        return;
+    }
+    if (event.target.matches('[data-slot-custom]')) {
+        if (event.target.value.trim() !== '') saveSlotLength(event.target.value).catch(handleError);
+        return;
+    }
     const input = event.target.closest('[data-date-input]');
     if (!input || !isValidDate(input.value)) return;
     if (input.dataset.dateInput === 'board') {
         state.boardDate = input.value;
+        state.slotForm = null;
     } else if (input.dataset.dateInput === 'history') {
         state.historyDay = input.value;
         state.historyPeriod = 'day';
@@ -3704,16 +4840,37 @@ document.addEventListener('change', event => {
     renderPage();
 });
 
+document.addEventListener('keydown', event => {
+    // Enter in the "other minutes" box saves it.
+    if (event.key === 'Enter' && event.target.matches('[data-slot-custom]')) {
+        event.preventDefault();
+        event.target.blur();
+    }
+});
+
 document.addEventListener('submit', event => {
     const form = event.target.closest('[data-form]');
     if (!form) return;
     event.preventDefault();
-    if (form.dataset.form === 'add-barber') {
+    if (form.dataset.form === 'slot') {
+        saveSlotForm().catch(handleError);
+    } else if (form.dataset.form === 'add-barber') {
         addBarber(form.elements.name.value).catch(handleError);
     } else if (form.dataset.form === 'shop') {
         saveShop(form).catch(handleError);
     } else if (form.dataset.form === 'history-password') {
         saveHistoryPassword(form).catch(handleError);
+    } else if (form.dataset.form === 'hours') {
+        const button = form.querySelector('button[type="submit"]');
+        if (button) button.disabled = true;
+        saveHours(form)
+            .then(async saved => {
+                if (saved && state.booking?.enabled === '1') await syncOnlineBookings();
+            })
+            .catch(handleError)
+            .finally(() => {
+                if (button && document.contains(button)) button.disabled = false;
+            });
     } else if (form.dataset.form === 'booking') {
         const button = form.querySelector('button[type="submit"]');
         if (button) button.disabled = true;
@@ -3730,22 +4887,20 @@ document.addEventListener('submit', event => {
     }
 });
 
-document.addEventListener('toggle', event => {
-    const details = event.target.closest?.('[data-done-key]');
-    if (!details) return;
-    if (details.open) state.openDone.add(details.dataset.doneKey);
-    else state.openDone.delete(details.dataset.doneKey);
-}, true);
-
 document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !modalStack.length && state.slotForm && event.target.closest?.('[data-form="slot"]')) {
+        closeSlotForm().catch(handleError);
+        return;
+    }
     if (event.key !== 'Escape' || !modalStack.length) return;
-    // The client form is not closed by Escape so typed details are never lost by accident.
+    // The finished client form is not closed by Escape so typed details are never lost by accident.
     const top = modalStack[modalStack.length - 1];
     if (top.dismissible) top.close();
 });
 
+// The board refreshes by itself, but not while a form is open or a field is being typed in.
 function autoRefresh() {
-    if (!state.signedIn || modalStack.length || document.visibilityState !== 'visible') return;
+    if (!state.signedIn || modalStack.length || state.slotForm || document.visibilityState !== 'visible') return;
     if (!['cashier', 'dashboard'].includes(state.page)) return;
     if (document.activeElement && document.activeElement.matches('input, select, textarea')) return;
     renderPage({ keepScroll: true });

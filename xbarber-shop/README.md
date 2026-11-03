@@ -6,13 +6,14 @@ The same app can also be published as a static, installable PWA. The PWA keeps i
 
 ## Features
 
-- **Cashier board**: Every barber has a column. Add a client under a barber, tap **Take client** when they sit in the chair, then **Finish & pay**. Each client card shows whether they bought products.
-- **Everything optional**: A client's name, phone number, date, time, services, and products can all be left empty. Typing a name or phone suggests saved clients.
-- **Client status at a glance**: Waiting (amber), With barber (black card), Done (green). Payments can be undone, which returns product stock.
-- **Dashboard**: Clients finished, total money (services + products), services only, and products only, for today, the last 7 days, this month, or all time. Also shows money by barber and best-selling services and products.
-- **History**: One column per barber with the money they earned and how many clients they finished, plus each finished client. Printable. Finished clients can be edited, moved back to the cashier, or deleted after entering the history password.
+- **Cashier board with time slots**: Every barber has a column with one time slot every 10, 20 or 30 minutes (or any other number), from opening to closing, in time order. Tap a free time and a small form opens right there (no pop-up): name, phone, service and, for the admin, the money received. All of them are optional. Tap **Done** when the client is finished, then confirm **Yes, done**.
+- **Money received**: When the admin types the money received, only that money is counted, not the service price. Without it, the service price counts.
+- **Client status at a glance**: Waiting (amber), With barber (black card, after **Start**), Done (green row in its slot). Payments can be undone.
+- **Product cashier**: The **Products** page sells products on their own, without a client name. Tap products, then **Done** and confirm. Stock goes down, and the page shows what was sold today.
+- **Dashboard**: Clients finished, total money (services + products), services only, and products only (including the product cashier), for today, the last 7 days, this month, or all time. Also shows money by barber and best-selling services and products.
+- **History**: One column per barber with the money they earned and how many clients they finished, plus each finished client, and a **Product sales** column. Printable. Finished clients can be edited or moved back to the cashier after entering the history password. **Delete** always asks for the password.
 - **Barber sign-ins**: The admin creates a sign-in for each barber on the Barbers page. A barber sees only Cashier and History and can change only their own clients. The admin can change everything.
-- **Online booking (prepared)**: When the booking website (xoshawi.com) is ready, turn it on in Settings. Customers' bookings then appear by themselves in the chosen barber's column at the chosen time, marked "Online". See [docs/ONLINE-BOOKING.md](docs/ONLINE-BOOKING.md).
+- **Online booking (prepared)**: When the booking website (xoshawi.com) is ready, turn it on in Settings. The cashier sends the website its free time slots, and customers' bookings appear by themselves in the chosen barber's column at the chosen time, marked "Online". See [docs/ONLINE-BOOKING.md](docs/ONLINE-BOOKING.md).
 - **Catalog**: Services with prices, and products with photos, prices, stock, and categories.
 - **Barbers**: Adding a barber adds a column to Cashier and History. Removing a barber keeps their history.
 - **Three languages**: English, Arabic (العربية), and Kurdish Sorani (کوردی), with right-to-left layout for Arabic and Kurdish.
@@ -150,7 +151,7 @@ xbarber-shop/
 │   └── js/
 │       ├── i18n.js      # English, Arabic and Kurdish text, dates and money
 │       ├── auth.js      # Password hashing (barber sign-ins, history password)
-│       ├── app.js       # All pages: cashier, dashboard, history, catalog, barbers, settings
+│       ├── app.js       # All pages: cashier, products, dashboard, history, catalog, barbers, settings
 │       └── web-api.js   # Browser database (offline) or local server client
 │
 ├── docs/
@@ -179,34 +180,38 @@ xbarber-shop/
 | | Admin | Barber |
 |---|---|---|
 | Pages | All | Cashier and History |
-| Cashier | Every column | Sees every column; adds, takes, edits and finishes only their own clients; can take a client from "Any barber" |
-| History | Every barber | Only their own column |
+| Cashier | Every column; types the money received; sets the time between clients | Sees every column; adds, starts, edits and finishes only their own clients; can take a client from "Any barber". No money field: the service price counts |
+| Products (product cashier) | Yes | No |
+| History | Every barber, plus product sales | Only their own column |
 | Finished clients | Edit, undo payment, delete (with the history password) | The same, for their own clients only |
 | Catalog, Barbers, Settings, backups | Yes | No |
 
 ### Password for finished clients
 
-Editing a finished (paid) client, undoing a payment or deleting a finished client asks for the history password. After it is entered, editing stays unlocked for 5 minutes, or until **Lock** is tapped in History. The admin changes this password in **Settings → Password for finished clients**. Edits update the payment, product stock (only the difference) and the client's totals.
+Editing a finished (paid) client or undoing a payment asks for the history password (default `Xx2727Xx`). After it is entered, editing stays unlocked for 5 minutes, or until **Lock** is tapped in History. **Deleting** a finished client or a product sale, and **Clear history** in Settings, ask for the password every time. The admin changes this password in **Settings → Password for finished clients**. Edits update the payment, product stock (only the difference) and the client's totals.
 
 ### Getting started
 
 1. **Barbers**: add each barber. Each one gets a column in Cashier and History.
 2. **Catalog**: add your services (name and price) and products (photo, price, stock).
-3. **Cashier**: tap **New client** in a barber's column. Fill in only what you need, choose services and products, then **Add client** (waiting) or **Add & take now**.
-4. When the client sits down, tap **Take client**. When they are done, tap **Finish & pay**, choose Cash or Card, and confirm.
-5. **Dashboard** and **History** update right away.
+3. **Settings → Working hours and time slots**: set opening and closing times, the time between clients and closed days. The time between clients can also be changed at the top of the Cashier page (10, 20, 30 or **Other**).
+4. **Cashier**: tap a free time in a barber's column. Type the name and phone (optional), choose the service (optional) and, as admin, the money received (optional). Tap **Add client**.
+5. When the client sits down, tap **Start** (optional). When they are done, tap **Done**, check the money and Cash or Card, then **Yes, done**.
+6. **Products**: sell products without a client. Tap the products, then **Done** and **Yes, sold**.
+7. **Dashboard** and **History** update right away.
 
-Clients added under **Any barber** wait for the first free barber. Tapping **Take client** asks which barber takes them.
+Free times that are already over are hidden; **Show earlier free times** shows them again. Online bookings for an unknown barber go to an **Any barber** column; tapping **Start** asks which barber takes them.
 
 ### How data is stored
 
-Each client visit is a row in `orders` with status `waiting`, `in-service`, or `completed`. Its services and products are rows in `order_items`. Upcoming appointments from the previous design are moved onto the cashier board automatically the first time you sign in.
+Each client visit is a row in `orders` with status `waiting`, `in-service`, or `completed`, at a date and time (its slot). Its services (and products, on older visits) are rows in `order_items`. The order total is the money counted: the money the admin typed if there is one, otherwise the service prices. Upcoming appointments from the previous design are moved onto the cashier board automatically the first time you sign in.
 
-Three tables were added; existing tables and data are unchanged, and older databases get the new tables automatically when the app opens them:
+These tables were added; existing tables and data are unchanged, and older databases get the new tables automatically when the app opens them:
 
 - `barber_accounts`: barber sign-ins (passwords are stored as salted SHA-256 hashes)
-- `app_options`: settings such as the history password and online booking
+- `app_options`: settings such as the history password, working hours, time between clients and online booking
 - `online_bookings`: bookings received from the website and the status last reported back
+- `product_sales` and `product_sale_items`: products sold at the product cashier, without a client
 
 ## Security
 
@@ -215,7 +220,7 @@ Three tables were added; existing tables and data are unchanged, and older datab
 - Database encryption available (not implemented by default)
 - Secure IPC communication using Electron's context isolation
 - The local web server requires a login, limits failed login attempts, and only accepts private/local network addresses
-- On the local servers, only the admin can back up, restore, clear history or change barber sign-ins
+- On the local servers, only the admin can back up, restore, clear history, change barber sign-ins or change product sales
 - Barber limits and the history password are checked by the app. In the offline PWA all data lives on the device, so someone with full access to that device and technical skills could get around them. Use a device passcode on shop devices
 - Never expose the local web server port to the internet
 

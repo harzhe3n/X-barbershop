@@ -328,10 +328,10 @@ function requireAdmin(session) {
   if (session.session.role !== 'admin') throw httpError(403, 'Only the admin can do this.');
 }
 
-// Barbers sign in on shared devices; they must not create or change sign-in accounts.
+// Barbers sign in on shared devices; they must not change sign-in accounts or product sales.
 function assertWriteAllowed(session, query) {
-  if (session.session.role !== 'admin' && /\bbarber_accounts\b/i.test(query)) {
-    throw httpError(403, 'Only the admin can change sign-in accounts.');
+  if (session.session.role !== 'admin' && /\b(barber_accounts|product_sales|product_sale_items)\b/i.test(query)) {
+    throw httpError(403, 'Only the admin can do this.');
   }
 }
 
@@ -471,6 +471,8 @@ async function handleClearHistory(req, res) {
       await dbRun(connection, 'DELETE FROM payments');
       await dbRun(connection, 'DELETE FROM order_items');
       await dbRun(connection, 'DELETE FROM orders');
+      await dbRun(connection, 'DELETE FROM product_sale_items');
+      await dbRun(connection, 'DELETE FROM product_sales');
       await dbRun(connection, 'COMMIT');
     } catch (error) {
       try {

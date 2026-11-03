@@ -3737,3 +3737,892 @@ body[data-signed-in] #offline-status[data-state="error"] {
         display: none !important;
     }
 }
+
+/* ---------------- Cashier: time slots ---------------- */
+
+.slot-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 10px;
+    margin: -4px 0 12px;
+    padding: 6px 6px 6px 14px;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: #fff;
+}
+
+.slot-bar-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--ink-2);
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.slot-bar-label .icon {
+    width: 18px;
+    height: 18px;
+}
+
+.slot-bar-label strong {
+    color: var(--ink);
+    font-weight: 800;
+}
+
+.slot-presets button {
+    height: 32px;
+    padding: 0 12px;
+}
+
+.slot-custom {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 40px;
+    padding: 0 6px 0 12px;
+    border: 1px solid var(--line-2);
+    border-radius: 12px;
+    color: var(--ink-2);
+    font-size: 13.5px;
+    font-weight: 700;
+}
+
+.slot-custom.active {
+    border-color: var(--ink);
+    color: var(--ink);
+}
+
+.slot-custom input {
+    width: 64px;
+    height: 30px;
+    padding: 0 8px;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 700;
+    text-align: center;
+}
+
+.slot-bar-hours {
+    color: var(--ink-2);
+    font-size: 13.5px;
+    font-weight: 700;
+}
+
+.slot-past-toggle[aria-pressed="true"] {
+    background: var(--surface-3);
+    color: var(--ink);
+}
+
+.notice-slim {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: -4px 0 12px;
+    padding: 8px 14px;
+}
+
+.notice-slim .icon {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+}
+
+.col-body {
+    position: relative;
+    gap: 8px;
+}
+
+.col-stats .stat-free {
+    box-shadow: inset 0 3px 0 var(--line-2);
+}
+
+.col-stats .stat-waiting {
+    box-shadow: inset 0 3px 0 var(--waiting);
+}
+
+.col-stats .stat-done {
+    box-shadow: inset 0 3px 0 var(--done);
+}
+
+/* A free time: tap it to add a client there. */
+.slot {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 46px;
+    padding: 6px 8px 6px 12px;
+    border: 1.5px dashed #cbcac2;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.55);
+    color: var(--ink);
+    font-family: inherit;
+    text-align: start;
+    cursor: pointer;
+    transition: border-color 0.15s, background-color 0.15s;
+}
+
+button.slot:hover:not(:disabled) {
+    border-style: solid;
+    border-color: var(--ink);
+    background: #fff;
+}
+
+.slot-time {
+    min-width: 66px;
+    font-size: 14.5px;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.slot-free {
+    flex: 1;
+    min-width: 0;
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.slot-plus {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 32px;
+    padding: 0 10px;
+    border-radius: 10px;
+    background: var(--surface-3);
+    color: var(--ink);
+    font-size: 13px;
+    font-weight: 800;
+    transition: background-color 0.15s, color 0.15s;
+}
+
+button.slot:hover:not(:disabled) .slot-plus,
+button.slot:focus-visible .slot-plus {
+    background: var(--ink);
+    color: #fff;
+}
+
+.slot-plus .icon {
+    width: 16px;
+    height: 16px;
+}
+
+.slot.is-past {
+    opacity: 0.6;
+}
+
+.slot-readonly {
+    cursor: default;
+}
+
+/* The small form inside a slot (no pop-up). */
+.slot-form {
+    display: flex;
+    flex-shrink: 0;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 10px 12px;
+    border: 2px solid var(--ink);
+    border-radius: 16px;
+    background: #fff;
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.12);
+}
+
+.slot-form-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-inline-start: 2px;
+}
+
+.slot-form-head strong {
+    flex: 1;
+    min-width: 0;
+    font-size: 15px;
+    font-weight: 800;
+}
+
+.slot-form input,
+.slot-form select {
+    height: 44px;
+    font-size: 16px;
+}
+
+.slot-form-section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 2px;
+}
+
+.slot-form-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--ink-2);
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.slot-form-label .icon {
+    width: 16px;
+    height: 16px;
+}
+
+.slot-form-hint {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin: 0;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.4;
+}
+
+.slot-form-hint .icon {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+
+.slot-form-move .field {
+    font-size: 12.5px;
+}
+
+.slot-form-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+}
+
+.slot-suggestions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.slot-suggestions:empty {
+    display: none;
+}
+
+.svc-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.svc-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 38px;
+    padding: 4px 12px;
+    border: 1.5px solid var(--line-2);
+    border-radius: 999px;
+    background: #fff;
+    color: var(--ink);
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.svc-chip small {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.svc-chip.selected {
+    border-color: var(--ink);
+    background: var(--ink);
+    color: #fff;
+}
+
+.svc-chip.selected small {
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.money-input {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.money-input input {
+    padding-inline-end: 52px;
+}
+
+.money-input > span {
+    position: absolute;
+    inset-inline-end: 12px;
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 700;
+    pointer-events: none;
+}
+
+.btn-icon-sm {
+    width: 32px;
+    height: 32px;
+    border-radius: 9px;
+}
+
+.btn-icon-sm .icon {
+    width: 17px;
+    height: 17px;
+}
+
+/* Client cards in the slots */
+.ticket-clock {
+    font-size: 15px;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.ticket-clock-none {
+    color: var(--muted);
+    font-size: 13px;
+}
+
+.ticket-top {
+    justify-content: flex-start;
+}
+
+.ticket-top .ticket-edit {
+    margin-inline-start: auto;
+}
+
+.ticket-top .badge-online {
+    margin-inline-end: 0;
+}
+
+.is-active .ticket-clock {
+    color: #fff;
+}
+
+.ticket-money {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.money-tag {
+    align-self: flex-start;
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: var(--info-bg);
+    color: var(--info-ink);
+    font-size: 11px;
+    font-weight: 800;
+}
+
+.is-active .money-tag {
+    background: rgba(255, 255, 255, 0.16);
+    color: #fff;
+}
+
+.ticket-actions .btn-sm {
+    padding: 0 10px;
+}
+
+.btn-done {
+    min-width: 84px;
+}
+
+.ticket-compact {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 6px 8px 12px;
+    border: 1px solid #cfe9cf;
+    border-inline-start: 4px solid var(--done);
+    background: #f4fbf4;
+}
+
+.ticket-compact .ticket-clock {
+    min-width: 66px;
+    color: var(--done-ink);
+    font-size: 14px;
+}
+
+.ticket-compact-main {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.ticket-compact-main strong,
+.ticket-compact-main span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ticket-compact-main strong {
+    font-size: 14.5px;
+    font-weight: 800;
+}
+
+.ticket-compact-main span {
+    color: var(--muted);
+    font-size: 12.5px;
+    font-weight: 600;
+}
+
+.ticket-compact-end {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.ticket-compact-money {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--done-ink);
+    font-size: 14px;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.ticket-compact-money .icon {
+    width: 16px;
+    height: 16px;
+    stroke-width: 3;
+}
+
+/* Done: "Are you sure?" */
+.done-question {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 0;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: var(--waiting-bg);
+    color: var(--waiting-ink);
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.done-question .icon {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+
+.finished-money {
+    margin-top: 12px;
+}
+
+/* ---------------- History: delete and product sales ---------------- */
+
+.hrow-buttons {
+    display: inline-flex;
+    gap: 4px;
+}
+
+.hrow-delete {
+    padding: 0 8px;
+    color: var(--danger-ink);
+}
+
+.hrow-delete:hover:not(:disabled) {
+    border-color: var(--danger);
+    background: var(--danger-bg);
+    color: var(--danger-ink);
+}
+
+.avatar-products {
+    background: var(--products);
+}
+
+.hcol-sales {
+    background: #f6ece6;
+}
+
+/* ---------------- Product cashier ---------------- */
+
+.sell {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+    align-items: start;
+    gap: 18px;
+}
+
+.sell-main {
+    min-width: 0;
+}
+
+.sell-grid {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+}
+
+.sell-side {
+    position: sticky;
+    top: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.sell-cart {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.sell-cart-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.sell-cart-head .card-title {
+    margin: 0;
+}
+
+.sell-lines {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.sell-lines li {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+        "thumb name total"
+        "thumb qty qty";
+    align-items: center;
+    gap: 4px 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--line);
+}
+
+.sell-lines .rank-thumb {
+    grid-area: thumb;
+}
+
+.sell-line-name {
+    grid-area: name;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    font-size: 14.5px;
+    font-weight: 750;
+}
+
+.sell-line-name small {
+    color: var(--muted);
+    font-size: 12.5px;
+    font-weight: 600;
+}
+
+.sell-warn {
+    color: var(--danger-ink);
+    font-weight: 800;
+}
+
+.sell-line-total {
+    grid-area: total;
+    font-size: 14.5px;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.sell-qty {
+    grid-area: qty;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.sell-qty button {
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    border: 1px solid var(--line-2);
+    border-radius: 10px;
+    background: #fff;
+    color: var(--ink);
+    cursor: pointer;
+}
+
+.sell-qty button .icon {
+    width: 16px;
+    height: 16px;
+}
+
+.sell-qty b {
+    min-width: 24px;
+    font-size: 15px;
+    text-align: center;
+}
+
+.sell-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+}
+
+.sell-empty .icon {
+    width: 26px;
+    height: 26px;
+}
+
+.sell-cart .pay-total {
+    margin: 0;
+}
+
+.sell-stats {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr 1fr;
+    gap: 6px;
+    margin-bottom: 12px;
+}
+
+.sell-stats div {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 10px;
+    border-radius: 12px;
+    background: var(--surface-2);
+}
+
+.sell-stats span {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.sell-stats strong {
+    font-size: 16px;
+    font-weight: 800;
+}
+
+.sell-stats .sell-stat-money {
+    background: var(--ink);
+}
+
+.sell-stats .sell-stat-money span {
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.sell-stats .sell-stat-money strong {
+    color: #fff;
+}
+
+.sell-subtitle {
+    margin: 14px 0 6px;
+    color: var(--ink-2);
+    font-size: 13.5px;
+    font-weight: 800;
+}
+
+.sale-list {
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.sale-list li {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--line);
+    font-size: 13.5px;
+}
+
+.sale-list li:last-child {
+    border-bottom: 0;
+}
+
+.sale-time {
+    color: var(--ink-2);
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.sale-items {
+    overflow: hidden;
+    color: var(--ink-2);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sale-money {
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.sale-delete {
+    color: var(--danger-ink);
+}
+
+.sell-bar {
+    display: none;
+}
+
+/* ---------------- Settings: working hours ---------------- */
+
+.hours-slot {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.hours-slot .segmented button {
+    height: 38px;
+    padding: 0 12px;
+}
+
+.hours-minutes {
+    flex: 1;
+    min-width: 96px;
+}
+
+.booking-hours-hint {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    align-self: end;
+    margin: 0 0 12px;
+}
+
+.booking-hours-hint .icon {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+}
+
+@media (max-width: 900px) {
+    .sell {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .sell-side {
+        position: static;
+    }
+
+    .sell-bar {
+        position: sticky;
+        bottom: 0;
+        z-index: 5;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 0 -4px;
+        padding: 10px 12px;
+        border-radius: 16px;
+        background: var(--ink);
+        color: #fff;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+    }
+
+    .sell-bar-count {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: rgba(255, 255, 255, 0.75);
+        font-size: 14px;
+        font-weight: 700;
+    }
+
+    .sell-bar-count .icon {
+        width: 18px;
+        height: 18px;
+    }
+
+    .sell-bar-total {
+        flex: 1;
+        font-size: 17px;
+        font-weight: 800;
+    }
+
+    .sell-bar .btn-primary {
+        background: #fff;
+        color: var(--ink);
+    }
+}
+
+@media (max-width: 600px) {
+    /* One short row on phones: icon, 10 / 20 / 30 and other. */
+    .slot-bar {
+        gap: 6px;
+        margin-bottom: 10px;
+        padding: 6px 8px;
+    }
+
+    .slot-bar-label > span,
+    .slot-custom > span:first-child {
+        display: none;
+    }
+
+    .slot-presets button {
+        padding: 0 8px;
+        font-size: 13px;
+    }
+
+    .slot-custom {
+        height: 38px;
+        padding: 0 6px;
+    }
+
+    .slot-custom input {
+        width: 48px;
+    }
+
+    /* Working hours stay in Settings on phones. */
+    .slot-bar button.slot-bar-hours {
+        display: none;
+    }
+
+    .slot-bar .spacer {
+        display: none;
+    }
+
+    .hours-slot {
+        flex-wrap: wrap;
+    }
+
+    .sell-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media print {
+    .slot-bar,
+    .notice-slim,
+    .slot,
+    .slot-form,
+    .hrow-delete,
+    .sale-delete,
+    .sell-bar {
+        display: none !important;
+    }
+}

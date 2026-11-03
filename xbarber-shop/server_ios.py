@@ -429,10 +429,10 @@ class XBarberHandler(http.server.BaseHTTPRequestHandler):
         )
 
     def check_write_allowed(self, query):
-        # Barbers sign in on shared devices; they must not create or change sign-in accounts.
+        # Barbers sign in on shared devices; they must not change sign-in accounts or product sales.
         session = getattr(self, "session", None) or {}
-        if session.get("role") != "admin" and re.search(r"\bbarber_accounts\b", query, re.IGNORECASE):
-            raise RequestError(403, "Only the admin can change sign-in accounts.")
+        if session.get("role") != "admin" and re.search(r"\b(barber_accounts|product_sales|product_sale_items)\b", query, re.IGNORECASE):
+            raise RequestError(403, "Only the admin can do this.")
 
     def handle_db_query(self):
         body = self.read_json()
@@ -519,6 +519,8 @@ class XBarberHandler(http.server.BaseHTTPRequestHandler):
                 connection.execute("DELETE FROM payments")
                 connection.execute("DELETE FROM order_items")
                 connection.execute("DELETE FROM orders")
+                connection.execute("DELETE FROM product_sale_items")
+                connection.execute("DELETE FROM product_sales")
                 connection.commit()
             except Exception:
                 connection.rollback()

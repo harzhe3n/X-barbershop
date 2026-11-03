@@ -163,7 +163,7 @@ CREATE TABLE IF NOT EXISTS barber_accounts (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- App options as key/value pairs (history edit password, online booking settings)
+-- App options as key/value pairs (history password, working hours, time between clients, online booking)
 CREATE TABLE IF NOT EXISTS app_options (
     key TEXT PRIMARY KEY,
     value TEXT,
@@ -187,6 +187,27 @@ CREATE TABLE IF NOT EXISTS online_bookings (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_online_bookings_order ON online_bookings(order_id);
+
+-- Products sold at the product cashier, without a customer.
+CREATE TABLE IF NOT EXISTS product_sales (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date DATE NOT NULL,
+    time TIME,
+    total REAL NOT NULL DEFAULT 0,
+    payment_method TEXT, -- cash, card
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS product_sale_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sale_id INTEGER NOT NULL,
+    product_id INTEGER NOT NULL,
+    quantity INTEGER NOT NULL DEFAULT 1,
+    price REAL NOT NULL,
+    FOREIGN KEY (sale_id) REFERENCES product_sales(id)
+);
+CREATE INDEX IF NOT EXISTS idx_product_sales_date ON product_sales(date);
+CREATE INDEX IF NOT EXISTS idx_product_sale_items_sale ON product_sale_items(sale_id);
 
 -- Insert default admin user (username: admin, password: admin123)
 INSERT OR IGNORE INTO admins (username, password_hash) VALUES ('admin', '$2b$10$example_hash_for_demo');
