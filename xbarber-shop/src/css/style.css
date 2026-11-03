@@ -2936,7 +2936,8 @@ input[dir="ltr"] {
     opacity: 0;
     transform: translateY(10px);
     transition: opacity 0.2s, transform 0.2s;
-    pointer-events: auto;
+    /* Messages never block a tap on the button under them. */
+    pointer-events: none;
 }
 
 .toast.show {
@@ -4004,36 +4005,90 @@ button.work-pill:hover {
     background: #fff;
 }
 
-.add-slot-form {
+.add-slot-panel {
     display: flex;
     flex-shrink: 0;
-    align-items: flex-end;
+    flex-direction: column;
     gap: 6px;
-    padding: 8px;
+    padding: 10px;
     border: 2px solid var(--ink);
     border-radius: 14px;
     background: #fff;
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.12);
 }
 
-.add-slot-time {
+.add-slot-head {
     display: flex;
-    flex: 1;
-    flex-direction: column;
-    gap: 3px;
-    min-width: 0;
-    color: var(--ink-2);
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.add-slot-head strong {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 14.5px;
+    font-weight: 800;
+}
+
+.add-slot-head strong .icon {
+    width: 17px;
+    height: 17px;
+}
+
+.add-slot-group {
+    margin-top: 2px;
+    color: var(--muted);
     font-size: 12px;
+    font-weight: 800;
+}
+
+.time-chips {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+    gap: 6px;
+}
+
+.time-chip {
+    height: 40px;
+    padding: 0 6px;
+    border: 1.5px solid var(--line-2);
+    border-radius: 11px;
+    background: #fff;
+    color: var(--ink);
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 800;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: border-color 0.15s, background-color 0.15s, color 0.15s;
+}
+
+.time-chip:hover:not(:disabled),
+.time-chip:focus-visible {
+    border-color: var(--ink);
+    background: var(--ink);
+    color: #fff;
+}
+
+.add-slot-other {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 4px;
+    color: var(--ink-2);
+    font-size: 13px;
     font-weight: 700;
 }
 
-.add-slot-time input {
-    height: 38px;
-    padding: 0 10px;
-    font-size: 15px;
+.add-slot-other span {
+    white-space: nowrap;
 }
 
-.add-slot-form .btn-icon-sm {
-    margin-bottom: 3px;
+.add-slot-other select {
+    height: 40px;
+    font-size: 15px;
 }
 
 /* A slot added by hand, with a button to take it away. */

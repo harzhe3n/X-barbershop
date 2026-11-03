@@ -993,8 +993,31 @@ function renderSlotBar(hours, pastFree) {
         </div>`;
 }
 
-// "Add slot": a free time at any hour the barber (or the admin) chooses, for the day on the board.
-function renderAddSlot(barber) {
+// Ready-made start times for "Add slot", so nothing has to be typed: the barber's own steps after
+// closing and before opening, plus every 5 minutes of the day in "Other time". Slots that already
+// exist, and on today times that are already over, are left out.
+function addSlotChoices(hours, step, existing, isPast) {
+    const open = toMinutes(hours.open);
+    const close = closingMinutes(hours.close);
+    const taken = new Set(existing);
+    const usable = minutes => minutes >= 0 && minutes < 24 * 60 && !taken.has(minutes) && !isPast(minutes);
+    const after = [];
+    for (let minutes = open + Math.floor((close - open) / step) * step; minutes < 24 * 60 && after.length < 16; minutes += step) {
+        if (usable(minutes)) after.push(minutes);
+    }
+    const before = [];
+    for (let minutes = open - step; minutes >= Math.max(open - 180, 0) && before.length < 12; minutes -= step) {
+        if (usable(minutes)) before.unshift(minutes);
+    }
+    const other = [];
+    for (let minutes = 0; minutes < 24 * 60; minutes += 5) {
+        if (usable(minutes)) other.push(minutes);
+    }
+    return { after, before, other };
+}
+
+// "Add slot": tap a start time; the new slot opens straight away, ready for the name, phone and service.
+function renderAddSlot(barber, choices) {
     const id = Number(barber.id);
     if (state.addSlot !== id) {
         return `
@@ -1002,15 +1025,27 @@ function renderAddSlot(barber) {
                 ${icon('plus')}<span>${escapeHtml(t('slots.addSlot'))}</span>
             </button>`;
     }
+    const chips = list => `
+        <div class="time-chips">
+            ${list.map(minutes => `<button type="button" class="time-chip" data-action="add-slot-pick" data-barber="${id}" data-time="${fromMinutes(minutes)}">${timeLabel(fromMinutes(minutes))}</button>`).join('')}
+        </div>`;
     return `
-        <form class="add-slot-form" data-form="add-slot" data-barber="${id}" autocomplete="off">
-            <label class="add-slot-time">
-                <span>${escapeHtml(t('slots.newSlotTime'))}</span>
-                <input type="time" name="time" required>
-            </label>
-            <button type="submit" class="btn btn-primary btn-sm">${icon('plus')}<span>${escapeHtml(t('slots.addSlot'))}</span></button>
-            <button type="button" class="btn-icon btn-icon-sm" data-action="add-slot-cancel" aria-label="${escapeHtml(t('common.cancel'))}">${icon('x')}</button>
-        </form>`;
+        <div class="add-slot-panel" role="group" aria-label="${escapeHtml(t('slots.addSlotTitle', { name: barber.name }))}">
+            <div class="add-slot-head">
+                <strong>${icon('clock')}<span>${escapeHtml(t('slots.pickStart'))}</span></strong>
+                <button type="button" class="btn-icon btn-icon-sm" data-action="add-slot-cancel" aria-label="${escapeHtml(t('common.cancel'))}">${icon('x')}</button>
+            </div>
+            ${choices.after.length ? `<span class="add-slot-group">${escapeHtml(t('slots.afterClosing'))}</span>${chips(choices.after)}` : ''}
+            ${choices.before.length ? `<span class="add-slot-group">${escapeHtml(t('slots.beforeOpening'))}</span>${chips(choices.before)}` : ''}
+            ${choices.other.length ? `
+                <label class="add-slot-other">
+                    <span>${escapeHtml(t('slots.otherTime'))}</span>
+                    <select data-add-slot-other data-barber="${id}">
+                        <option value="">…</option>
+                        ${choices.other.map(minutes => `<option value="${fromMinutes(minutes)}">${escapeHtml(I18N.formatTime(fromMinutes(minutes)))}</option>`).join('')}
+                    </select>
+                </label>` : `<p class="slot-form-hint">${escapeHtml(t('slots.noneLeft'))}</p>`}
+        </div>`;
 }
 
 async function changeExtraSlots(barberId, change) {
@@ -1030,14 +1065,10 @@ async function changeExtraSlots(barberId, change) {
     return after;
 }
 
-async function addExtraSlot(form) {
-    const barberId = Number(form.dataset.barber);
-    const time = form.elements.time.value;
-    if (!isValidTime(time)) {
-        toast(t('slots.badTime'), 'error');
-        form.elements.time.focus();
-        return;
-    }
+// Adds the slot, then opens it with the client form (name, phone, service) ready to fill in.
+async function addExtraSlot(barberId, time) {
+    barberId = Number(barberId);
+    if (!isValidTime(time)) return;
     const minutes = toMinutes(time);
     const [options, slotRows] = await Promise.all([loadBookingOptions(), api.dbQuery(BARBER_SLOT_QUERY.query)]);
     const hours = shopHours(options);
@@ -1052,7 +1083,7 @@ async function addExtraSlot(form) {
     if (!saved) return;
     state.addSlot = null;
     toast(t('slots.slotAdded', { time: I18N.formatTime(fromMinutes(minutes)) }));
-    await renderPage({ keepScroll: true });
+    await openSlotForm(barberId, fromMinutes(minutes));
     if (state.booking?.enabled === '1') syncOnlineBookings();
 }
 
@@ -1121,10 +1152,10 @@ function renderColumnSlot(column, step, editable) {
 
 // After the board is drawn: focus a form that was just opened, and on today start each column at the current time.
 function cashierAfterRender({ keepScroll }) {
-    const slotBox = dom.page.querySelector('[data-form="add-slot"] [name="time"]');
-    if (slotBox && state.addSlotFocus) {
+    const panel = dom.page.querySelector('.add-slot-panel');
+    if (panel && state.addSlotFocus) {
         state.addSlotFocus = false;
-        slotBox.focus({ preventScroll: true });
+        panel.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     }
     const form = dom.page.querySelector('[data-form="slot"]');
     if (form && state.slotForm?.focus) {
@@ -1268,7 +1299,9 @@ function renderColumn(column, ctx) {
                 <div class="stat-done"><strong>${doneTickets.length}</strong><span>${escapeHtml(t('status.completed'))}</span></div>
             </div>
             ${column.barber && !removed && !off ? renderColumnSlot(column, step, editable) : ''}
-            ${column.barber && !removed && !off && editable ? renderAddSlot(column.barber) : ''}
+            ${column.barber && !removed && !off && editable
+                ? renderAddSlot(column.barber, state.addSlot === barberId ? addSlotChoices(ctx.hours, step, grid, minutes => ctx.isPast(minutes, step)) : null)
+                : ''}
             <div class="col-body" data-scroll-key="${column.key}">
                 ${offNote}
                 ${rowsHtml || (emptyText ? `<p class="col-empty">${escapeHtml(emptyText)}</p>` : '')}
@@ -4931,6 +4964,7 @@ const actions = {
         state.addSlotFocus = true;
         return renderPage({ keepScroll: true });
     },
+    'add-slot-pick': element => addExtraSlot(element.dataset.barber, element.dataset.time),
     'add-slot-cancel': () => {
         state.addSlot = null;
         return renderPage({ keepScroll: true });
@@ -5019,7 +5053,7 @@ const actions = {
 };
 
 const busyActions = new Set([
-    'take-client', 'back-to-waiting', 'undo-pay', 'done-client', 'slot-add', 'slot-edit', 'slot-remove', 'slot-length', 'toggle-work', 'remove-extra-slot',
+    'take-client', 'back-to-waiting', 'undo-pay', 'done-client', 'slot-add', 'slot-edit', 'slot-remove', 'slot-length', 'toggle-work', 'remove-extra-slot', 'add-slot-pick',
     'edit-finished', 'delete-finished', 'delete-sale', 'sell-done', 'barber-account', 'booking-sync', 'clear-history'
 ]);
 
@@ -5089,6 +5123,10 @@ document.addEventListener('change', event => {
         onSlotFormInput(event.target);
         return;
     }
+    if (event.target.matches('[data-add-slot-other]')) {
+        if (event.target.value) addExtraSlot(event.target.dataset.barber, event.target.value).catch(handleError);
+        return;
+    }
     if (event.target.matches('[data-slot-custom]')) {
         if (event.target.value.trim() !== '') saveSlotLength(event.target.dataset.barber, event.target.value).catch(handleError);
         return;
@@ -5120,14 +5158,6 @@ document.addEventListener('submit', event => {
     event.preventDefault();
     if (form.dataset.form === 'slot') {
         saveSlotForm().catch(handleError);
-    } else if (form.dataset.form === 'add-slot') {
-        const button = form.querySelector('button[type="submit"]');
-        if (button) button.disabled = true;
-        addExtraSlot(form)
-            .catch(handleError)
-            .finally(() => {
-                if (button && document.contains(button)) button.disabled = false;
-            });
     } else if (form.dataset.form === 'add-barber') {
         addBarber(form.elements.name.value).catch(handleError);
     } else if (form.dataset.form === 'shop') {

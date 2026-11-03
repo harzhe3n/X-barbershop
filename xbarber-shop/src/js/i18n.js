@@ -428,13 +428,15 @@
             'hours.noBarbers': 'Add barbers first on the Barbers page.',
             'slots.addSlot': 'Add slot',
             'slots.addSlotTitle': 'Add a free time for {name}',
-            'slots.newSlotTime': 'Time',
             'slots.extraTag': 'Added',
             'slots.removeExtra': 'Remove this slot',
             'slots.slotAdded': 'Free slot added at {time}.',
             'slots.slotRemoved': 'Slot removed.',
             'slots.slotExists': 'There is already a slot at {time}.',
-            'slots.badTime': 'Choose a time for the slot.'
+            'slots.pickStart': 'Pick the start time',
+            'slots.afterClosing': 'After closing',
+            'slots.beforeOpening': 'Before opening',
+            'slots.otherTime': 'Other time'
         },
 
         ar: {
@@ -850,13 +852,15 @@
             'hours.noBarbers': 'أضف الحلاقين أولًا من صفحة الحلاقين.',
             'slots.addSlot': 'إضافة وقت',
             'slots.addSlotTitle': 'إضافة وقت فارغ لـ {name}',
-            'slots.newSlotTime': 'الوقت',
             'slots.extraTag': 'مضاف',
             'slots.removeExtra': 'حذف هذا الوقت',
             'slots.slotAdded': 'تمت إضافة وقت فارغ الساعة {time}.',
             'slots.slotRemoved': 'تم حذف الوقت.',
             'slots.slotExists': 'يوجد وقت مسبقًا الساعة {time}.',
-            'slots.badTime': 'اختر وقتًا للموعد.'
+            'slots.pickStart': 'اختر وقت البدء',
+            'slots.afterClosing': 'بعد الإغلاق',
+            'slots.beforeOpening': 'قبل الفتح',
+            'slots.otherTime': 'وقت آخر'
         },
 
         ckb: {
@@ -1272,13 +1276,15 @@
             'hours.noBarbers': 'سەرەتا لە پەڕەی باربەرەکان باربەر زیاد بکە.',
             'slots.addSlot': 'زیادکردنی کات',
             'slots.addSlotTitle': 'زیادکردنی کاتێکی بەتاڵ بۆ {name}',
-            'slots.newSlotTime': 'کات',
             'slots.extraTag': 'زیادکراو',
             'slots.removeExtra': 'لابردنی ئەم کاتە',
             'slots.slotAdded': 'کاتێکی بەتاڵ لە {time} زیاد کرا.',
             'slots.slotRemoved': 'کاتەکە لابرا.',
             'slots.slotExists': 'پێشتر کاتێک لە {time} هەیە.',
-            'slots.badTime': 'کاتێک بۆ نۆرەکە هەڵبژێرە.'
+            'slots.pickStart': 'کاتی دەستپێکردن هەڵبژێرە',
+            'slots.afterClosing': 'دوای داخستن',
+            'slots.beforeOpening': 'پێش کردنەوە',
+            'slots.otherTime': 'کاتێکی تر'
         }
     };
 
