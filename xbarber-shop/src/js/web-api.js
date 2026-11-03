@@ -15,28 +15,36 @@
     let operationQueue = Promise.resolve();
     let offlineFilesReady = false;
 
-    function setStatus(message, state) {
+    const STATUS_FALLBACK = {
+        'net.onlineReady': 'Online · works offline',
+        'net.onlinePreparing': 'Online · preparing offline mode…',
+        'net.offlineReady': 'Offline · saving on this device',
+        'net.offlineNotReady': 'Offline · connect once to enable offline mode',
+        'net.unavailable': 'Offline mode needs HTTPS'
+    };
+    let statusKey = null;
+    let statusState = 'checking';
+
+    function setStatus(key, state) {
+        statusKey = key;
+        statusState = state;
         const status = document.getElementById('offline-status');
         if (!status) return;
-        status.textContent = message;
+        status.textContent = window.I18N ? window.I18N.t(key) : STATUS_FALLBACK[key] || key;
         status.dataset.state = state;
+        status.dataset.key = key;
+    }
+
+    function refreshStatus() {
+        if (statusKey) setStatus(statusKey, statusState);
     }
 
     function updateNetworkStatus() {
+        if (statusState === 'error') return;
         if (navigator.onLine) {
-            setStatus(
-                offlineFilesReady
-                    ? 'Online · offline files ready'
-                    : 'Online · preparing offline files…',
-                'online'
-            );
+            setStatus(offlineFilesReady ? 'net.onlineReady' : 'net.onlinePreparing', 'online');
         } else {
-            setStatus(
-                offlineFilesReady
-                    ? 'Offline · changes saved on this device'
-                    : 'Offline · connect once to install offline files',
-                'offline'
-            );
+            setStatus(offlineFilesReady ? 'net.offlineReady' : 'net.offlineNotReady', 'offline');
         }
     }
 
@@ -278,9 +286,14 @@
                 .some(column => column.name === 'is_active');
             const hasOrderBarberColumn = queryRows(database, 'PRAGMA table_info(orders)')
                 .some(column => column.name === 'barber_id');
+            // Tables added later (barber accounts, app options, online bookings) are created by the schema.
+            const newerTables = queryRows(
+                database,
+                "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name IN ('barber_accounts', 'app_options', 'online_bookings')"
+            )[0].count;
             database.run('PRAGMA foreign_keys = ON');
             if (!hasCategoryTable || !hasCategoryColumn || !hasProductImageColumn || !hasCustomerImageColumn
-                || !hasCustomerActiveColumn || !hasOrderBarberColumn) {
+                || !hasCustomerActiveColumn || !hasOrderBarberColumn || Number(newerTables) < 3) {
                 await ensureSchema(database);
                 databaseChanged = true;
             }
@@ -425,11 +438,13 @@
 
     const api = {
         isLocalDatabase: async () => (await getMode()) === 'indexeddb',
+        // Server mode: the server checks admin and barber accounts and returns the signed-in user.
+        // Offline mode: only the admin is checked here; app.js checks barber accounts in the local database.
         login: async (username, password) => {
             if (await getMode() === 'server') {
                 try {
-                    await request('/api/login', { username, password });
-                    return true;
+                    const result = await request('/api/login', { username, password });
+                    return result.user || { role: 'admin', username: 'admin' };
                 } catch (error) {
                     if (error.status === 401) return false;
                     throw error;
@@ -441,6 +456,20 @@
             if (await getMode() === 'server') return request('/api/db-query', { query, params });
             return localQuery(query, params);
         },
+        // Runs several read queries; offline mode opens the stored database only once.
+        dbQueryMany: async queries => {
+            if (!Array.isArray(queries)) throw new Error('A list of queries is required.');
+            if (await getMode() === 'server') {
+                return Promise.all(queries.map(item => request('/api/db-query', { query: item.query, params: item.params || [] })));
+            }
+            queries.forEach(item => {
+                if (typeof item?.query !== 'string' || !/^\s*(SELECT|WITH)\b/i.test(item.query)) {
+                    throw new Error('Only read queries are allowed.');
+                }
+            });
+            return localOperation(database => queries.map(item => queryRows(database, item.query, item.params || [])));
+        },
+        refreshStatus,
         dbRun: async (query, params = []) => {
             if (await getMode() === 'server') return request('/api/db-run', { query, params });
             const results = await localTransaction([{ query, params }]);
@@ -494,9 +523,9 @@
             updateNetworkStatus();
         }).catch(error => {
             console.error('Could not install offline support:', error);
-            setStatus('Offline setup unavailable — open this app from HTTPS.', 'error');
+            setStatus('net.unavailable', 'error');
         });
     } else {
-        setStatus('Offline setup unavailable — open this app from HTTPS.', 'error');
+        setStatus('net.unavailable', 'error');
     }
 })();

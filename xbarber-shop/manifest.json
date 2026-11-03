@@ -2,13 +2,13 @@
   "id": "./src/index.html",
   "name": "XBARBER SHOP",
   "short_name": "XBARBER",
-  "description": "Offline barber shop appointments, cashier, inventory, and reports.",
+  "description": "Barber shop cashier: one column per barber, clients, services, products, dashboard and history. Works offline.",
   "start_url": "./src/index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#f4f3ef",
-  "theme_color": "#202321",
+  "background_color": "#f3f3f0",
+  "theme_color": "#0b0b0b",
   "icons": [
     {
       "src": "./assets/logo/pwa-192.png",

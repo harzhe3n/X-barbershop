@@ -1,149 +1,63 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" dir="ltr">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; connect-src 'self'; object-src 'none'; base-uri 'self';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file:; connect-src 'self' https://xoshawi.com https://*.xoshawi.com; object-src 'none'; base-uri 'self';">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="XBARBER SHOP">
-    <meta name="theme-color" content="#000000">
+    <meta name="theme-color" content="#0b0b0b">
     <title>XBARBER SHOP</title>
     <link rel="manifest" href="../manifest.json">
-    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/style.css?v=2026.11.03.2">
     <link rel="icon" href="../assets/logo/logo.png" type="image/png">
     <link rel="apple-touch-icon" href="../assets/logo/apple-touch-icon.png">
 </head>
 <body>
     <div id="app">
-        <!-- Login Screen -->
-        <div id="login-screen" class="screen active">
-            <div class="login-container">
-                <div class="logo-placeholder">
-                    <img src="../assets/logo/logo.png" alt="XBARBER SHOP Logo" id="logo-img">
-                </div>
-                <h1>XBARBER SHOP</h1>
-                <form id="login-form">
-                    <div class="input-group">
-                        <label for="username">Username</label>
-                        <input type="text" id="username" required>
+        <section id="login-screen" class="login-screen">
+            <div class="login-lang lang-switch" data-lang-switch role="group"></div>
+            <form id="login-form" class="login-card" autocomplete="on">
+                <div class="login-logo"><img src="../assets/logo/logo.png" alt=""></div>
+                <h1 data-shop-name>XBARBER SHOP</h1>
+                <p class="login-subtitle" data-i18n="login.subtitle">Cashier · Clients · Products</p>
+                <label class="field">
+                    <span data-i18n="login.username">Username</span>
+                    <input type="text" id="username" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+                </label>
+                <label class="field">
+                    <span data-i18n="login.password">Password</span>
+                    <input type="password" id="password" autocomplete="current-password" required>
+                </label>
+                <button type="submit" class="btn btn-primary btn-lg btn-block" data-i18n="login.submit">Sign in</button>
+            </form>
+        </section>
+
+        <section id="main-app" class="app-shell" hidden>
+            <nav id="nav" class="nav" aria-label="Main"></nav>
+            <main class="main">
+                <header class="topbar">
+                    <div class="topbar-title">
+                        <h1 id="page-title"></h1>
+                        <p id="page-subtitle"></p>
                     </div>
-                    <div class="input-group">
-                        <label for="password">Password</label>
-                        <input type="password" id="password" required>
-                    </div>
-                    <button type="submit" class="btn btn-primary">LOGIN</button>
-                </form>
-            </div>
-        </div>
-
-        <!-- Main App Screen -->
-        <div id="main-app" class="screen">
-            <button type="button" id="sidebar-backdrop" aria-label="Close navigation" tabindex="-1"></button>
-            <!-- Sidebar Navigation -->
-            <div id="sidebar">
-                <div class="logo-placeholder sidebar-logo">
-                    <img src="../assets/logo/logo.png" alt="XBARBER SHOP Logo">
-                </div>
-                <nav>
-                    <ul>
-                        <li><a href="#" class="nav-link active" data-page="dashboard">Overview</a></li>
-                        <li><a href="#" class="nav-link" data-page="workspace">Appointments &amp; Cashier</a></li>
-                        <li><a href="#" class="nav-link" data-page="sales-history">Sales History</a></li>
-                        <li><a href="#" class="nav-link" data-page="print">Print</a></li>
-                        <li><a href="#" class="nav-link" data-page="customers">Customers</a></li>
-                        <li><a href="#" class="nav-link" data-page="barbers">Barbers</a></li>
-                        <li><a href="#" class="nav-link" data-page="catalog">Catalog</a></li>
-                        <li><a href="#" class="nav-link" data-page="settings">Settings</a></li>
-                    </ul>
-                </nav>
-                <div class="sidebar-language">
-                    <button type="button" id="language-toggle" class="language-toggle" aria-label="Switch language to Kurdish">کوردی</button>
-                </div>
-            </div>
-
-            <!-- Main Content Area -->
-            <div id="main-content">
-                <div class="app-toolbar">
-                    <button type="button" id="sidebar-toggle" aria-controls="sidebar" aria-expanded="true">
-                        <span class="menu-icon" aria-hidden="true"><span></span><span></span><span></span></span>
-                        <span id="sidebar-toggle-label">Hide menu</span>
-                    </button>
-                    <span class="app-toolbar-title">XBARBER SHOP</span>
-                </div>
-                <!-- Dashboard Page -->
-                <div id="dashboard-page" class="page active">
-                    <h2>Overview</h2>
-                    <div id="dashboard-content"></div>
-                </div>
-
-                <!-- Combined appointments and cashier workspace -->
-                <div id="workspace-page" class="page">
-                    <h2>Appointments &amp; Cashier</h2>
-                    <div class="section-tabs workspace-tabs" role="tablist" aria-label="Appointments and cashier">
-                        <button type="button" class="section-tab active" data-workspace-view="appointments" role="tab" aria-selected="true">Appointments</button>
-                        <button type="button" class="section-tab" data-workspace-view="cashier" role="tab" aria-selected="false">Cashier</button>
-                    </div>
-                    <div id="schedule-content"></div>
-                    <div id="cashier-content" hidden></div>
-                </div>
-
-                <!-- Completed sales and service orders -->
-                <div id="sales-history-page" class="page">
-                    <h2>Sales History</h2>
-                    <div id="sales-history-content"></div>
-                </div>
-
-                <!-- Appointment printouts and history maintenance -->
-                <div id="print-page" class="page">
-                    <h2>Print</h2>
-                    <div id="print-content"></div>
-                </div>
-
-                <!-- Customers Page -->
-                <div id="customers-page" class="page">
-                    <h2>Customers</h2>
-                    <div class="section-tabs" role="tablist" aria-label="Customer views">
-                        <button type="button" class="section-tab active" data-customer-view="customers" role="tab" aria-selected="true">Customer List</button>
-                        <button type="button" class="section-tab" data-customer-view="history" role="tab" aria-selected="false">Visit History</button>
-                    </div>
-                    <p class="swipe-hint">Swipe left or right to switch views</p>
-                    <div id="customers-content"></div>
-                    <div id="history-content" hidden></div>
-                </div>
-
-                <!-- Barber Management -->
-                <div id="barbers-page" class="page">
-                    <h2>Barbers</h2>
-                    <div id="barbers-content"></div>
-                </div>
-
-                <!-- Services and Products Catalog -->
-                <div id="catalog-page" class="page">
-                    <h2>Catalog</h2>
-                    <div class="section-tabs" role="tablist" aria-label="Catalog views">
-                        <button type="button" class="section-tab active" data-catalog-view="services" role="tab" aria-selected="true">Services</button>
-                        <button type="button" class="section-tab" data-catalog-view="products" role="tab" aria-selected="false">Products</button>
-                        <button type="button" class="section-tab" data-catalog-view="categories" role="tab" aria-selected="false">Categories</button>
-                    </div>
-                    <p class="swipe-hint">Swipe left or right to switch views</p>
-                    <div id="services-content"></div>
-                    <div id="products-content" hidden></div>
-                    <div id="categories-content" hidden></div>
-                </div>
-
-                <!-- Settings Page -->
-                <div id="settings-page" class="page">
-                    <h2>Settings</h2>
-                    <div id="settings-content"></div>
-                </div>
-            </div>
-        </div>
+                    <div class="topbar-lang lang-switch" data-lang-switch role="group"></div>
+                    <div id="page-actions" class="topbar-actions"></div>
+                </header>
+                <div id="page" class="page"></div>
+            </main>
+        </section>
     </div>
 
+    <div id="modal-root"></div>
+    <div id="toast-root" class="toast-root" aria-live="polite"></div>
     <div id="offline-status" role="status" aria-live="polite" data-state="checking">Checking connection…</div>
+
     <script src="../vendor/sql-wasm.js"></script>
-    <script src="js/web-api.js"></script>
-    <script src="js/app.js"></script>
+    <script src="js/i18n.js?v=2026.11.03.2"></script>
+    <script src="js/auth.js?v=2026.11.03.2"></script>
+    <script src="js/web-api.js?v=2026.11.03.2"></script>
+    <script src="js/app.js?v=2026.11.03.2"></script>
 </body>
 </html>

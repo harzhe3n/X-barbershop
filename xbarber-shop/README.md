@@ -6,19 +6,18 @@ The same app can also be published as a static, installable PWA. The PWA keeps i
 
 ## Features
 
-- **Offline Operation**: Works completely offline with local SQLite database
-- **Appointments & Cashier**: One workspace for booking management and checkout; selecting an appointment carries its customer and services into the sale
-- **Editable Appointments**: Edit dates, times, customers, contact details, services, notes, and status
-- **Sales History**: Vertical barber summaries with earnings and completed-order counts, plus recent order details
-- **Sales Overview**: Compare product sales, service sales, and combined sales for today and all time
-- **Print**: Preview appointment lists by day, week, or month and save them as PDFs with customer names and phone numbers
-- **History Cleanup**: Clear sales and completed past visits while preserving upcoming appointments
-- **Inventory Management**: Real-time stock updates and low-stock warnings
-- **Customer Management**: Customer profiles with history tracking; names, phone numbers, and customer photos are optional
-- **Product Photos**: Optional product images appear in the catalog and cashier
-- **Barber Management**: Manage barbers, assign customers to multiple barbers, and attribute cashier orders to a barber
-- **Business Overview**: Live totals for appointments, sales, and inventory
-- **Backup & Restore**: Database backup and restore functionality
+- **Cashier board**: Every barber has a column. Add a client under a barber, tap **Take client** when they sit in the chair, then **Finish & pay**. Each client card shows whether they bought products.
+- **Everything optional**: A client's name, phone number, date, time, services, and products can all be left empty. Typing a name or phone suggests saved clients.
+- **Client status at a glance**: Waiting (amber), With barber (black card), Done (green). Payments can be undone, which returns product stock.
+- **Dashboard**: Clients finished, total money (services + products), services only, and products only, for today, the last 7 days, this month, or all time. Also shows money by barber and best-selling services and products.
+- **History**: One column per barber with the money they earned and how many clients they finished, plus each finished client. Printable. Finished clients can be edited, moved back to the cashier, or deleted after entering the history password.
+- **Barber sign-ins**: The admin creates a sign-in for each barber on the Barbers page. A barber sees only Cashier and History and can change only their own clients. The admin can change everything.
+- **Online booking (prepared)**: When the booking website (xoshawi.com) is ready, turn it on in Settings. Customers' bookings then appear by themselves in the chosen barber's column at the chosen time, marked "Online". See [docs/ONLINE-BOOKING.md](docs/ONLINE-BOOKING.md).
+- **Catalog**: Services with prices, and products with photos, prices, stock, and categories.
+- **Barbers**: Adding a barber adds a column to Cashier and History. Removing a barber keeps their history.
+- **Three languages**: English, Arabic (العربية), and Kurdish Sorani (کوردی), with right-to-left layout for Arabic and Kurdish.
+- **Offline operation**: Works completely offline with a local SQLite database.
+- **Backup & restore**: Database backup and restore from Settings.
 
 ## Technology Stack
 
@@ -75,11 +74,11 @@ The PWA is a static website. Netlify serves the initial install and app updates;
    npm run build:pwa
    ```
 2. Open Netlify Drop at [https://app.netlify.com/drop](https://app.netlify.com/drop) and upload the complete `dist/pwa` folder. Netlify will provide an HTTPS site URL. Do not upload the project root or `node_modules`.
-3. On the iPhone or iPad, open that HTTPS URL in **Safari** while online. Wait for the bottom status badge to say **“Online · offline files ready”** before going offline.
+3. On the iPhone or iPad, open that HTTPS URL in **Safari** while online. Wait for the status badge on the sign-in screen to say **“Online · works offline”** before going offline.
 4. In Safari, tap **Share → Add to Home Screen**, then launch XBARBER SHOP from its new Home Screen icon.
-5. To make a backup, use **Settings → Backup DB** and keep the downloaded `.db` file somewhere safe. To restore, use **Settings → Restore DB** and choose that file.
+5. To make a backup, use **Settings → Download backup** and keep the downloaded `.db` file somewhere safe. To restore, use **Settings → Restore backup** and choose that file.
 
-The site must be opened from HTTPS (Netlify provides this) or localhost. Service workers do not work from `file://` URLs. The PWA database is separate on each browser/device and is not synchronized with the Electron/PC database or other iPads. Export a backup on one device and restore it on another to move records. The existing Electron and Node web-server modes remain available separately.
+The site must be opened from HTTPS (Netlify provides this) or localhost. Service workers do not work from `file://` URLs. The PWA database is separate on each browser/device and is not synchronized with the Electron/PC database or other iPads. Export a backup on one device and restore it on another to move records. Barber sign-ins and the online booking connection live in the same database, so set them up on the shop's main device; barbers sign in on that device. The existing Electron and Node web-server modes remain available separately.
 
 The existing login is retained for convenience, but a static PWA cannot keep shop records protected behind server-side authentication: the app and its login code are delivered to the device. Use a trusted device passcode and do not treat the login screen as protection for a public shared device.
 
@@ -149,16 +148,13 @@ xbarber-shop/
 │   │   └── style.css    # Styling
 │   │
 │   └── js/
-│       ├── app.js       # Main application logic
-│       ├── web-api.js   # Browser API client for the local server
-│       ├── dashboard.js # Dashboard functionality
-│       ├── schedule.js  # Schedule management
-│       ├── cashier.js   # POS functionality
-│       ├── customers.js # Customer management
-│       ├── services.js  # Service management
-│       ├── products.js  # Product management
-│       ├── reports.js   # Reports functionality
-│       └── settings.js  # Settings management
+│       ├── i18n.js      # English, Arabic and Kurdish text, dates and money
+│       ├── auth.js      # Password hashing (barber sign-ins, history password)
+│       ├── app.js       # All pages: cashier, dashboard, history, catalog, barbers, settings
+│       └── web-api.js   # Browser database (offline) or local server client
+│
+├── docs/
+│   └── ONLINE-BOOKING.md # API the booking website (xoshawi.com) provides
 │
 ├── assets/
 │   ├── logo/
@@ -176,15 +172,41 @@ xbarber-shop/
 2. Default login credentials:
    - Username: `admin`
    - Password: `admin123`
+3. Barbers sign in with the username and password the admin created for them on the **Barbers** page (**Create sign-in**).
 
-### Core Features
+### Who can do what
 
-- **Dashboard**: Shows today's statistics and schedule
-- **Appointments & Cashier**: Create and edit bookings, update status, and process orders from one workspace
-- **Customers**: Manage customer profiles and history
-- **Services**: Add/edit/delete services
-- **Products**: Manage inventory and products
-- **Settings**: Configure application settings and backup
+| | Admin | Barber |
+|---|---|---|
+| Pages | All | Cashier and History |
+| Cashier | Every column | Sees every column; adds, takes, edits and finishes only their own clients; can take a client from "Any barber" |
+| History | Every barber | Only their own column |
+| Finished clients | Edit, undo payment, delete (with the history password) | The same, for their own clients only |
+| Catalog, Barbers, Settings, backups | Yes | No |
+
+### Password for finished clients
+
+Editing a finished (paid) client, undoing a payment or deleting a finished client asks for the history password. After it is entered, editing stays unlocked for 5 minutes, or until **Lock** is tapped in History. The admin changes this password in **Settings → Password for finished clients**. Edits update the payment, product stock (only the difference) and the client's totals.
+
+### Getting started
+
+1. **Barbers**: add each barber. Each one gets a column in Cashier and History.
+2. **Catalog**: add your services (name and price) and products (photo, price, stock).
+3. **Cashier**: tap **New client** in a barber's column. Fill in only what you need, choose services and products, then **Add client** (waiting) or **Add & take now**.
+4. When the client sits down, tap **Take client**. When they are done, tap **Finish & pay**, choose Cash or Card, and confirm.
+5. **Dashboard** and **History** update right away.
+
+Clients added under **Any barber** wait for the first free barber. Tapping **Take client** asks which barber takes them.
+
+### How data is stored
+
+Each client visit is a row in `orders` with status `waiting`, `in-service`, or `completed`. Its services and products are rows in `order_items`. Upcoming appointments from the previous design are moved onto the cashier board automatically the first time you sign in.
+
+Three tables were added; existing tables and data are unchanged, and older databases get the new tables automatically when the app opens them:
+
+- `barber_accounts`: barber sign-ins (passwords are stored as salted SHA-256 hashes)
+- `app_options`: settings such as the history password and online booking
+- `online_bookings`: bookings received from the website and the status last reported back
 
 ## Security
 
@@ -193,15 +215,17 @@ xbarber-shop/
 - Database encryption available (not implemented by default)
 - Secure IPC communication using Electron's context isolation
 - The local web server requires a login, limits failed login attempts, and only accepts private/local network addresses
+- On the local servers, only the admin can back up, restore, clear history or change barber sign-ins
+- Barber limits and the history password are checked by the app. In the offline PWA all data lives on the device, so someone with full access to that device and technical skills could get around them. Use a device passcode on shop devices
 - Never expose the local web server port to the internet
 
 ## Backup & Restore
 
-1. Go to Settings → Database
-2. Click "BACKUP DATABASE" to create a backup
-3. In the desktop app, choose a destination file
-4. In the web app, the backup is saved automatically in `%APPDATA%\xbarber-shop\backups`
-5. To restore, click "RESTORE DATABASE" and enter a full path or a backup file name from the backups folder
+1. Go to **Settings → Backup & restore**
+2. Click **Download backup**
+3. In the desktop app, enter a destination file path
+4. In the local web server mode, the backup is saved automatically in `%APPDATA%\xbarber-shop\backups`; in the offline PWA it downloads as a `.db` file
+5. To restore, click **Restore backup** and choose the file (PWA) or enter a full path or a backup file name from the backups folder
 
 ## Support
 

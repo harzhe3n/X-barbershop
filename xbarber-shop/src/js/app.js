@@ -1,643 +1,135 @@
-// XBARBER SHOP - Main Application Logic
+'use strict';
 
-const loginScreen = document.getElementById('login-screen');
-const mainApp = document.getElementById('main-app');
-const loginForm = document.getElementById('login-form');
-const navLinks = document.querySelectorAll('.nav-link');
-const pages = document.querySelectorAll('.page');
+/*
+ * XBARBER SHOP
+ *
+ * Pages: Cashier (one column per barber), Dashboard, History, Catalog, Barbers, Settings.
+ *
+ * A client visit is a row in `orders`:
+ *   waiting     -> client added, not started
+ *   in-service  -> client is with the barber ("Take client")
+ *   completed   -> finished and paid
+ * Its services and products live in `order_items`. The Electron app, the local servers and
+ * the PWA all share this schema.
+ *
+ * Who can do what:
+ *   admin  (admin / admin123) -> every page, every client, creates barber sign-ins
+ *   barber (barber_accounts)  -> Cashier and History; changes only their own clients
+ * Finished (paid) clients can only be changed after entering the history edit password.
+ *
+ * Online booking: when it is turned on in Settings, the app syncs with the booking website
+ * (xoshawi.com). See docs/ONLINE-BOOKING.md for the API the website provides.
+ */
 
 const api = window.electronAPI || window.webApi;
 if (!api) throw new Error('XBARBER SHOP needs its desktop API or the hosted offline app; do not open it as a file.');
-const languageStorageKey = 'xbarber-interface-language';
-const soraniTranslations = {
-    'XBARBER SHOP': 'XBARBER SHOP',
-    'Visit History': 'مێژووی سەردان',
-    'Overview': 'پوختەی گشتی',
-    'Appointments & Cashier': 'وادەکان و کاشێر',
-    'Appointments and cashier': 'وادەکان و کاشێر',
-    'Daily workspace': 'شوێنی کاری ڕۆژانە',
-    'Appointments': 'وادەکان',
-    'View date': 'بینینی ڕێکەوت',
-    'New appointment': 'وادەی نوێ',
-    'Manage bookings, update their details, and move customers straight into checkout.': 'وادەکان بەڕێوەببە، وردەکارییان دەستکاری بکە، و ڕاستەوخۆ کڕیارەکان بنێرە بۆ کاشێر.',
-    'Tap Edit to update any booking detail': 'دەستکاری بکە بۆ نوێکردنەوەی هەر وردەکارییەکی وادە',
-    'Edit details': 'دەستکاریکردنی وردەکارییەکان',
-    'Main Service': 'خزمەتگوزاریی سەرەکی',
-    'Appointment Status': 'باری وادە',
-    'Additional Services (Optional)': 'خزمەتگوزاریی زیادە (ئارەزوومەندانە)',
-    'Notes (Optional)': 'تێبینی (ئارەزوومەندانە)',
-    'Edit Appointment': 'دەستکاریکردنی وادە',
-    'Enter product name': 'ناوی بەرهەم بنووسە',
-    'Unnamed product': 'بەرهەمی بێ ناو',
-    'Save Changes': 'پاشەکەوتکردنی گۆڕانکارییەکان',
-    'Appointment updated successfully.': 'وادەکە بە سەرکەوتوویی نوێکرایەوە.',
-    'Could not save appointment:': 'نەتوانرا وادەکە پاشەکەوت بکرێت:',
-    'Appointment could not be found.': 'وادەکە نەدۆزرایەوە.',
-    'Sales History': 'مێژووی فرۆشتن',
-    'Print': 'چاپکردن',
-    'Appointment List': 'لیستی وادەکان',
-    'Choose a day, week, or month to preview appointments with customer contact details and arrival times.': 'ڕۆژ، هەفتە، یان مانگێک هەڵبژێرە بۆ بینینی وادەکان لەگەڵ ناو، ژمارەی تەلەفۆن و کاتی هاتن.',
-    'Period': 'ماوە',
-    'Day': 'ڕۆژ',
-    'Week': 'هەفتە',
-    'Month': 'مانگ',
-    'Date to use': 'ڕێکەوت',
-    'Show Appointments': 'پیشاندانی وادەکان',
-    'Save as PDF': 'پاشەکەوتکردن وەک PDF',
-    'Clear All History': 'سڕینەوەی هەموو مێژوو',
-    'Permanently deletes sales/orders and past appointment history. Active and future appointments are kept.': 'مێژووی فرۆشتن و وادەکانی پێشوو بە هەمیشەیی دەسڕێتەوە. وادە چالاک و داهاتووەکان دەمێننەوە.',
-    'Choose a day, week, or month to preview appointments.': 'ڕۆژ، هەفتە، یان مانگێک هەڵبژێرە بۆ بینینی وادەکان.',
-    'No appointments in this period.': 'لەو ماوەیەدا هیچ وادەیەک نییە.',
-    'Date': 'ڕێکەوت',
-    'Arrival time': 'کاتی هاتن',
-    'Status': 'بار',
-    'Could not load appointments for printing.': 'نەتوانرا وادەکان بۆ چاپکردن بار بکرێن.',
-    'Could not create PDF:': 'نەتوانرا PDF دروست بکرێت:',
-    'Appointment PDF saved:': 'PDFی وادەکان پاشەکەوت کرا:',
-    'History cleared. Upcoming appointments were kept.': 'مێژوو سڕایەوە. وادەکانی داهاتوو پارێزران.',
-    'Could not clear history:': 'نەتوانرا مێژوو بسڕدرێتەوە:',
-    'Delete all sales/orders and past appointment history? Active and future appointments will remain. This cannot be undone.': 'هەموو مێژووی فرۆشتن و وادەکانی پێشوو بسڕدرێتەوە؟ وادە چالاک و داهاتووەکان دەمێننەوە. ئەم کارە ناگەڕێتەوە.',
-    'Swipe left or right to switch views': 'بۆ گۆڕینی دیمەنەکان بۆ چەپ یان ڕاست بسوڕێوە',
-    'No completed orders yet.': 'هێشتا هیچ ئۆردەرێکی تەواوکراو نییە.',
-    'Catalog': 'کاتالۆگ',
-    'Customer List': 'لیستی کڕیارەکان',
-    'All Orders': 'کۆی ئۆردەرەکان',
-    'Select all': 'هەمووی هەڵبژێرە',
-    'selected': 'هەڵبژێردراو',
-    'Delete Selected': 'سڕینەوەی هەڵبژێردراوەکان',
-    'Delete All History': 'سڕینەوەی هەموو مێژوو',
-    'Delete selected history items? This cannot be undone.': 'دانە هەڵبژێردراوەکانی مێژوو بسڕدرێنەوە؟ ئەم کارە ناگەڕێتەوە.',
-    'Delete all past visit history? Future appointments will remain. This cannot be undone.': 'هەموو مێژووی سەردانە پێشووەکان بسڕدرێنەوە؟ وادەکانی داهاتوو دەمێننەوە. ئەم کارە ناگەڕێتەوە.',
-    'New Appointment': 'وادەی نوێ',
-    'Add Appointment': 'زیادکردنی وادە',
-    'Save Appointment': 'پاشەکەوتکردنی وادە',
-    'Appointment saved successfully.': 'وادەکە بە سەرکەوتوویی پاشەکەوت کرا.',
-    'Appointment deleted.': 'وادەکە سڕایەوە.',
-    'No appointments for this date.': 'هیچ وادەیەک بۆ ئەم ڕێکەوتە نییە.',
-    'Select a date to view appointments.': 'ڕێکەوتێک هەڵبژێرە بۆ بینینی وادەکان.',
-    'No appointment history yet.': 'هێشتا مێژووی وادە نییە.',
-    'Customer Name (Optional)': 'ناوی کڕیار (ئارەزوومەندانە)',
-    'Phone Number (Optional)': 'ژمارەی تەلەفۆن (ئارەزوومەندانە)',
-    'New customer or walk-in': 'کڕیاری نوێ یان کڕیاری بێ وادە',
-    'No services available.': 'هیچ خزمەتگوزارییەک بەردەست نییە.',
-    'No services available': 'هیچ خزمەتگوزارییەک بەردەست نییە',
-    'No products available.': 'هیچ بەرهەمێک بەردەست نییە.',
-    'No customers yet.': 'هێشتا کڕیار نییە.',
-    'No items in the order.': 'هیچ دانەیەک لە ئۆردەرەکەدا نییە.',
-    'Could not load appointments.': 'نەتوانرا وادەکان بار بکرێن.',
-    'Could not save product:': 'نەتوانرا بەرهەم پاشەکەوت بکرێت:',
-    'Enter a product name, a valid non-negative price, and a whole-number stock quantity.': 'ناوی بەرهەم، نرخێکی دروست و بێ نەرێنی، و ژمارەیەکی تەواوی کۆگا بنووسە.',
-    'Remove this customer from active customers? Past appointments will remain in history.': 'ئەم کڕیارە لە لیستی چالاک بسڕدرێتەوە؟ وادەکانی پێشوو لە مێژوودا دەمێننەوە.',
-    'Recorded Appointments': 'وادە تۆمارکراوەکان',
-    'Completed Visits': 'سەردانی تەواوکراو',
-    'Current Order': 'ئۆردەری ئێستا',
-    'Order Summary': 'پوختەی ئۆردەر',
-    'Complete Order': 'تەواوکردنی ئۆردەر',
-    'Could not complete order.': 'نەتوانرا ئۆردەرەکە تەواو بکرێت.',
-    'Payment Method': 'شێوازی پارەدان',
-    'Cash Received': 'بڕی پارەی وەرگیراو',
-    'Total Customers': 'کۆی کڕیارەکان',
-    "Today's Appointments": 'وادەکانی ئەمڕۆ',
-    'Sales Snapshot': 'پوختەی فرۆشتن',
-    'Schedule Preview': 'پێشبینینی خشتەی کات',
-    'Appointments and revenue are tracked live from the database.': 'وادەکان و داهات بە شێوەی ڕاستەوخۆ لە بنکەدراوەوە تۆمار دەکرێن.',
-    'Reports are generated from the live orders and inventory tables.': 'ڕاپۆرتەکان لە ئۆردەر و کۆگای بەرهەمی ڕاستەقینەوە دروست دەکرێن.',
-    'Service unavailable': 'خزمەتگوزاری بەردەست نییە',
-    'Service sales:': 'فرۆشتنی خزمەتگوزاری:',
-    'Business Summary': 'پوختەی کار',
-    'Total Sales': 'کۆی فرۆشتن',
-    "Today's Product Sales": 'فرۆشتنی بەرهەمەکانی ئەمڕۆ',
-    "Today's Service Sales": 'فرۆشتنی خزمەتگوزارییەکانی ئەمڕۆ',
-    "Today's Total Sales": 'کۆی فرۆشتنی ئەمڕۆ',
-    'Items:': 'دانەکان:',
-    'Order #': 'ئۆردەر #',
-    'Barber:': 'باربەر:',
-    'Payment:': 'پارەدان:',
-    'Low Stock Items': 'بەرهەمە کەم‌کۆگاکان',
-    'Add Customer': 'زیادکردنی کڕیار',
-    'Customer Name': 'ناوی کڕیار',
-    'No phone': 'ژمارەی تەلەفۆن نییە',
-    'Add Service': 'زیادکردنی خزمەتگوزاری',
-    'Add Product': 'زیادکردنی بەرهەم',
-    'Product Name': 'ناوی بەرهەم',
-    'Product Image': 'وێنەی بەرهەم',
-    'Add Service': 'زیادکردنی خزمەتگوزاری',
-    'Edit Service': 'دەستکاریکردنی خزمەتگوزاری',
-    'Save Settings': 'پاشەکەوتکردنی ڕێکخستنەکان',
-    'Settings saved.': 'ڕێکخستنەکان پاشەکەوت کران.',
-    'Backup DB': 'هەڵگرتنی پاشەکەوتی بنکەدراوە',
-    'Restore DB': 'گەڕاندنەوەی بنکەدراوە',
-    'Database backup created.': 'پاشەکەوتی بنکەدراوە دروست کرا.',
-    'Database restored.': 'بنکەدراوە گەڕێندرایەوە.',
-    'Could not create backup:': 'نەتوانرا پاشەکەوت دروست بکرێت:',
-    'Could not restore backup:': 'نەتوانرا پاشەکەوتەکە بگەڕێندرێتەوە:',
-    'Could not reach the local server:': 'نەتوانرا پەیوەندی بە سێرڤەری ناوخۆیی بکرێت:',
-    'Service saved.': 'خزمەتگوزاری پاشەکەوت کرا.',
-    'Product saved.': 'بەرهەم پاشەکەوت کرا.',
-    'Customer added.': 'کڕیار زیاد کرا.',
-    'Order completed successfully.': 'ئۆردەرەکە بە سەرکەوتوویی تەواو کرا.',
-    'Please choose a date, time, and service.': 'تکایە ڕێکەوت، کات و خزمەتگوزارییەک هەڵبژێرە.',
-    'Add at least one item to the order.': 'لانیکەم یەک دانە زیاد بکە بۆ ئۆردەرەکە.',
-    'Enter a customer name or phone number.': 'ناو یان ژمارەی تەلەفۆنی کڕیار بنووسە.',
-    'Fill in all service fields.': 'هەموو خانەکانی خزمەتگوزاری پڕ بکەرەوە.',
-    'Enter backup file path (e.g. C:/backup/xbarber.db):': 'شوێنی پاشەکەوتی بنکەدراوە بنووسە.',
-    'Enter backup file path to restore:': 'شوێنی پاشەکەوتەکە بنووسە بۆ گەڕاندنەوە.',
-    'Invalid login. Use admin / admin123': 'چوونەژوورەوە دروست نییە. admin / admin123 بەکاربهێنە.',
-    'Dashboard': 'داشبۆرد',
-    'Schedule': 'خشتەی کات',
-    'Cashier': 'کاشێر',
-    'Customers': 'کڕیارەکان',
-    'Barbers': 'باربەرەکان',
-    'Barber': 'باربەر',
-    'Add Barber': 'زیادکردنی باربەر',
-    'Enter a barber name.': 'ناوی باربەر بنووسە.',
-    'Deactivate': 'ناچالاککردن',
-    'Barber name': 'ناوی باربەر',
-    'Customers:': 'کڕیارەکان:',
-    'No barbers yet.': 'هێشتا باربەر نییە.',
-    'No customers assigned.': 'هیچ کڕیارێک دیاری نەکراوە.',
-    'Unassigned': 'دیارینەکراو',
-    'Assign barbers': 'دیاریکردنی باربەرەکان',
-    'Save Barbers': 'پاشەکەوتکردنی باربەرەکان',
-    'Barber for this order': 'باربەری ئەم ئۆردەرە',
-    'Select a barber': 'باربەرێک هەڵبژێرە',
-    'Add a barber before completing an order.': 'پێش تەواوکردنی ئۆردەر باربەرێک زیاد بکە.',
-    'Choose a barber for this order.': 'باربەرێک بۆ ئەم ئۆردەرە هەڵبژێرە.',
-    'This barber will no longer be available for new assignments. Past orders and customer assignments will remain.': 'ئەم باربەرە بۆ دیاریکردنی نوێ بەردەست نابێت. ئۆردەر و دیاریکردنە پێشوەکان دەمێننەوە.',
-    'History': 'مێژوو',
-    'Services': 'خزمەتگوزارییەکان',
-    'Products': 'بەرهەمەکان',
-    'Reports': 'ڕاپۆرتەکان',
-    'Settings': 'ڕێکخستنەکان',
-    'Username': 'ناوی بەکارهێنەر',
-    'Password': 'وشەی نهێنی',
-    'LOGIN': 'چوونەژوورەوە',
-    'Date:': 'ڕێکەوت:',
-    'Date': 'ڕێکەوت',
-    'Time': 'کات',
-    'Saved Customer': 'کڕیاری پاشەکەوتکراو',
-    'Service': 'خزمەتگوزاری',
-    'Notes': 'تێبینی',
-    'Cancel': 'هەڵوەشاندنەوە',
-    'Delete': 'سڕینەوە',
-    'Edit': 'دەستکاری',
-    'Add': 'زیادکردن',
-    'Save': 'پاشەکەوتکردن',
-    'Schedule': 'خشتەی کات',
-    'Visits:': 'ژمارەی سەردان:',
-    'Spent:': 'خەرجکراو:',
-    'Stock:': 'کۆگا:',
-    'Subtotal:': 'کۆی لاوەکی:',
-    'Discount:': 'داشکاندن:',
-    'TOTAL:': 'کۆی گشتی:',
-    'Total:': 'کۆی گشتی:',
-    'Change:': 'ماوەی پارە:',
-    'Completed': 'تەواوکراو',
-    'scheduled': 'لە پلاندانایە',
-    'waiting': 'چاوەڕوانە',
-    'in-service': 'لە خزمەتگوزاریدایە',
-    'completed': 'تەواوکراو',
-    'cancelled': 'هەڵوەشێنراوەتەوە',
-    'Cash': 'نەقد',
-    'Card': 'کارتی بانکی',
-    'Other': 'هیتر',
-    'Name': 'ناو',
-    'Price': 'نرخ',
-    'Duration (minutes)': 'ماوە (خولەک)',
-    'Stock': 'کۆگا',
-    'Description': 'وەسف',
-    'Shop Name': 'ناوی دووکان',
-    'Phone': 'تەلەفۆن',
-    'Address': 'ناونیشان',
-    'Currency': 'دراو',
-    'Language': 'زمان',
-    'English': 'ئینگلیزی',
-    'Business Summary': 'پوختەی کار',
-    'completed': 'تەواوکراو',
-    'walk-in': 'بێ وادە',
-    'Walk-in': 'بێ وادە',
-    'today': 'ئەمڕۆ',
-    'In Service': 'لە خزمەتگوزاریدایە',
-    'Waiting': 'چاوەڕوانە',
-    'Scheduled': 'لە پلاندانایە',
-    'Cancelled': 'هەڵوەشێنراوەتەوە',
-    'Total Orders': 'کۆی ئۆردەرەکان',
-    'Today': 'ئەمڕۆ',
-    'Revenue': 'داهات',
-    'Orders': 'ئۆردەرەکان',
-    'Completed Clients': 'کڕیارە تەواوکراوەکان',
-    'Remaining Clients': 'کڕیارە ماوەکان',
-    'No services available.': 'هیچ خزمەتگوزارییەک بەردەست نییە.',
-    'Ready to sell': 'ئامادەی فرۆشتن',
-    'Description': 'وەسف',
-    'Categories': 'پۆلەکان',
-    'Category': 'پۆل',
-    'Add Category': 'زیادکردنی پۆل',
-    'Category name': 'ناوی پۆل',
-    'Save Category': 'پاشەکەوتکردنی پۆل',
-    'No categories yet.': 'هێشتا هیچ پۆلێک نییە.',
-    'Uncategorized': 'بێ پۆل',
-    'Delete this category? Products in it will become uncategorized.': 'ئەم پۆلە بسڕدرێتەوە؟ بەرهەمەکانی بێ پۆل دەبن.',
-    'Database backup downloaded.': 'پاڵپشتی بنکەدراوە داگیرا.',
-    'Database restored.': 'بنکەدراوە گەڕێندرایەوە.',
+
+const I18N = window.I18N;
+const t = I18N.t;
+
+const XAuth = window.XAuth;
+
+const OPEN_STATUSES = ['waiting', 'in-service'];
+const ADMIN_PAGES = ['cashier', 'dashboard', 'history', 'catalog', 'barbers', 'settings'];
+const BARBER_PAGES = ['cashier', 'history'];
+const ADMIN_USERNAME = 'admin';
+const ADMIN_PASSWORD = 'admin123';
+// Hash of the default password for editing finished clients. The admin can change it in Settings.
+const DEFAULT_HISTORY_PASSWORD_HASH = 'sha256i$2000$e5c1d0a94b7f3c2a6d18f0b9$a3be0402ed692e89e332b4cbc0f6e386678ea349fb58a7c0881bb1b69dca4965';
+const EDIT_UNLOCK_MS = 5 * 60 * 1000;
+const PAGE_ICONS = {
+    cashier: 'columns',
+    dashboard: 'chart',
+    history: 'history',
+    catalog: 'tag',
+    barbers: 'users',
+    settings: 'sliders'
 };
-let interfaceLanguage = 'en';
+const MAX_TRANSACTION_STATEMENTS = 100;
+const REFRESH_INTERVAL_MS = 60000;
 
-const soraniEntries = Object.entries(soraniTranslations).sort((a, b) => b[0].length - a[0].length);
-const englishEntries = soraniEntries.map(([english, sorani]) => [sorani, english]).sort((a, b) => b[0].length - a[0].length);
+const state = {
+    signedIn: false,
+    user: null,
+    editUnlockedUntil: 0,
+    booking: null,
+    page: 'cashier',
+    boardDate: todayString(),
+    dashPeriod: 'today',
+    historyPeriod: 'today',
+    historyDay: todayString(),
+    catalogTab: 'services',
+    productCategory: 'all',
+    shopName: 'XBARBER SHOP',
+    openDone: new Set(),
+    renderToken: 0
+};
 
-function translateUiText(text) {
-    const entries = interfaceLanguage === 'ckb' ? soraniEntries : englishEntries;
-    let translated = text;
-    entries.forEach(([source, target]) => {
-        if (source) translated = translated.split(source).join(target);
-    });
-    return translated;
+const dom = {
+    login: document.getElementById('login-screen'),
+    loginForm: document.getElementById('login-form'),
+    app: document.getElementById('main-app'),
+    nav: document.getElementById('nav'),
+    title: document.getElementById('page-title'),
+    subtitle: document.getElementById('page-subtitle'),
+    actions: document.getElementById('page-actions'),
+    page: document.getElementById('page'),
+    modalRoot: document.getElementById('modal-root'),
+    toastRoot: document.getElementById('toast-root')
+};
+
+/* ------------------------------------------------------------------ */
+/* Icons (inline SVG, stroke style)                                    */
+/* ------------------------------------------------------------------ */
+
+const ICONS = {
+    plus: '<path d="M5 12h14"/><path d="M12 5v14"/>',
+    minus: '<path d="M5 12h14"/>',
+    x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+    check: '<path d="M20 6 9 17l-5-5"/>',
+    chevronLeft: '<path d="m15 18-6-6 6-6"/>',
+    chevronRight: '<path d="m9 18 6-6-6-6"/>',
+    scissors: '<circle cx="6" cy="6" r="3"/><path d="M8.12 8.12 12 12"/><path d="M20 4 8.12 15.88"/><circle cx="6" cy="18" r="3"/><path d="M14.8 14.8 20 20"/>',
+    bag: '<path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/>',
+    pencil: '<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/>',
+    trash: '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>',
+    undo: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
+    columns: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="M15 3v18"/>',
+    chart: '<path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>',
+    history: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
+    tag: '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r="1.5"/>',
+    users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+    user: '<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+    sliders: '<path d="M21 4h-7"/><path d="M10 4H3"/><path d="M21 12h-9"/><path d="M8 12H3"/><path d="M21 20h-5"/><path d="M12 20H3"/><path d="M14 2v4"/><path d="M8 10v4"/><path d="M16 18v4"/>',
+    logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
+    clock: '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+    calendar: '<rect width="18" height="18" x="3" y="4" rx="2"/><path d="M16 2v4"/><path d="M8 2v4"/><path d="M3 10h18"/>',
+    printer: '<path d="M6 9V2h12v7"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect width="12" height="8" x="6" y="14"/>',
+    image: '<rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>',
+    globe: '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
+    search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+    package: '<path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/>',
+    download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/>',
+    upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/>',
+    alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+    cash: '<rect width="20" height="12" x="2" y="6" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/>',
+    card: '<rect width="20" height="14" x="2" y="5" rx="2"/><path d="M2 10h20"/>',
+    wallet: '<path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/>',
+    store: '<path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="M2 7h20"/><path d="M22 7v3a2 2 0 0 1-2 2a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 16 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 12 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 8 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 4 12a2 2 0 0 1-2-2V7"/>',
+    database: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/>',
+    lock: '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+    unlock: '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>',
+    key: '<path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"/><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/>',
+    refresh: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>'
+};
+
+function icon(name, className = '') {
+    return `<svg class="icon ${className}" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${ICONS[name] || ''}</svg>`;
 }
 
-function translateTextNode(node) {
-    const value = node.nodeValue;
-    const leading = value.match(/^\s*/)[0];
-    const trailing = value.match(/\s*$/)[0];
-    const core = value.slice(leading.length, value.length - trailing.length || undefined);
-    const translated = translateUiText(core);
-    if (translated !== core) node.nodeValue = `${leading}${translated}${trailing}`;
-}
-
-function translateSubtree(root) {
-    if (root.nodeType === Node.TEXT_NODE) {
-        translateTextNode(root);
-        return;
-    }
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    while (walker.nextNode()) translateTextNode(walker.currentNode);
-}
-
-function applyInterfaceLanguage() {
-    interfaceLanguage = localStorage.getItem(languageStorageKey) === 'ckb' ? 'ckb' : 'en';
-    document.documentElement.lang = interfaceLanguage;
-    document.documentElement.dir = interfaceLanguage === 'ckb' ? 'rtl' : 'ltr';
-    document.body.dir = interfaceLanguage === 'ckb' ? 'rtl' : 'ltr';
-    translateSubtree(document.body);
-
-    const languageSelect = document.getElementById('interface-language');
-    if (languageSelect) languageSelect.value = interfaceLanguage;
-
-    const languageToggle = document.getElementById('language-toggle');
-    if (languageToggle) {
-        languageToggle.textContent = interfaceLanguage === 'ckb' ? 'EN' : 'کوردی';
-        languageToggle.setAttribute('aria-label', interfaceLanguage === 'ckb' ? 'Switch language to English' : 'گۆڕینی زمان بۆ کوردی');
-        languageToggle.onclick = () => setInterfaceLanguage(interfaceLanguage === 'ckb' ? 'en' : 'ckb');
-    }
-
-    if (document.getElementById('sidebar-toggle')) {
-        setSidebarCollapsed(mainApp.classList.contains('sidebar-collapsed'));
-    }
-}
-
-function setInterfaceLanguage(language) {
-    localStorage.setItem(languageStorageKey, language === 'ckb' ? 'ckb' : 'en');
-    applyInterfaceLanguage();
-}
-
-const languageObserver = new MutationObserver(mutations => {
-    mutations.forEach(mutation => {
-        if (mutation.type === 'characterData') translateTextNode(mutation.target);
-        mutation.addedNodes?.forEach(node => translateSubtree(node));
-    });
-});
-
-const nativeAlert = window.alert.bind(window);
-const nativeConfirm = window.confirm.bind(window);
-const nativePrompt = window.prompt.bind(window);
-window.alert = message => nativeAlert(translateUiText(String(message)));
-window.confirm = message => nativeConfirm(translateUiText(String(message)));
-window.prompt = (message, defaultValue) => nativePrompt(translateUiText(String(message)), defaultValue);
-
-let currentUser = null;
-let currentOrder = [];
-let pendingScheduleCustomerId = null;
-let historyAppointmentIds = [];
-let selectedCashierBarberId = '';
-let selectedCashierAppointmentId = null;
-let selectedCashierCustomerId = null;
-let selectedCashierAppointmentServices = [];
-let appointmentServices = [];
-let draftProductImageData = null;
-let activePageName = 'dashboard';
-let activeWorkspaceTab = 'appointments';
-let editingAppointmentId = null;
-
-document.addEventListener('DOMContentLoaded', function() {
-    applyInterfaceLanguage();
-    languageObserver.observe(document.body, { childList: true, characterData: true, subtree: true });
-    checkAuthStatus();
-    setupEventListeners();
-});
-
-function checkAuthStatus() {
-    showScreen('login');
-}
-
-function setupEventListeners() {
-    loginForm.addEventListener('submit', handleLogin);
-    setupSidebarToggle();
-    setupSwipeNavigation();
-
-    document.querySelectorAll('[data-workspace-view]').forEach(tab => {
-        tab.addEventListener('click', () => selectWorkspaceTab(tab.dataset.workspaceView));
-    });
-
-    document.querySelectorAll('[data-customer-view]').forEach(tab => {
-        tab.addEventListener('click', () => {
-            const showHistory = tab.dataset.customerView === 'history';
-            document.querySelectorAll('[data-customer-view]').forEach(item => {
-                const selected = item === tab;
-                item.classList.toggle('active', selected);
-                item.setAttribute('aria-selected', String(selected));
-            });
-            document.getElementById('customers-content').hidden = showHistory;
-            document.getElementById('history-content').hidden = !showHistory;
-            if (showHistory) loadHistory();
-            else loadCustomers();
-        });
-    });
-
-    document.querySelectorAll('[data-catalog-view]').forEach(tab => {
-        tab.addEventListener('click', () => {
-            const view = tab.dataset.catalogView;
-            document.querySelectorAll('[data-catalog-view]').forEach(item => {
-                const selected = item === tab;
-                item.classList.toggle('active', selected);
-                item.setAttribute('aria-selected', String(selected));
-            });
-            document.getElementById('services-content').hidden = view !== 'services';
-            document.getElementById('products-content').hidden = view !== 'products';
-            document.getElementById('categories-content').hidden = view !== 'categories';
-            if (view === 'products') loadProducts();
-            else if (view === 'categories') loadCategories();
-            else loadServices();
-        });
-    });
-
-    navLinks.forEach(link => {
-        link.addEventListener('click', function(e) {
-            e.preventDefault();
-            const page = this.getAttribute('data-page');
-            showPage(page);
-            setActiveNav(this);
-            if (window.matchMedia('(max-width: 900px)').matches) {
-                setSidebarCollapsed(true);
-            }
-        });
-    });
-}
-
-function setupSidebarToggle() {
-    const sidebarToggle = document.getElementById('sidebar-toggle');
-    const sidebarBackdrop = document.getElementById('sidebar-backdrop');
-    const compactLayout = window.matchMedia('(max-width: 900px)');
-
-    setSidebarCollapsed(compactLayout.matches);
-    const updateSidebarForLayout = event => setSidebarCollapsed(event.matches);
-    if (compactLayout.addEventListener) {
-        compactLayout.addEventListener('change', updateSidebarForLayout);
-    } else {
-        compactLayout.addListener(updateSidebarForLayout);
-    }
-
-    sidebarToggle.addEventListener('click', () => {
-        setSidebarCollapsed(!mainApp.classList.contains('sidebar-collapsed'));
-    });
-    sidebarBackdrop.addEventListener('click', () => setSidebarCollapsed(true));
-    document.addEventListener('keydown', event => {
-        if (event.key === 'Escape' && !mainApp.classList.contains('sidebar-collapsed')) {
-            setSidebarCollapsed(true);
-            sidebarToggle.focus();
-        }
-    });
-}
-
-function setSidebarCollapsed(collapsed) {
-    const sidebarToggle = document.getElementById('sidebar-toggle');
-    const label = document.getElementById('sidebar-toggle-label');
-    mainApp.classList.toggle('sidebar-collapsed', collapsed);
-    sidebarToggle.setAttribute('aria-expanded', String(!collapsed));
-    sidebarToggle.setAttribute(
-        'aria-label',
-        interfaceLanguage === 'ckb'
-            ? (collapsed ? 'نیشاندانی پێڕست' : 'شاردنەوەی پێڕست')
-            : (collapsed ? 'Show navigation menu' : 'Hide navigation menu')
-    );
-    label.textContent = interfaceLanguage === 'ckb'
-        ? (collapsed ? 'پێڕست' : 'شاردنەوەی پێڕست')
-        : (collapsed ? 'Show menu' : 'Hide menu');
-}
-
-function setupSwipeNavigation() {
-    const mainContent = document.getElementById('main-content');
-    let touchStart = null;
-    const interactiveSelector = 'input, textarea, select, button, a, [contenteditable="true"], .modal';
-
-    mainContent.addEventListener('touchstart', event => {
-        if (event.touches.length !== 1 || event.target.closest(interactiveSelector)) {
-            touchStart = null;
-            return;
-        }
-
-        const touch = event.touches[0];
-        touchStart = { x: touch.clientX, y: touch.clientY, target: event.target };
-    }, { passive: true });
-
-    mainContent.addEventListener('touchend', event => {
-        if (!touchStart || event.changedTouches.length !== 1) return;
-        const touch = event.changedTouches[0];
-        const deltaX = touch.clientX - touchStart.x;
-        const deltaY = touch.clientY - touchStart.y;
-        const isHorizontalSwipe = Math.abs(deltaX) >= 70 && Math.abs(deltaX) > Math.abs(deltaY) * 1.25;
-        const endTarget = document.elementFromPoint(touch.clientX, touch.clientY);
-        const touchesControl = touchStart.target.closest(interactiveSelector) || endTarget?.closest(interactiveSelector);
-        touchStart = null;
-
-        if (!isHorizontalSwipe || touchesControl) return;
-
-        const isRtl = document.documentElement.dir === 'rtl';
-        const forward = isRtl ? deltaX > 0 : deltaX < 0;
-        const activePage = document.querySelector('.page.active');
-        if (!activePage) return;
-
-        if (activePage.id === 'customers-page' || activePage.id === 'catalog-page') {
-            const tabSelector = activePage.id === 'customers-page' ? '[data-customer-view]' : '[data-catalog-view]';
-            const tabs = [...activePage.querySelectorAll(tabSelector)];
-            const activeIndex = tabs.findIndex(tab => tab.classList.contains('active'));
-            const nextIndex = activeIndex + (forward ? 1 : -1);
-            if (tabs[nextIndex]) tabs[nextIndex].click();
-            return;
-        }
-
-        const pagesInNav = [...navLinks].map(link => link.dataset.page);
-        const currentIndex = pagesInNav.indexOf(activePageName);
-        const nextIndex = currentIndex + (forward ? 1 : -1);
-        if (pagesInNav[nextIndex]) {
-            document.querySelector(`[data-page="${pagesInNav[nextIndex]}"]`)?.click();
-        }
-    }, { passive: true });
-}
-
-async function handleLogin(e) {
-    e.preventDefault();
-
-    const username = document.getElementById('username').value.trim();
-    const password = document.getElementById('password').value.trim();
-
-    try {
-        const signedIn = typeof api.login === 'function'
-            ? await api.login(username, password)
-            : username === 'admin' && password === 'admin123';
-        if (!signedIn) {
-            alert('Invalid login. Use admin / admin123');
-            return;
-        }
-    } catch (error) {
-        alert(`Could not sign in: ${error.message}`);
-        return;
-    }
-
-    currentUser = { username };
-    showScreen('main');
-    showPage('dashboard');
-}
-
-function showScreen(screenName) {
-    if (screenName === 'login') {
-        loginScreen.classList.add('active');
-        mainApp.classList.remove('active');
-    } else {
-        loginScreen.classList.remove('active');
-        mainApp.classList.add('active');
-    }
-}
-
-function showPage(pageName) {
-    const targetPageName = ['history', 'services', 'products', 'schedule', 'cashier'].includes(pageName)
-        ? ({ history: 'customers', services: 'catalog', products: 'catalog', schedule: 'workspace', cashier: 'workspace' })[pageName]
-        : pageName;
-    const navPages = [...navLinks].map(link => link.dataset.page);
-    const previousIndex = navPages.indexOf(activePageName);
-    const nextIndex = navPages.indexOf(targetPageName);
-    const transitionDirection = nextIndex >= 0 && previousIndex >= 0 && nextIndex < previousIndex ? 'backward' : 'forward';
-    pages.forEach(page => page.classList.remove('active', 'page-enter-forward', 'page-enter-backward'));
-
-    const pageElement = document.getElementById(`${targetPageName}-page`);
-    if (pageElement) {
-        pageElement.classList.add(`page-enter-${transitionDirection}`);
-        pageElement.classList.add('active');
-        activePageName = targetPageName;
-    }
-
-    switch (pageName) {
-        case 'dashboard':
-            loadDashboard();
-            break;
-        case 'workspace':
-        case 'schedule':
-        case 'cashier':
-            if (pageName === 'schedule') activeWorkspaceTab = 'appointments';
-            if (pageName === 'cashier') activeWorkspaceTab = 'cashier';
-            loadWorkspace();
-            break;
-        case 'sales-history':
-            loadSalesHistory();
-            break;
-        case 'print':
-            loadPrintSection();
-            break;
-        case 'customers':
-            document.querySelector('[data-customer-view="customers"]').click();
-            break;
-        case 'barbers':
-            loadBarbers();
-            break;
-        case 'catalog':
-            document.querySelector('[data-catalog-view="services"]').click();
-            break;
-        case 'history':
-            showPage('customers');
-            document.querySelector('[data-customer-view="history"]').click();
-            break;
-        case 'services':
-        case 'products':
-            showPage('catalog');
-            document.querySelector(`[data-catalog-view="${pageName}"]`).click();
-            break;
-        case 'settings':
-            loadSettings();
-            break;
-        default:
-            break;
-    }
-}
-
-function selectWorkspaceTab(tabName) {
-    activeWorkspaceTab = tabName === 'cashier' ? 'cashier' : 'appointments';
-    document.querySelectorAll('[data-workspace-view]').forEach(tab => {
-        const selected = tab.dataset.workspaceView === activeWorkspaceTab;
-        tab.classList.toggle('active', selected);
-        tab.setAttribute('aria-selected', String(selected));
-    });
-    document.getElementById('schedule-content').hidden = activeWorkspaceTab !== 'appointments';
-    document.getElementById('cashier-content').hidden = activeWorkspaceTab !== 'cashier';
-}
-
-async function loadWorkspace() {
-    selectWorkspaceTab(activeWorkspaceTab);
-    await loadSchedule();
-    await loadCashier();
-    selectWorkspaceTab(activeWorkspaceTab);
-}
-
-function setActiveNav(activeLink) {
-    navLinks.forEach(link => link.classList.remove('active'));
-    if (activeLink) activeLink.classList.add('active');
-}
-
-function formatCurrency(value) {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'IQD' }).format(Number(value || 0));
-}
-
-function readImageFile(file) {
-    if (!file) return Promise.resolve(null);
-    if (!file.type.startsWith('image/')) return Promise.reject(new Error('Choose an image file.'));
-    if (file.size > 12 * 1024 * 1024) return Promise.reject(new Error('Choose an image smaller than 12 MB.'));
-
-    return new Promise((resolve, reject) => {
-        const url = URL.createObjectURL(file);
-        const image = new Image();
-        image.onload = () => {
-            URL.revokeObjectURL(url);
-            const scale = Math.min(1, 1200 / Math.max(image.naturalWidth, image.naturalHeight));
-            const canvas = document.createElement('canvas');
-            canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
-            canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
-            const context = canvas.getContext('2d');
-            if (!context) {
-                reject(new Error('Could not prepare this image.'));
-                return;
-            }
-            try {
-                context.drawImage(image, 0, 0, canvas.width, canvas.height);
-                resolve(canvas.toDataURL('image/jpeg', 0.82));
-            } catch (error) {
-                reject(error);
-            }
-        };
-        image.onerror = () => {
-            URL.revokeObjectURL(url);
-            reject(new Error('This image could not be opened. Try a JPEG or PNG image.'));
-        };
-        image.src = url;
-    });
-}
+/* ------------------------------------------------------------------ */
+/* Small helpers                                                       */
+/* ------------------------------------------------------------------ */
 
 function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, char => ({
@@ -649,1885 +141,3623 @@ function escapeHtml(value) {
     }[char]));
 }
 
-function getLocalDateString(date = new Date()) {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
+function safeImage(value) {
+    const text = String(value || '');
+    return /^data:image\/(png|jpe?g|gif|webp);base64,[a-z0-9+/=\s]+$/i.test(text) ? text : '';
 }
 
-async function loadDashboard() {
-    const content = document.getElementById('dashboard-content');
-    const today = getLocalDateString();
+function initials(name) {
+    const text = String(name || '').trim();
+    return text ? Array.from(text)[0].toUpperCase() : '?';
+}
 
-    try {
-        const [customerRow, appointmentRow, completedRow, orderRow, orderCountRow, lifetimeSalesRow, lifetimeOrderCountRow, lowStockRow, dailyProductSalesRow, dailyServiceSalesRow, lifetimeProductSalesRow, lifetimeServiceSalesRow] = await Promise.all([
-            api.dbQuery('SELECT COUNT(*) AS total FROM customers WHERE is_active = 1'),
-            api.dbQuery('SELECT COUNT(*) AS total FROM appointments WHERE date = ?', [today]),
-            api.dbQuery('SELECT COUNT(*) AS total FROM appointments WHERE date = ? AND status = ?', [today, 'completed']),
-            api.dbQuery("SELECT COALESCE(SUM(total), 0) AS total FROM orders WHERE date = ? AND COALESCE(status, 'completed') != 'cancelled'", [today]),
-            api.dbQuery("SELECT COUNT(*) AS total FROM orders WHERE date = ? AND COALESCE(status, 'completed') != 'cancelled'", [today]),
-            api.dbQuery("SELECT COALESCE(SUM(total), 0) AS total FROM orders WHERE COALESCE(status, 'completed') != 'cancelled'"),
-            api.dbQuery("SELECT COUNT(*) AS total FROM orders WHERE COALESCE(status, 'completed') != 'cancelled'"),
-            api.dbQuery('SELECT COUNT(*) AS total FROM products WHERE stock < 5 AND is_active = 1'),
-            api.dbQuery("SELECT COALESCE(SUM(oi.price * oi.quantity), 0) AS total FROM order_items oi JOIN orders o ON o.id = oi.order_id WHERE o.date = ? AND COALESCE(o.status, 'completed') != 'cancelled' AND oi.item_type = ?", [today, 'product']),
-            api.dbQuery("SELECT COALESCE(SUM(oi.price * oi.quantity), 0) AS total FROM order_items oi JOIN orders o ON o.id = oi.order_id WHERE o.date = ? AND COALESCE(o.status, 'completed') != 'cancelled' AND oi.item_type = ?", [today, 'service']),
-            api.dbQuery("SELECT COALESCE(SUM(oi.price * oi.quantity), 0) AS total FROM order_items oi JOIN orders o ON o.id = oi.order_id WHERE COALESCE(o.status, 'completed') != 'cancelled' AND oi.item_type = ?", ['product']),
-            api.dbQuery("SELECT COALESCE(SUM(oi.price * oi.quantity), 0) AS total FROM order_items oi JOIN orders o ON o.id = oi.order_id WHERE COALESCE(o.status, 'completed') != 'cancelled' AND oi.item_type = ?", ['service']),
-        ]);
+function digits(value) {
+    return String(value || '').replace(/\D+/g, '');
+}
 
-        content.innerHTML = `
-            <div class="dashboard-grid">
-                <div class="stat-card">
-                    <h3>Total Customers</h3>
-                    <div class="value">${Number(customerRow[0]?.total || 0)}</div>
-                </div>
-                <div class="stat-card">
-                    <h3>Today's Appointments</h3>
-                    <div class="value">${Number(appointmentRow[0]?.total || 0)}</div>
-                </div>
-                <div class="stat-card">
-                    <h3>Completed</h3>
-                    <div class="value">${Number(completedRow[0]?.total || 0)}</div>
-                </div>
-                <div class="stat-card">
-                    <h3>Revenue</h3>
-                    <div class="value">${formatCurrency(orderRow[0]?.total || 0)}</div>
-                </div>
-                <div class="stat-card">
-                    <h3>Today's Product Sales</h3>
-                    <div class="value">${formatCurrency(dailyProductSalesRow[0]?.total || 0)}</div>
-                </div>
-                <div class="stat-card">
-                    <h3>Today's Service Sales</h3>
-                    <div class="value">${formatCurrency(dailyServiceSalesRow[0]?.total || 0)}</div>
-                </div>
-                <div class="stat-card">
-                    <h3>Today's Total Sales</h3>
-                    <div class="value">${formatCurrency(Number(dailyProductSalesRow[0]?.total || 0) + Number(dailyServiceSalesRow[0]?.total || 0))}</div>
-                </div>
-                <div class="stat-card">
-                    <h3>Orders</h3>
-                    <div class="value">${Number(orderCountRow[0]?.total || 0)}</div>
-                </div>
-                <div class="stat-card">
-                    <h3>Total Sales</h3>
-                    <div class="value">${formatCurrency(lifetimeSalesRow[0]?.total || 0)}</div>
-                </div>
-                <div class="stat-card">
-                    <h3>Total Product Sales</h3>
-                    <div class="value">${formatCurrency(lifetimeProductSalesRow[0]?.total || 0)}</div>
-                </div>
-                <div class="stat-card">
-                    <h3>Total Service Sales</h3>
-                    <div class="value">${formatCurrency(lifetimeServiceSalesRow[0]?.total || 0)}</div>
-                </div>
-                <div class="stat-card">
-                    <h3>All Orders</h3>
-                    <div class="value">${Number(lifetimeOrderCountRow[0]?.total || 0)}</div>
-                </div>
-                <div class="stat-card">
-                    <h3>Low Stock Items</h3>
-                    <div class="value">${Number(lowStockRow[0]?.total || 0)}</div>
-                </div>
-            </div>
+function pad(value) {
+    return String(value).padStart(2, '0');
+}
 
-            <div class="chart-container">
-                <h3>Sales by Category</h3>
-                <div class="chart-placeholder">
-                    Products: ${formatCurrency(dailyProductSalesRow[0]?.total || 0)} ·
-                    Services: ${formatCurrency(dailyServiceSalesRow[0]?.total || 0)} ·
-                    Total: ${formatCurrency(Number(dailyProductSalesRow[0]?.total || 0) + Number(dailyServiceSalesRow[0]?.total || 0))}
-                </div>
-            </div>
+function toDateString(date) {
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
 
-            <div class="chart-container">
-                <h3>Business Snapshot</h3>
-                <div class="chart-placeholder">Live totals for appointments, sales, and inventory.</div>
-            </div>
-        `;
-    } catch (error) {
-        console.error('Dashboard failed:', error);
-        content.innerHTML = '<p>Dashboard could not load.</p>';
+function todayString() {
+    return toDateString(new Date());
+}
+
+function parseDate(value) {
+    const [year, month, day] = String(value).split('-').map(Number);
+    return new Date(year, (month || 1) - 1, day || 1);
+}
+
+function addDays(value, amount) {
+    const date = parseDate(value);
+    date.setDate(date.getDate() + amount);
+    return toDateString(date);
+}
+
+function nowTime() {
+    const now = new Date();
+    return `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+}
+
+function isValidDate(value) {
+    return /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''));
+}
+
+function isValidTime(value) {
+    return /^\d{2}:\d{2}(:\d{2})?$/.test(String(value || ''));
+}
+
+function sum(list, pick) {
+    return list.reduce((total, item) => total + Number(pick(item) || 0), 0);
+}
+
+function money(value) {
+    return `<bdi class="money">${escapeHtml(I18N.formatNumber(value))}<small>${escapeHtml(I18N.currency())}</small></bdi>`;
+}
+
+function moneyText(value) {
+    return I18N.formatMoney(value);
+}
+
+function timeLabel(value) {
+    return value ? escapeHtml(I18N.formatTime(String(value).slice(0, 5))) : '';
+}
+
+function periodRange(period, day) {
+    const today = todayString();
+    if (period === 'week') return { start: addDays(today, -6), end: today };
+    if (period === 'month') {
+        const date = parseDate(today);
+        return { start: `${today.slice(0, 8)}01`, end: toDateString(new Date(date.getFullYear(), date.getMonth() + 1, 0)) };
     }
+    if (period === 'all') return { start: '0000-01-01', end: '9999-12-31' };
+    if (period === 'day' && isValidDate(day)) return { start: day, end: day };
+    return { start: today, end: today };
 }
 
-async function loadSchedule() {
-    const content = document.getElementById('schedule-content');
-    content.innerHTML = `
-        <section class="appointments-hero">
-            <div>
-                <span class="appointments-eyebrow">Daily workspace</span>
-                <h3>Appointments</h3>
-                <p>Manage bookings, update their details, and move customers straight into checkout.</p>
-            </div>
-            <button type="button" class="btn btn-primary" id="add-appointment-btn">+ New appointment</button>
-        </section>
-        <div class="schedule-controls appointments-toolbar">
-            <div class="schedule-date-selector">
-                <label for="schedule-date">View date</label>
-                <input type="date" id="schedule-date" value="${getLocalDateString()}">
-            </div>
-            <span class="appointments-day-label" id="appointments-day-label"></span>
-        </div>
-
-        <div class="appointment-list" id="appointment-list"></div>
-
-        <div id="appointment-modal" class="modal" style="display:none;">
-            <div class="modal-content">
-                <h3 id="appointment-modal-title">New Appointment</h3>
-                <div class="appointment-form-grid">
-                    <div class="form-group">
-                        <label for="modal-date">Date</label>
-                        <input type="date" id="modal-date" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="modal-time">Time</label>
-                        <input type="time" id="modal-time" required>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label for="modal-existing-customer">Saved Customer</label>
-                    <select id="modal-existing-customer">
-                        <option value="">New customer or walk-in</option>
-                    </select>
-                </div>
-                <div class="appointment-form-grid">
-                    <div class="form-group">
-                        <label for="modal-customer">Customer Name (Optional)</label>
-                        <input type="text" id="modal-customer">
-                    </div>
-                    <div class="form-group">
-                        <label for="modal-phone">Phone Number (Optional)</label>
-                        <input type="text" id="modal-phone" inputmode="tel">
-                    </div>
-                </div>
-                <div class="appointment-form-grid">
-                    <div class="form-group">
-                        <label for="modal-service">Main Service</label>
-                        <select id="modal-service" required></select>
-                    </div>
-                    <div class="form-group">
-                        <label for="modal-status">Appointment Status</label>
-                        <select id="modal-status">
-                            <option value="scheduled">scheduled</option>
-                            <option value="waiting">waiting</option>
-                            <option value="in-service">in-service</option>
-                            <option value="completed">completed</option>
-                            <option value="cancelled">cancelled</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <fieldset class="appointment-additional-services">
-                        <legend>Additional Services (Optional)</legend>
-                        <div id="modal-additional-services" class="appointment-service-checkboxes"></div>
-                    </fieldset>
-                </div>
-                <div class="form-group">
-                    <label for="modal-notes">Notes (Optional)</label>
-                    <textarea id="modal-notes" rows="3"></textarea>
-                </div>
-                <div class="btn-group">
-                    <button class="btn btn-primary" id="save-appointment-btn">Save Appointment</button>
-                    <button class="btn" id="cancel-appointment-btn">Cancel</button>
-                </div>
-            </div>
-        </div>
-    `;
-
-    document.getElementById('schedule-date').addEventListener('change', loadAppointmentsForSelectedDate);
-    document.getElementById('add-appointment-btn').addEventListener('click', () => openAppointmentModal());
-    document.getElementById('modal-existing-customer').addEventListener('change', updateAppointmentCustomerFields);
-    document.getElementById('cancel-appointment-btn').addEventListener('click', closeAppointmentModal);
-    document.getElementById('save-appointment-btn').addEventListener('click', saveAppointment);
-    document.getElementById('appointment-list').addEventListener('click', async (event) => {
-        const editButton = event.target.closest('[data-edit-appointment]');
-        if (editButton) {
-            await openAppointmentModal(null, Number(editButton.dataset.editAppointment));
-            return;
-        }
-        const deleteButton = event.target.closest('[data-delete-appointment]');
-        if (!deleteButton) return;
-
-        const appointmentId = Number(deleteButton.dataset.deleteAppointment);
-        if (!Number.isInteger(appointmentId)) return;
-
-        if (!confirm('Delete appointment?')) return;
-
-        const result = await api.dbRun('DELETE FROM appointments WHERE id = ?', [appointmentId]);
-        if (result.changes > 0) {
-            if (selectedCashierAppointmentId === appointmentId) {
-                selectedCashierAppointmentId = null;
-                selectedCashierCustomerId = null;
-                if (selectedCashierAppointmentServices.length) {
-                    currentOrder = currentOrder.filter(item => !selectedCashierAppointmentServices.includes(item));
-                    selectedCashierAppointmentServices = [];
-                    renderCashierOrder();
-                }
-            }
-            await loadAppointmentsForSelectedDate();
-            if (!currentOrder.length) await loadCashier();
-            alert('Appointment deleted.');
-        }
-    });
-
-    document.getElementById('appointment-list').addEventListener('change', async (event) => {
-        const target = event.target.closest('[data-status-id]');
-        if (!target) return;
-
-        const status = target.value;
-        const appointmentId = Number(target.dataset.statusId);
-        await api.dbRun('UPDATE appointments SET status = ? WHERE id = ?', [status, appointmentId]);
-        await loadAppointmentsForSelectedDate();
-        if (!currentOrder.length) await loadCashier();
-    });
-
-    await loadAppointmentServices();
-    await loadAppointmentCustomers();
-    await loadAppointmentsForSelectedDate();
-
-    if (pendingScheduleCustomerId) {
-        openAppointmentModal(pendingScheduleCustomerId);
-        pendingScheduleCustomerId = null;
-    }
+function periodLabel(period, day) {
+    const range = periodRange(period, day);
+    if (period === 'all') return t('period.all');
+    if (range.start === range.end) return I18N.formatDate(range.start, { weekday: true });
+    return `${I18N.formatDate(range.start)} – ${I18N.formatDate(range.end)}`;
 }
 
-async function loadAppointmentServices() {
-    const select = document.getElementById('modal-service');
-    if (!select) return;
+/* ------------------------------------------------------------------ */
+/* Database helpers                                                    */
+/* ------------------------------------------------------------------ */
 
-    const services = await api.dbQuery('SELECT id, name, price FROM services WHERE is_active = 1 ORDER BY name');
-    appointmentServices = services;
-    select.innerHTML = services.length
-        ? services.map(service => `<option value="${service.id}">${escapeHtml(service.name)}</option>`).join('')
-        : '<option value="">No services available</option>';
-    document.getElementById('modal-additional-services').innerHTML = services.map(service =>
-        `<label><input type="checkbox" value="${service.id}"> ${escapeHtml(service.name)}</label>`
-    ).join('');
+async function queryMany(list) {
+    if (typeof api.dbQueryMany === 'function') return api.dbQueryMany(list);
+    return Promise.all(list.map(item => api.dbQuery(item.query, item.params || [])));
 }
 
-async function loadAppointmentCustomers() {
-    const select = document.getElementById('modal-existing-customer');
-    const customers = await api.dbQuery('SELECT id, name, phone, is_active FROM customers ORDER BY name');
-
-    select.innerHTML = '<option value="">New customer or walk-in</option>' + customers.map(customer =>
-        `<option value="${customer.id}">${escapeHtml(customer.name || 'Unnamed customer')}${customer.phone ? ` - ${escapeHtml(customer.phone)}` : ''}${Number(customer.is_active) ? '' : ' (inactive)'}</option>`
-    ).join('');
+async function queryOne(query, params = []) {
+    return (await api.dbQuery(query, params))[0] || null;
 }
 
-async function updateAppointmentCustomerFields() {
-    const customerId = Number(document.getElementById('modal-existing-customer').value);
-    const nameInput = document.getElementById('modal-customer');
-    const phoneInput = document.getElementById('modal-phone');
+async function runStatements(statements) {
+    if (!statements.length) return [];
+    if (statements.length > MAX_TRANSACTION_STATEMENTS) throw new Error(t('err.tooManyItems'));
+    return api.runTransaction(statements);
+}
 
-    if (!customerId) {
-        nameInput.value = '';
-        phoneInput.value = '';
+function handleError(error) {
+    console.error(error);
+    if (error && error.status === 401) {
+        signOut();
+        toast(t('err.session'), 'error');
         return;
     }
-
-    const customer = (await api.dbQuery('SELECT id, name, phone FROM customers WHERE id = ?', [customerId]))[0];
-    if (!customer) return;
-
-    nameInput.value = customer.name || '';
-    phoneInput.value = customer.phone || '';
+    toast(t('err.generic', { message: error?.message || '' }), 'error');
 }
 
-async function openAppointmentModal(customerId = null, appointmentId = null) {
-    const modal = document.getElementById('appointment-modal');
-    editingAppointmentId = appointmentId;
-    document.getElementById('appointment-modal-title').textContent = appointmentId ? 'Edit Appointment' : 'New Appointment';
-    document.getElementById('save-appointment-btn').textContent = appointmentId ? 'Save Changes' : 'Save Appointment';
-    document.getElementById('modal-date').value = document.getElementById('schedule-date').value;
-    document.getElementById('modal-time').value = '09:00';
-    document.getElementById('modal-existing-customer').value = customerId ? String(customerId) : '';
-    document.getElementById('modal-customer').value = '';
-    document.getElementById('modal-phone').value = '';
-    document.getElementById('modal-notes').value = '';
-    document.getElementById('modal-service').selectedIndex = 0;
-    document.getElementById('modal-status').value = 'scheduled';
-    document.querySelectorAll('#modal-additional-services input[type="checkbox"]').forEach(input => { input.checked = false; });
-
-    if (customerId) await updateAppointmentCustomerFields();
-    if (appointmentId) {
-        const appointment = (await api.dbQuery(
-            'SELECT id, date, time, customer_id, service_id, additional_services, notes, status FROM appointments WHERE id = ?',
-            [appointmentId]
-        ))[0];
-        if (!appointment) {
-            alert('Appointment could not be found.');
-            return;
-        }
-        document.getElementById('modal-date').value = appointment.date;
-        document.getElementById('modal-time').value = appointment.time;
-        document.getElementById('modal-existing-customer').value = appointment.customer_id ? String(appointment.customer_id) : '';
-        if (appointment.customer_id) await updateAppointmentCustomerFields();
-        document.getElementById('modal-service').value = String(appointment.service_id);
-        document.getElementById('modal-notes').value = appointment.notes || '';
-        document.getElementById('modal-status').value = appointment.status || 'scheduled';
-        let additionalServices = [];
-        try {
-            additionalServices = JSON.parse(appointment.additional_services || '[]');
-        } catch (error) {
-            console.warn('Ignoring invalid appointment additional-services data:', error);
-        }
-        const additionalIds = new Set(additionalServices.map(Number));
-        document.querySelectorAll('#modal-additional-services input[type="checkbox"]').forEach(input => {
-            input.checked = additionalIds.has(Number(input.value)) && Number(input.value) !== Number(appointment.service_id);
-        });
-    }
-
-    modal.style.display = 'flex';
-}
-
-function closeAppointmentModal() {
-    const modal = document.getElementById('appointment-modal');
-    modal.style.display = 'none';
-    editingAppointmentId = null;
-}
-
-async function loadAppointmentsForSelectedDate() {
-    const date = document.getElementById('schedule-date').value;
-    const list = document.getElementById('appointment-list');
-    const dayLabel = document.getElementById('appointments-day-label');
-    if (dayLabel) dayLabel.textContent = date ? new Date(`${date}T12:00:00`).toLocaleDateString(undefined, {
-        weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'
-    }) : '';
-
-    if (!date) {
-        list.innerHTML = '<p>Select a date to view appointments.</p>';
-        return;
-    }
-
-    const appointments = await api.dbQuery(
-        `SELECT a.id, a.date, a.time, a.status, a.notes, a.additional_services,
-                a.service_id, a.customer_id, s.name AS service_name,
-                COALESCE(NULLIF(c.name, ''), 'Walk-in') AS customer_name, c.phone AS customer_phone
-         FROM appointments a
-         LEFT JOIN services s ON s.id = a.service_id
-         LEFT JOIN customers c ON c.id = a.customer_id
-         WHERE a.date = ? ORDER BY a.time`,
-        [date]
-    );
-
-    if (!appointments.length) {
-        list.innerHTML = '<p>No appointments for this date.</p>';
-        return;
-    }
-
-    const statusOptions = ['scheduled', 'waiting', 'in-service', 'completed', 'cancelled'];
-    list.innerHTML = `
-        <div class="appointments-list-heading">
-            <div><strong>${appointments.length}</strong> appointment${appointments.length === 1 ? '' : 's'}</div>
-            <span>Tap Edit to update any booking detail</span>
-        </div>
-        ${appointments.map((appointment) => {
-        const selectedStatus = appointment.status || 'scheduled';
-        const optionMarkup = statusOptions.map(option => 
-            `<option value="${option}" ${option === selectedStatus ? 'selected' : ''}>${option}</option>`
-        ).join('');
-        let additionalServiceNames = [];
-        try {
-            const ids = JSON.parse(appointment.additional_services || '[]').map(Number);
-            additionalServiceNames = ids
-                .filter(id => id !== Number(appointment.service_id))
-                .map(id => appointmentServices.find(service => Number(service.id) === id)?.name)
-                .filter(Boolean);
-        } catch (error) {
-            console.warn('Ignoring invalid appointment additional-services data:', error);
-        }
-
-        return `
-            <article class="appointment-item appointment-card">
-                <div class="appointment-card-time">
-                    <strong>${escapeHtml(appointment.time)}</strong>
-                    <span>${escapeHtml(appointment.date)}</span>
-                </div>
-                <div class="appointment-card-details">
-                    <strong>${escapeHtml(appointment.customer_name)}</strong>
-                    ${appointment.customer_phone ? `<span>${escapeHtml(appointment.customer_phone)}</span>` : '<span>Walk-in / no phone</span>'}
-                    <span>${escapeHtml(appointment.service_name || 'Service unavailable')}${additionalServiceNames.length ? ` · + ${escapeHtml(additionalServiceNames.join(', '))}` : ''}</span>
-                    ${appointment.notes ? `<span class="appointment-card-notes">${escapeHtml(appointment.notes)}</span>` : ''}
-                </div>
-                <div class="appointment-card-controls">
-                    <label class="visually-hidden" for="appointment-status-${appointment.id}">Status</label>
-                    <select class="status-select" id="appointment-status-${appointment.id}" data-status-id="${appointment.id}">${optionMarkup}</select>
-                    <button type="button" class="btn btn-primary btn-sm" data-edit-appointment="${appointment.id}">Edit details</button>
-                    <button type="button" class="btn btn-danger btn-sm" data-delete-appointment="${appointment.id}">Delete</button>
-                </div>
-            </article>
-        `;
-    }).join('')}
-    `;
-}
-
-async function saveAppointment() {
-    const date = document.getElementById('modal-date').value;
-    const time = document.getElementById('modal-time').value;
-    const customerName = document.getElementById('modal-customer').value.trim();
-    const phone = document.getElementById('modal-phone').value.trim();
-    const savedCustomerId = Number(document.getElementById('modal-existing-customer').value);
-    const serviceId = Number(document.getElementById('modal-service').value);
-    const notes = document.getElementById('modal-notes').value.trim();
-    const status = document.getElementById('modal-status').value;
-    const additionalServices = [...document.querySelectorAll('#modal-additional-services input[type="checkbox"]:checked')]
-        .map(input => Number(input.value))
-        .filter(id => id !== serviceId);
-
-    if (!date || !time || !serviceId) {
-        alert('Please choose a date, time, and service.');
-        return;
-    }
-
-    try {
-        const statements = [];
-        let customerRef = null;
-        if (savedCustomerId) {
-            statements.push({
-                query: 'UPDATE customers SET name = ?, phone = ? WHERE id = ?',
-                params: [customerName || null, phone || null, savedCustomerId]
-            });
-            customerRef = savedCustomerId;
-        } else if (customerName || phone) {
-            statements.push({
-                query: 'INSERT INTO customers (name, phone) VALUES (?, ?)',
-                params: [customerName || null, phone || null]
-            });
-            customerRef = { lastIDFrom: statements.length - 1 };
-        }
-
-        const appointmentParams = [customerRef, date, time, serviceId, additionalServices.length ? JSON.stringify(additionalServices) : null, notes || null, status];
-        if (editingAppointmentId) {
-            statements.push({
-                query: 'UPDATE appointments SET customer_id = ?, date = ?, time = ?, service_id = ?, additional_services = ?, notes = ?, status = ? WHERE id = ?',
-                params: [...appointmentParams, editingAppointmentId]
-            });
-        } else {
-            statements.push({
-                query: 'INSERT INTO appointments (customer_id, date, time, service_id, additional_services, notes, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                params: appointmentParams
-            });
-        }
-        await api.runTransaction(statements);
-        await loadAppointmentCustomers();
-
-        const editedId = editingAppointmentId;
-        if (editedId && selectedCashierAppointmentId === editedId) {
-            selectedCashierAppointmentId = null;
-            selectedCashierCustomerId = null;
-            if (selectedCashierAppointmentServices.length) {
-                currentOrder = currentOrder.filter(item => !selectedCashierAppointmentServices.includes(item));
-                selectedCashierAppointmentServices = [];
-                renderCashierOrder();
-            }
-        }
-        document.getElementById('schedule-date').value = date;
-        closeAppointmentModal();
-        await loadAppointmentsForSelectedDate();
-        if (!currentOrder.length) await loadCashier();
-        alert(editedId ? 'Appointment updated successfully.' : 'Appointment saved successfully.');
-    } catch (error) {
-        console.error('Could not save appointment:', error);
-        alert(`Could not save appointment: ${error.message}`);
-    }
-}
-
-async function loadCashier() {
-    const content = document.getElementById('cashier-content');
-    const [services, products, barbers, appointments] = await Promise.all([
-        api.dbQuery('SELECT id, name, price FROM services WHERE is_active = 1 ORDER BY name'),
-        api.dbQuery('SELECT id, name, price, stock, image_data FROM products WHERE is_active = 1 ORDER BY name'),
-        api.dbQuery('SELECT id, name FROM barbers WHERE is_active = 1 ORDER BY name'),
-        api.dbQuery(
-            `SELECT a.id, a.time, a.customer_id, a.service_id, a.additional_services,
-                    COALESCE(NULLIF(c.name, ''), 'Walk-in') AS customer_name,
-                    s.name AS service_name, s.price AS service_price
-             FROM appointments a
-             LEFT JOIN customers c ON c.id = a.customer_id
-             LEFT JOIN services s ON s.id = a.service_id
-             WHERE a.date = ? AND COALESCE(a.status, 'scheduled') IN ('scheduled', 'waiting', 'in-service')
-             ORDER BY a.time`,
-            [getLocalDateString()]
-        )
-    ]);
-    if (!barbers.some(barber => String(barber.id) === selectedCashierBarberId)) {
-        selectedCashierBarberId = '';
-    }
-    selectedCashierAppointmentId = null;
-    selectedCashierCustomerId = null;
-    selectedCashierAppointmentServices = [];
-
-    content.innerHTML = `
-        <div class="cashier-header">
-            <h3>Current Order</h3>
-            <div class="order-info">Ready to sell</div>
-        </div>
-
-        <section class="cashier-appointment-panel">
-            <label for="cashier-appointment">Today's appointment (optional)</label>
-            <select id="cashier-appointment">
-                <option value="">Walk-in / no appointment</option>
-                ${appointments.map(appointment => `
-                    <option value="${appointment.id}">
-                        ${escapeHtml(appointment.time)} · ${escapeHtml(appointment.customer_name)}
-                        ${appointment.service_name ? ` · ${escapeHtml(appointment.service_name)}` : ''}
-                    </option>
-                `).join('')}
-            </select>
-            <p>Selecting an appointment adds its service to the order and links the customer.</p>
-        </section>
-
-        <div class="form-group">
-            <label for="cashier-barber">Barber (optional)</label>
-            <select id="cashier-barber">
-                <option value="">${barbers.length ? 'No barber assigned' : 'No barbers yet.'}</option>
-                ${barbers.map(barber => `<option value="${barber.id}" ${String(barber.id) === selectedCashierBarberId ? 'selected' : ''}>${escapeHtml(barber.name)}</option>`).join('')}
-            </select>
-        </div>
-
-        <div class="cashier-section">
-            <h3>Services</h3>
-            <div class="item-list" id="cashier-services-list">
-                ${services.map(service => `
-                    <div class="item-row">
-                        <div class="item-name">${escapeHtml(service.name)}</div>
-                        <div class="item-price">${formatCurrency(service.price)}</div>
-                        <button class="btn btn-sm btn-primary" data-add-item="service-${service.id}" data-name="${escapeHtml(service.name)}" data-price="${service.price}">Add</button>
-                    </div>
-                `).join('') || '<p>No services available.</p>'}
-            </div>
-        </div>
-
-        <div class="cashier-section">
-            <h3>Products</h3>
-            <div class="item-list" id="cashier-products-list">
-                ${products.map(product => {
-                    const productName = String(product.name || '').trim() || `Unnamed product #${product.id}`;
-                    return `
-                    <div class="item-row cashier-product-row">
-                        <div class="cashier-product-image">${product.image_data
-                            ? `<img src="${escapeHtml(product.image_data)}" alt="">`
-                            : '<span aria-hidden="true">P</span>'}</div>
-                        <div class="item-name">${escapeHtml(productName)}</div>
-                        <div class="item-price">${formatCurrency(product.price)}</div>
-                        <button class="btn btn-sm btn-primary" data-add-item="product-${product.id}" data-name="${escapeHtml(productName)}" data-price="${product.price}" data-image="${product.image_data ? escapeHtml(product.image_data) : ''}">Add</button>
-                    </div>
-                `;
-                }).join('') || '<p>No products available.</p>'}
-            </div>
-        </div>
-
-        <div class="total-section">
-            <h3>Order Summary</h3>
-            <div id="cashier-order-items"></div>
-            <div class="total-row">
-                <span>Subtotal:</span>
-                <span id="cashier-subtotal">${formatCurrency(0)}</span>
-            </div>
-            <div class="total-row">
-                <span>Discount:</span>
-                <span>${formatCurrency(0)}</span>
-            </div>
-            <div class="total-row total">
-                <span>Total:</span>
-                <span id="cashier-total">${formatCurrency(0)}</span>
-            </div>
-        </div>
-
-        <div class="form-group">
-            <label for="payment-method">Payment Method</label>
-            <select id="payment-method">
-                <option value="cash">Cash</option>
-                <option value="card">Card</option>
-                <option value="other">Other</option>
-            </select>
-        </div>
-
-        <div id="cash-payment-section" style="display:none;">
-            <div class="form-group">
-                <label for="cash-received">Cash Received</label>
-                <input type="number" id="cash-received" step="0.01" value="0">
-            </div>
-            <div class="total-row">
-                <span>Change:</span>
-                <span id="change-amount">${formatCurrency(0)}</span>
-            </div>
-        </div>
-
-        <button class="btn btn-primary" id="complete-order-btn">Complete Order</button>
-    `;
-
-    content.onclick = handleCashierActions;
-    document.getElementById('cashier-barber').addEventListener('change', event => {
-        selectedCashierBarberId = event.target.value;
-    });
-    document.getElementById('cashier-appointment').addEventListener('change', event => {
-        const appointment = appointments.find(item => String(item.id) === event.target.value);
-        if (selectedCashierAppointmentServices.length) {
-            selectedCashierAppointmentServices.forEach(item => {
-                if (item.quantity > 1) item.quantity -= 1;
-                else currentOrder = currentOrder.filter(orderItem => orderItem !== item);
-            });
-            selectedCashierAppointmentServices = [];
-        }
-        if (!appointment) {
-            selectedCashierAppointmentId = null;
-            selectedCashierCustomerId = null;
-            renderCashierOrder();
-            return;
-        }
-
-        selectedCashierAppointmentId = Number(appointment.id);
-        selectedCashierCustomerId = appointment.customer_id ? Number(appointment.customer_id) : null;
-        const service = services.find(item => Number(item.id) === Number(appointment.service_id))
-            || (appointment.service_name
-                ? { id: appointment.service_id, name: appointment.service_name, price: appointment.service_price }
-                : null);
-        if (service) {
-            selectedCashierAppointmentServices = [];
-            const appointmentServiceIds = [service.id];
-            try {
-                appointmentServiceIds.push(...JSON.parse(appointment.additional_services || '[]'));
-            } catch (error) {
-                console.warn('Ignoring invalid appointment additional-services data:', error);
-            }
-            appointmentServiceIds.map(Number).filter((id, index, ids) => ids.indexOf(id) === index).forEach(serviceId => {
-                const selectedService = services.find(item => Number(item.id) === serviceId)
-                    || (Number(service.id) === serviceId ? service : null);
-                if (!selectedService || currentOrder.some(item => item.itemType === 'service' && item.id === serviceId)) return;
-                const orderItem = {
-                    type: 'service',
-                    itemType: 'service',
-                    id: serviceId,
-                    name: selectedService.name,
-                    price: Number(selectedService.price),
-                    quantity: 1
-                };
-                currentOrder.push(orderItem);
-                selectedCashierAppointmentServices.push(orderItem);
-            });
-        }
-        renderCashierOrder();
-    });
-    const paymentMethod = document.getElementById('payment-method');
-    const updateCashPaymentVisibility = () => {
-        document.getElementById('cash-payment-section').style.display = paymentMethod.value === 'cash' ? 'block' : 'none';
+function setOption(key, value) {
+    return {
+        query: 'INSERT OR REPLACE INTO app_options (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)',
+        params: [key, value == null ? null : String(value)]
     };
-    paymentMethod.addEventListener('change', updateCashPaymentVisibility);
-    updateCashPaymentVisibility();
-    document.getElementById('cash-received').addEventListener('input', function() {
-        const total = calculateCurrentOrderTotal();
-        const received = Number(this.value || 0);
-        document.getElementById('change-amount').textContent = formatCurrency(Math.max(received - total, 0));
+}
+
+/* ------------------------------------------------------------------ */
+/* Roles: admin sees and changes everything, a barber only their own    */
+/* ------------------------------------------------------------------ */
+
+function isAdmin() {
+    return state.user?.role === 'admin';
+}
+
+function myBarberId() {
+    return state.user?.role === 'barber' ? Number(state.user.barberId) : null;
+}
+
+function allowedPages() {
+    return isAdmin() ? ADMIN_PAGES : BARBER_PAGES;
+}
+
+function isMine(barberId) {
+    return barberId != null && myBarberId() != null && Number(barberId) === myBarberId();
+}
+
+function canManageTicket(ticket) {
+    return isAdmin() || isMine(ticket?.barber_id);
+}
+
+// Barbers may take a waiting client who has no barber yet; the client becomes theirs.
+function canTakeTicket(ticket) {
+    return canManageTicket(ticket) || (ticket?.barber_id == null && myBarberId() != null);
+}
+
+function denyNotYours() {
+    toast(t('err.notYours'), 'error');
+}
+
+/* ------------------------------------------------------------------ */
+/* Toasts and modals                                                   */
+/* ------------------------------------------------------------------ */
+
+function toast(message, type = 'success') {
+    const element = document.createElement('div');
+    element.className = `toast toast-${type}`;
+    element.setAttribute('role', type === 'error' ? 'alert' : 'status');
+    element.innerHTML = `${icon(type === 'error' ? 'alert' : 'check')}<span>${escapeHtml(message)}</span>`;
+    dom.toastRoot.appendChild(element);
+    requestAnimationFrame(() => element.classList.add('show'));
+    setTimeout(() => {
+        element.classList.remove('show');
+        setTimeout(() => element.remove(), 300);
+    }, type === 'error' ? 5200 : 2600);
+}
+
+const modalStack = [];
+let modalCounter = 0;
+
+function openModal({ title, body, footer = '', size = 'md', dismissible = true, autofocus = false, onClose, className = '' }) {
+    const id = `modal-${++modalCounter}`;
+    const backdrop = document.createElement('div');
+    backdrop.className = 'modal-backdrop';
+    backdrop.innerHTML = `
+        <div class="modal modal-${size} ${className}" role="dialog" aria-modal="true" aria-labelledby="${id}-title" tabindex="-1">
+            <header class="modal-head">
+                <h2 id="${id}-title">${escapeHtml(title)}</h2>
+                <button type="button" class="btn-icon" data-modal-close aria-label="${escapeHtml(t('common.close'))}">${icon('x')}</button>
+            </header>
+            <div class="modal-body">${body}</div>
+            ${footer ? `<footer class="modal-foot">${footer}</footer>` : ''}
+        </div>`;
+
+    const entry = {
+        el: backdrop,
+        modal: backdrop.firstElementChild,
+        dismissible,
+        closed: false,
+        previousFocus: document.activeElement,
+        close(result) {
+            if (entry.closed) return;
+            entry.closed = true;
+            const index = modalStack.indexOf(entry);
+            if (index >= 0) modalStack.splice(index, 1);
+            backdrop.remove();
+            document.body.classList.toggle('modal-open', modalStack.length > 0);
+            if (typeof onClose === 'function') onClose(result);
+            if (entry.previousFocus && typeof entry.previousFocus.focus === 'function' && document.contains(entry.previousFocus)) {
+                entry.previousFocus.focus({ preventScroll: true });
+            }
+        }
+    };
+
+    let pressedBackdrop = false;
+    backdrop.addEventListener('pointerdown', event => {
+        pressedBackdrop = event.target === backdrop;
     });
-    document.getElementById('complete-order-btn').addEventListener('click', completeOrder);
+    backdrop.addEventListener('click', event => {
+        if (event.target === backdrop && pressedBackdrop && entry.dismissible) entry.close();
+        if (event.target.closest('[data-modal-close]')) entry.close();
+        pressedBackdrop = false;
+    });
 
-    currentOrder = [];
-    renderCashierOrder();
+    modalStack.push(entry);
+    dom.modalRoot.appendChild(backdrop);
+    document.body.classList.add('modal-open');
+    requestAnimationFrame(() => backdrop.classList.add('show'));
+    setTimeout(() => {
+        // Do not move focus away from a field the user already started typing in.
+        if (document.activeElement !== entry.modal && entry.modal.contains(document.activeElement)) return;
+        const target = autofocus
+            ? entry.modal.querySelector('input:not([type="hidden"]):not([type="file"]), select, textarea')
+            : null;
+        (target || entry.modal).focus({ preventScroll: true });
+    }, 40);
+    return entry;
 }
 
-function handleCashierActions(event) {
-    const addButton = event.target.closest('[data-add-item]');
-    if (!addButton) return;
+function closeAllModals() {
+    [...modalStack].reverse().forEach(entry => entry.close());
+}
 
-    const rawKey = addButton.dataset.addItem;
-    const [type, id] = rawKey.split('-');
-    const name = addButton.dataset.name;
-    const price = Number(addButton.dataset.price);
-
-    const existing = currentOrder.find(item => item.type === type && item.id === Number(id));
-    if (existing) {
-        existing.quantity += 1;
-    } else {
-        currentOrder.push({
-            type,
-            itemType: type,
-            id: Number(id),
-            name,
-            price,
-            imageData: addButton.dataset.image || null,
-            quantity: 1
+function confirmDialog(message, { okLabel = t('common.confirm'), danger = false, title = t('confirm.title') } = {}) {
+    return new Promise(resolve => {
+        let accepted = false;
+        const entry = openModal({
+            title,
+            size: 'sm',
+            body: `<p class="confirm-text">${escapeHtml(message)}</p>`,
+            footer: `
+                <button type="button" class="btn btn-ghost" data-modal-close>${escapeHtml(t('common.cancel'))}</button>
+                <button type="button" class="btn ${danger ? 'btn-danger' : 'btn-primary'}" data-confirm-ok>${escapeHtml(okLabel)}</button>`,
+            onClose: () => resolve(accepted)
         });
+        entry.modal.querySelector('[data-confirm-ok]').addEventListener('click', () => {
+            accepted = true;
+            entry.close();
+        });
+    });
+}
+
+function promptDialog({ title, label, value = '', okLabel = t('common.save'), placeholder = '', maxLength = 120 }) {
+    return new Promise(resolve => {
+        let result = null;
+        const entry = openModal({
+            title,
+            size: 'sm',
+            autofocus: true,
+            body: `
+                <form class="stack" data-prompt-form>
+                    <label class="field">
+                        <span>${escapeHtml(label)}</span>
+                        <input type="text" value="${escapeHtml(value)}" placeholder="${escapeHtml(placeholder)}" maxlength="${maxLength}" data-prompt-input>
+                    </label>
+                </form>`,
+            footer: `
+                <button type="button" class="btn btn-ghost" data-modal-close>${escapeHtml(t('common.cancel'))}</button>
+                <button type="button" class="btn btn-primary" data-prompt-ok>${escapeHtml(okLabel)}</button>`,
+            onClose: () => resolve(result)
+        });
+        const input = entry.modal.querySelector('[data-prompt-input]');
+        const accept = () => {
+            result = input.value.trim();
+            entry.close();
+        };
+        entry.modal.querySelector('[data-prompt-ok]').addEventListener('click', accept);
+        entry.modal.querySelector('[data-prompt-form]').addEventListener('submit', event => {
+            event.preventDefault();
+            accept();
+        });
+    });
+}
+
+/* ------------------------------------------------------------------ */
+/* Shell: login, navigation, language                                  */
+/* ------------------------------------------------------------------ */
+
+function renderLanguageSwitches() {
+    const current = I18N.getLanguage();
+    document.querySelectorAll('[data-lang-switch]').forEach(container => {
+        container.innerHTML = I18N.languages.map(language => `
+            <button type="button" class="lang-option ${language.code === current ? 'active' : ''}" data-action="lang" data-lang="${language.code}" aria-pressed="${language.code === current}" lang="${language.code}">
+                <span class="lang-full">${escapeHtml(language.name)}</span>
+                <span class="lang-short">${escapeHtml(language.short)}</span>
+            </button>`).join('');
+        container.setAttribute('aria-label', t('settings.language'));
+    });
+}
+
+function renderNav() {
+    const user = state.user || {};
+    const userName = isAdmin() ? t('roles.admin') : (user.name || user.username || '');
+    dom.nav.innerHTML = `
+        <div class="nav-brand"><img src="../assets/logo/logo.png" alt="${escapeHtml(state.shopName)}"></div>
+        <div class="nav-links">
+            ${allowedPages().map(page => `
+                <button type="button" class="nav-link ${state.page === page ? 'active' : ''}" data-action="go" data-page="${page}" ${state.page === page ? 'aria-current="page"' : ''}>
+                    ${icon(PAGE_ICONS[page])}
+                    <span>${escapeHtml(t(`nav.${page}`))}</span>
+                </button>`).join('')}
+        </div>
+        <div class="nav-user" title="${escapeHtml(t('roles.signedInAs', { name: userName }))}">
+            <span class="avatar avatar-sm">${isAdmin() ? icon('key') : escapeHtml(initials(userName))}</span>
+            <span class="nav-user-name">${escapeHtml(userName)}</span>
+        </div>
+        <button type="button" class="nav-link nav-signout" data-action="sign-out">
+            ${icon('logout')}
+            <span>${escapeHtml(t('nav.signOut'))}</span>
+        </button>`;
+}
+
+function applyStaticText() {
+    document.querySelectorAll('[data-i18n]').forEach(element => {
+        element.textContent = t(element.dataset.i18n);
+    });
+    document.querySelectorAll('[data-shop-name]').forEach(element => {
+        element.textContent = state.shopName;
+    });
+    document.title = state.shopName;
+}
+
+function applyLanguage() {
+    I18N.apply();
+    applyStaticText();
+    renderLanguageSwitches();
+    if (typeof api.refreshStatus === 'function') api.refreshStatus();
+    if (state.signedIn) renderPage({ keepScroll: true });
+}
+
+const ADMIN_USER = { role: 'admin', username: ADMIN_USERNAME };
+
+// Returns the signed-in user, or null for a wrong username or password.
+async function authenticate(username, password) {
+    const isAdminName = username.toLowerCase() === ADMIN_USERNAME;
+    const serverMode = Boolean(window.webApi) && typeof api.isLocalDatabase === 'function' && !(await api.isLocalDatabase());
+    if (typeof api.login === 'function') {
+        const result = await api.login(username, password);
+        if (result && typeof result === 'object') {
+            return result.role === 'barber'
+                ? { role: 'barber', username: result.username, barberId: Number(result.barberId), name: result.name }
+                : ADMIN_USER;
+        }
+        if (result === true) return ADMIN_USER;
+        if (serverMode) return null;
+    } else if (isAdminName) {
+        return password === ADMIN_PASSWORD ? ADMIN_USER : null;
+    }
+    if (isAdminName) return null;
+
+    // Offline and desktop modes: barber accounts are in the local database.
+    const account = await queryOne(
+        `SELECT a.username, a.password_hash, a.barber_id, b.name
+         FROM barber_accounts a JOIN barbers b ON b.id = a.barber_id
+         WHERE a.username = ? COLLATE NOCASE AND a.is_active = 1 AND b.is_active = 1`,
+        [username]
+    );
+    if (!account || !XAuth.verifyPassword(password, account.password_hash)) return null;
+    return { role: 'barber', username: account.username, barberId: Number(account.barber_id), name: account.name };
+}
+
+async function handleLogin(event) {
+    event.preventDefault();
+    const username = document.getElementById('username').value.trim();
+    const password = document.getElementById('password').value;
+    const button = dom.loginForm.querySelector('button[type="submit"]');
+    button.disabled = true;
+    let user;
+    try {
+        user = await authenticate(username, password);
+        if (!user) {
+            toast(t('login.invalid'), 'error');
+            return;
+        }
+    } catch (error) {
+        toast(t('login.error', { message: error.message }), 'error');
+        return;
+    } finally {
+        button.disabled = false;
     }
 
-    renderCashierOrder();
+    state.signedIn = true;
+    state.user = user;
+    state.editUnlockedUntil = 0;
+    state.boardDate = todayString();
+    if (!allowedPages().includes(state.page)) state.page = 'cashier';
+    document.body.dataset.signedIn = 'true';
+    document.body.dataset.role = user.role;
+    dom.login.hidden = true;
+    dom.app.hidden = false;
+    document.getElementById('password').value = '';
+    await loadShopName();
+    await migrateLegacyAppointments();
+    await go(state.page);
+    startBookingSync();
 }
 
-function renderCashierOrder() {
-    const orderItems = document.getElementById('cashier-order-items');
-    const subtotal = calculateCurrentOrderTotal();
+function signOut() {
+    state.signedIn = false;
+    state.user = null;
+    state.editUnlockedUntil = 0;
+    stopBookingSync();
+    delete document.body.dataset.signedIn;
+    delete document.body.dataset.role;
+    closeAllModals();
+    dom.app.hidden = true;
+    dom.login.hidden = false;
+    document.getElementById('username').focus();
+}
 
-    if (!orderItems) return;
+async function loadShopName() {
+    try {
+        const settings = await queryOne('SELECT shop_name FROM settings ORDER BY id DESC LIMIT 1');
+        state.shopName = String(settings?.shop_name || '').trim() || 'XBARBER SHOP';
+    } catch (error) {
+        console.warn('Could not load shop name:', error);
+    }
+    applyStaticText();
+}
 
-    if (!currentOrder.length) {
-        orderItems.innerHTML = '<p>No items in the order.</p>';
-    } else {
-        orderItems.innerHTML = currentOrder.map((item) => `
-            <div class="item-row">
-                <div class="item-name">${escapeHtml(item.name)} (${item.quantity})</div>
-                <div class="item-price">${formatCurrency(item.price * item.quantity)}</div>
-                <div class="quantity-controls">
-                    <button class="quantity-btn" data-cashier-adjust="minus-${item.itemType}-${item.id}">-</button>
-                    <span>${item.quantity}</span>
-                    <button class="quantity-btn" data-cashier-adjust="plus-${item.itemType}-${item.id}">+</button>
+async function go(page) {
+    state.page = allowedPages().includes(page) ? page : 'cashier';
+    await renderPage();
+}
+
+function captureScroll() {
+    const board = dom.page.querySelector('[data-scroll-x]');
+    const columns = {};
+    dom.page.querySelectorAll('[data-scroll-key]').forEach(element => {
+        columns[element.dataset.scrollKey] = element.scrollTop;
+    });
+    return { top: dom.page.scrollTop, left: board ? board.scrollLeft : 0, columns };
+}
+
+function restoreScroll(saved) {
+    dom.page.scrollTop = saved.top;
+    const board = dom.page.querySelector('[data-scroll-x]');
+    if (board) board.scrollLeft = saved.left;
+    dom.page.querySelectorAll('[data-scroll-key]').forEach(element => {
+        const value = saved.columns[element.dataset.scrollKey];
+        if (value) element.scrollTop = value;
+    });
+}
+
+const renderers = {
+    cashier: renderCashier,
+    dashboard: renderDashboard,
+    history: renderHistory,
+    catalog: renderCatalog,
+    barbers: renderBarbers,
+    settings: renderSettings
+};
+
+async function renderPage({ keepScroll = false } = {}) {
+    if (!state.signedIn) return;
+    if (!allowedPages().includes(state.page)) state.page = 'cashier';
+    const token = ++state.renderToken;
+    const page = state.page;
+    renderNav();
+    const saved = captureScroll();
+    try {
+        const view = await renderers[page]();
+        if (token !== state.renderToken) return;
+        dom.title.textContent = t(`page.${page}.title`);
+        dom.subtitle.textContent = t(`page.${page}.subtitle`);
+        dom.actions.innerHTML = view.actions || '';
+        dom.page.className = `page page-${page}`;
+        dom.page.innerHTML = view.body;
+        if (keepScroll) restoreScroll(saved);
+        else dom.page.scrollTop = 0;
+        if (typeof view.after === 'function') view.after();
+    } catch (error) {
+        if (token !== state.renderToken) return;
+        dom.title.textContent = t(`page.${page}.title`);
+        dom.subtitle.textContent = '';
+        dom.actions.innerHTML = '';
+        dom.page.className = `page page-${page}`;
+        dom.page.innerHTML = `<div class="empty-state">${icon('alert')}<p>${escapeHtml(t('err.load'))}</p></div>`;
+        handleError(error);
+    }
+}
+
+function segmented(options, current, action, label) {
+    return `
+        <div class="segmented" role="group" aria-label="${escapeHtml(label)}">
+            ${options.map(option => `
+                <button type="button" class="${option.value === current ? 'active' : ''}" data-action="${action}" data-value="${option.value}" aria-pressed="${option.value === current}">
+                    ${escapeHtml(option.label)}
+                </button>`).join('')}
+        </div>`;
+}
+
+function periodOptions() {
+    return [
+        { value: 'today', label: t('period.today') },
+        { value: 'week', label: t('period.week') },
+        { value: 'month', label: t('period.month') },
+        { value: 'all', label: t('period.all') }
+    ];
+}
+
+/* ------------------------------------------------------------------ */
+/* Cashier board                                                       */
+/* ------------------------------------------------------------------ */
+
+const TICKET_COLUMNS = `
+    o.id, o.date, o.time, COALESCE(o.status, 'completed') AS status, o.total, o.payment_method,
+    o.barber_id, o.customer_id, c.name AS customer_name, c.phone AS customer_phone,
+    (SELECT ob.booking_id FROM online_bookings ob WHERE ob.order_id = o.id LIMIT 1) AS online_id`;
+
+const ITEM_COLUMNS = `
+    oi.order_id, oi.item_type, oi.item_id, oi.quantity, oi.price,
+    COALESCE(s.name, p.name) AS name, p.image_data`;
+
+const ITEM_JOINS = `
+    LEFT JOIN services s ON oi.item_type = 'service' AND s.id = oi.item_id
+    LEFT JOIN products p ON oi.item_type = 'product' AND p.id = oi.item_id`;
+
+function buildTickets(tickets, items) {
+    const map = new Map();
+    tickets.forEach(ticket => {
+        map.set(Number(ticket.id), { ...ticket, id: Number(ticket.id), items: [] });
+    });
+    items.forEach(item => {
+        map.get(Number(item.order_id))?.items.push(item);
+    });
+    return [...map.values()];
+}
+
+function sortOpenTickets(tickets) {
+    const rank = ticket => (ticket.status === 'in-service' ? 0 : 1);
+    return [...tickets].sort((a, b) => rank(a) - rank(b)
+        || String(a.time || '99:99').localeCompare(String(b.time || '99:99'))
+        || a.id - b.id);
+}
+
+async function renderCashier() {
+    const date = state.boardDate;
+    const today = todayString();
+    const mineOnly = isAdmin() ? '' : ' AND (o.barber_id = ? OR o.barber_id IS NULL)';
+    const [barbers, ticketRows, itemRows, upcomingRows] = await queryMany([
+        { query: 'SELECT id, name, is_active FROM barbers ORDER BY id' },
+        {
+            query: `SELECT ${TICKET_COLUMNS}
+                    FROM orders o LEFT JOIN customers c ON c.id = o.customer_id
+                    WHERE o.date = ? AND COALESCE(o.status, 'completed') IN ('waiting', 'in-service', 'completed')
+                    ORDER BY o.time, o.id`,
+            params: [date]
+        },
+        {
+            query: `SELECT ${ITEM_COLUMNS}
+                    FROM order_items oi JOIN orders o ON o.id = oi.order_id ${ITEM_JOINS}
+                    WHERE o.date = ? AND COALESCE(o.status, 'completed') IN ('waiting', 'in-service', 'completed')
+                    ORDER BY oi.id`,
+            params: [date]
+        },
+        {
+            // The next day after this one that has online bookings waiting.
+            query: `SELECT o.date, COUNT(*) AS count FROM orders o JOIN online_bookings ob ON ob.order_id = o.id
+                    WHERE o.status = 'waiting' AND o.date > ?${mineOnly}
+                    GROUP BY o.date ORDER BY o.date LIMIT 1`,
+            params: isAdmin() ? [date] : [date, myBarberId()]
+        }
+    ]);
+
+    const tickets = buildTickets(ticketRows, itemRows);
+    const upcoming = upcomingRows[0];
+    const barberById = new Map(barbers.map(barber => [Number(barber.id), barber]));
+    const byBarber = new Map();
+    const unassigned = [];
+    tickets.forEach(ticket => {
+        const barber = ticket.barber_id == null ? null : barberById.get(Number(ticket.barber_id));
+        if (!barber) {
+            unassigned.push(ticket);
+            return;
+        }
+        const list = byBarber.get(Number(barber.id)) || [];
+        list.push(ticket);
+        byBarber.set(Number(barber.id), list);
+    });
+
+    const columns = [];
+    if (unassigned.length) columns.push({ key: 'none', barber: null, tickets: unassigned });
+    barbers.forEach(barber => {
+        const list = byBarber.get(Number(barber.id)) || [];
+        if (Number(barber.is_active) || list.length) columns.push({ key: `b${barber.id}`, barber, tickets: list });
+    });
+    // A barber sees their own column first.
+    if (!isAdmin()) {
+        const mine = columns.findIndex(column => column.barber && isMine(column.barber.id));
+        if (mine > 0) columns.unshift(...columns.splice(mine, 1));
+    }
+
+    // Barbers see their own numbers; the admin sees the whole shop.
+    const counted = isAdmin() ? tickets : tickets.filter(ticket => isMine(ticket.barber_id));
+    const waiting = counted.filter(ticket => ticket.status === 'waiting').length;
+    const active = counted.filter(ticket => ticket.status === 'in-service').length;
+    const done = counted.filter(ticket => ticket.status === 'completed');
+    const activeBarbers = barbers.filter(barber => Number(barber.is_active));
+
+    const actions = `
+        <div class="date-nav">
+            <button type="button" class="btn-icon" data-action="board-day" data-step="-1" aria-label="${escapeHtml(t('cashier.prevDay'))}">${icon('chevronLeft', 'flip-rtl')}</button>
+            <label class="date-pill">
+                ${icon('calendar')}
+                <span>${escapeHtml(I18N.formatDate(date, { weekday: true }))}</span>
+                <input type="date" value="${date}" data-date-input="board" aria-label="${escapeHtml(t('client.date'))}">
+            </label>
+            <button type="button" class="btn-icon" data-action="board-day" data-step="1" aria-label="${escapeHtml(t('cashier.nextDay'))}">${icon('chevronRight', 'flip-rtl')}</button>
+            ${date !== today ? `<button type="button" class="btn btn-ghost btn-sm" data-action="board-today">${escapeHtml(t('common.today'))}</button>` : ''}
+        </div>
+        ${upcoming ? `
+            <button type="button" class="btn btn-sm upcoming-pill" data-action="board-goto" data-date="${escapeHtml(upcoming.date)}">
+                ${icon('globe')}<span>${escapeHtml(t('booking.nextDay', { date: I18N.formatDate(upcoming.date, { weekday: true }), n: Number(upcoming.count) }))}</span>
+            </button>` : ''}`;
+
+    if (!activeBarbers.length && !tickets.length && isAdmin()) {
+        return {
+            actions,
+            body: `
+                <div class="empty-hero">
+                    <span class="empty-hero-icon">${icon('scissors')}</span>
+                    <h2>${escapeHtml(t('cashier.noBarbersTitle'))}</h2>
+                    <p>${escapeHtml(t('cashier.noBarbersText'))}</p>
+                    <form class="inline-form" data-form="add-barber">
+                        <input type="text" name="name" maxlength="60" placeholder="${escapeHtml(t('barbers.namePlaceholder'))}" aria-label="${escapeHtml(t('barbers.name'))}" required>
+                        <button type="submit" class="btn btn-primary">${icon('plus')}${escapeHtml(t('barbers.add'))}</button>
+                    </form>
+                </div>`
+        };
+    }
+
+    const body = `
+        <div class="day-strip">
+            <div class="day-stat"><span class="status-dot status-dot-waiting"></span><span>${escapeHtml(t('status.waiting'))}</span><strong>${waiting}</strong></div>
+            <div class="day-stat"><span class="status-dot status-dot-active"></span><span>${escapeHtml(t('status.in-service'))}</span><strong>${active}</strong></div>
+            <div class="day-stat"><span class="status-dot status-dot-done"></span><span>${escapeHtml(t('status.completed'))}</span><strong>${done.length}</strong></div>
+            <div class="day-stat day-stat-money"><span>${escapeHtml(t(isAdmin() ? 'cashier.moneyToday' : 'cashier.myMoneyToday'))}</span><strong>${money(sum(done, ticket => ticket.total))}</strong></div>
+        </div>
+        <div class="board" data-scroll-x>
+            ${columns.map(renderColumn).join('')}
+            ${isAdmin() ? `
+                <button type="button" class="col col-ghost" data-action="add-barber">
+                    <span class="col-ghost-icon">${icon('plus')}</span>
+                    <span>${escapeHtml(t('cashier.addBarber'))}</span>
+                </button>` : ''}
+        </div>`;
+
+    return { actions, body };
+}
+
+function renderColumn(column) {
+    const openTickets = sortOpenTickets(column.tickets.filter(ticket => OPEN_STATUSES.includes(ticket.status)));
+    const doneTickets = column.tickets.filter(ticket => ticket.status === 'completed')
+        .sort((a, b) => String(b.time || '').localeCompare(String(a.time || '')) || b.id - a.id);
+    const waiting = openTickets.filter(ticket => ticket.status === 'waiting').length;
+    const active = openTickets.length - waiting;
+    const removed = column.barber && !Number(column.barber.is_active);
+    const name = column.barber ? column.barber.name : t('cashier.anyBarber');
+    const mine = column.barber && isMine(column.barber.id);
+    // Admin: every column. Barber: only their own column (and taking clients who have no barber).
+    const editable = isAdmin() || mine;
+    const canAdd = !removed && editable;
+    const doneOpen = state.openDone.has(column.key);
+    const access = { editable, takeable: !column.barber && myBarberId() != null };
+
+    return `
+        <section class="col ${column.barber ? '' : 'col-unassigned'} ${mine ? 'col-mine' : ''} ${editable ? '' : 'col-readonly'}" data-col="${column.key}">
+            <header class="col-head">
+                <div class="col-id">
+                    <span class="avatar ${column.barber ? '' : 'avatar-muted'}">${column.barber ? escapeHtml(initials(name)) : icon('users')}</span>
+                    <div class="col-name">
+                        <h3>${escapeHtml(name)}</h3>
+                        ${mine ? `<span class="tag tag-mine">${escapeHtml(t('cashier.you'))}</span>` : ''}
+                        ${removed ? `<span class="tag">${escapeHtml(t('cashier.removedBarber'))}</span>` : ''}
+                        ${!column.barber ? `<span class="col-note">${escapeHtml(t('cashier.anyBarberNote'))}</span>` : ''}
+                    </div>
                 </div>
+                ${editable ? `<div class="col-money">${money(sum(doneTickets, ticket => ticket.total))}</div>` : ''}
+            </header>
+            <div class="col-stats">
+                <div><strong>${waiting}</strong><span>${escapeHtml(t('status.waiting'))}</span></div>
+                <div><strong>${active}</strong><span>${escapeHtml(t('status.in-service'))}</span></div>
+                <div><strong>${doneTickets.length}</strong><span>${escapeHtml(t('status.completed'))}</span></div>
             </div>
-        `).join('');
+            ${canAdd ? `
+                <button type="button" class="btn btn-add-client" data-action="new-client" data-barber="${column.barber ? column.barber.id : ''}">
+                    ${icon('plus')}<span>${escapeHtml(t('cashier.newClient'))}</span>
+                </button>` : ''}
+            <div class="col-body" data-scroll-key="${column.key}">
+                ${openTickets.map(ticket => renderTicket(ticket, access)).join('') || `<p class="col-empty">${escapeHtml(t('cashier.emptyColumn'))}</p>`}
+                ${doneTickets.length && editable ? `
+                    <details class="done-group" data-done-key="${column.key}" ${doneOpen ? 'open' : ''}>
+                        <summary>${icon('check')}<span>${escapeHtml(t('cashier.finishedList', { n: doneTickets.length }))}</span>${icon('chevronRight', 'summary-chevron')}</summary>
+                        <div class="done-list">${doneTickets.map(ticket => renderTicket(ticket, access)).join('')}</div>
+                    </details>` : ''}
+            </div>
+        </section>`;
+}
+
+function statusBadge(ticket) {
+    if (ticket.status === 'in-service') {
+        return `<span class="badge badge-active"><span class="pulse"></span>${escapeHtml(t('status.in-service'))}</span>`;
+    }
+    if (ticket.status === 'completed') {
+        return `<span class="badge badge-done">${icon('check')}${escapeHtml(t('status.completed'))}</span>`;
+    }
+    return `<span class="badge badge-waiting">${icon('clock')}${escapeHtml(t('status.waiting'))}</span>`;
+}
+
+function itemChip(item) {
+    const quantity = Number(item.quantity || 1);
+    const image = item.item_type === 'product' ? safeImage(item.image_data) : '';
+    const thumb = item.item_type === 'product'
+        ? `<span class="chip-thumb">${image ? `<img src="${escapeHtml(image)}" alt="">` : icon('package')}</span>`
+        : '';
+    return `<span class="chip chip-${item.item_type}">${thumb}<span>${escapeHtml(item.name || t('client.removedItem'))}</span>${quantity > 1 ? `<b>×${quantity}</b>` : ''}</span>`;
+}
+
+function renderTicket(ticket, access = { editable: true, takeable: false }) {
+    const isDone = ticket.status === 'completed';
+    const canEdit = access.editable;
+    const services = ticket.items.filter(item => item.item_type === 'service');
+    const products = ticket.items.filter(item => item.item_type === 'product');
+    const name = String(ticket.customer_name || '').trim() || t('cashier.walkIn');
+    const stateClass = ticket.status === 'in-service' ? 'is-active' : isDone ? 'is-done' : 'is-waiting';
+
+    const addChip = (focus, empty) => `
+        <button type="button" class="chip chip-add" data-action="edit-client" data-id="${ticket.id}" data-focus="${focus}">
+            ${icon('plus')}${empty ? `<span>${escapeHtml(t(focus === 'products' ? 'cashier.addProduct' : 'cashier.addService'))}</span>` : ''}
+        </button>`;
+
+    const line = (kind, list) => {
+        const label = t(kind === 'products' ? 'client.products' : 'client.services');
+        const chips = list.map(itemChip).join('');
+        const none = list.length ? '' : `<span class="chip-none">${escapeHtml(t(kind === 'products' ? 'cashier.noProducts' : 'cashier.noServices'))}</span>`;
+        const tail = isDone || !canEdit ? none : addChip(kind, !list.length);
+        return `
+            <div class="ticket-line" title="${escapeHtml(label)}">
+                <span class="line-icon" aria-label="${escapeHtml(label)}">${icon(kind === 'products' ? 'bag' : 'scissors')}</span>
+                <div class="chips">${chips}${tail}</div>
+            </div>`;
+    };
+
+    let actions = '';
+    const editButton = `<button type="button" class="btn-icon" data-action="edit-client" data-id="${ticket.id}" aria-label="${escapeHtml(t('common.edit'))}" title="${escapeHtml(t('common.edit'))}">${icon('pencil')}</button>`;
+    if (ticket.status === 'waiting') {
+        if (canEdit || access.takeable) {
+            actions = `
+                <button type="button" class="btn btn-primary btn-sm" data-action="take-client" data-id="${ticket.id}">${icon('scissors')}<span>${escapeHtml(t('cashier.take'))}</span></button>
+                ${canEdit ? editButton : ''}`;
+        }
+    } else if (ticket.status === 'in-service') {
+        if (canEdit) {
+            actions = `
+                <button type="button" class="btn btn-light btn-sm" data-action="pay-client" data-id="${ticket.id}">${icon('check')}<span>${escapeHtml(t('cashier.finish'))}</span></button>
+                <button type="button" class="btn-icon" data-action="back-to-waiting" data-id="${ticket.id}" aria-label="${escapeHtml(t('cashier.backToWaiting'))}" title="${escapeHtml(t('cashier.backToWaiting'))}">${icon('undo')}</button>
+                ${editButton}`;
+        }
+    } else {
+        const method = ticket.payment_method === 'card' ? 'card' : ticket.payment_method === 'cash' ? 'cash' : 'other';
+        actions = `
+            <span class="paid-label">${icon(method === 'card' ? 'card' : 'cash')}${escapeHtml(t(`pay.${method}`))}</span>
+            ${canEdit ? `<button type="button" class="btn-icon" data-action="edit-finished" data-id="${ticket.id}" aria-label="${escapeHtml(t('history.editLocked'))}" title="${escapeHtml(t('history.editLocked'))}">${icon('pencil')}</button>` : ''}`;
     }
 
-    document.getElementById('cashier-subtotal').textContent = formatCurrency(subtotal);
-    document.getElementById('cashier-total').textContent = formatCurrency(subtotal);
+    return `
+        <article class="ticket ${stateClass}" data-ticket="${ticket.id}">
+            <div class="ticket-top">
+                ${statusBadge(ticket)}
+                ${ticket.online_id ? `<span class="badge badge-online" title="${escapeHtml(t('booking.badgeTitle'))}">${icon('globe')}${escapeHtml(t('booking.badge'))}</span>` : ''}
+                ${ticket.time ? `<span class="ticket-time">${icon('clock')}${timeLabel(ticket.time)}</span>` : ''}
+            </div>
+            <div class="ticket-who">
+                <strong>${escapeHtml(name)}</strong>
+                ${ticket.customer_phone ? `<bdi dir="ltr">${escapeHtml(ticket.customer_phone)}</bdi>` : ''}
+            </div>
+            ${line('services', services)}
+            ${line('products', products)}
+            <div class="ticket-foot">
+                <strong class="ticket-total">${money(ticket.total)}</strong>
+                <div class="ticket-actions">${actions}</div>
+            </div>
+        </article>`;
+}
 
-    const cashReceived = Number(document.getElementById('cash-received')?.value || 0);
-    const change = Math.max(cashReceived - subtotal, 0);
-    const changeNode = document.getElementById('change-amount');
-    if (changeNode) {
-        changeNode.textContent = formatCurrency(change);
-    }
+async function getActiveBarbers() {
+    return api.dbQuery('SELECT id, name FROM barbers WHERE is_active = 1 ORDER BY id');
+}
 
-    const container = document.getElementById('cashier-content');
-    if (container) {
-        container.querySelectorAll('[data-cashier-adjust]').forEach((button) => {
-            button.onclick = () => {
-                const [mode, itemType, idText] = button.dataset.cashierAdjust.split('-');
-                const itemId = Number(idText);
-                const item = currentOrder.find(entry => entry.itemType === itemType && entry.id === itemId);
-                if (!item) return;
-
-                if (mode === 'plus') item.quantity += 1;
-                if (mode === 'minus') item.quantity = Math.max(0, item.quantity - 1);
-
-                if (item.quantity === 0) {
-                    currentOrder = currentOrder.filter(entry => !(entry.itemType === itemType && entry.id === itemId));
-                }
-
-                renderCashierOrder();
-            };
+function pickBarber(barbers) {
+    if (barbers.length === 1) return Promise.resolve(Number(barbers[0].id));
+    return new Promise(resolve => {
+        let chosen = null;
+        const entry = openModal({
+            title: t('cashier.whichBarber'),
+            size: 'sm',
+            body: `<div class="barber-pick">${barbers.map(barber => `
+                <button type="button" class="barber-pick-option" data-pick-barber="${barber.id}">
+                    <span class="avatar">${escapeHtml(initials(barber.name))}</span><span>${escapeHtml(barber.name)}</span>
+                </button>`).join('')}</div>`,
+            onClose: () => resolve(chosen)
         });
-    }
+        entry.modal.addEventListener('click', event => {
+            const option = event.target.closest('[data-pick-barber]');
+            if (!option) return;
+            chosen = Number(option.dataset.pickBarber);
+            entry.close();
+        });
+    });
 }
 
-function calculateCurrentOrderTotal() {
-    return currentOrder.reduce((sum, item) => sum + (Number(item.price) * Number(item.quantity)), 0);
-}
-
-async function completeOrder() {
-    const total = calculateCurrentOrderTotal();
-    const barberValue = document.getElementById('cashier-barber')?.value || '';
-    const barberId = barberValue ? Number(barberValue) : null;
-    if (!currentOrder.length) {
-        alert('Add at least one item to the order.');
+async function takeClient(id) {
+    const ticket = await queryOne(
+        `SELECT o.id, o.status, o.barber_id, b.is_active AS barber_active
+         FROM orders o LEFT JOIN barbers b ON b.id = o.barber_id WHERE o.id = ?`,
+        [id]
+    );
+    if (!ticket || ticket.status !== 'waiting') {
+        await renderPage({ keepScroll: true });
         return;
     }
+    let barberId = ticket.barber_id != null && Number(ticket.barber_active) ? Number(ticket.barber_id) : null;
+    if (!isAdmin()) {
+        // A barber takes their own clients, or a client who has no barber (it becomes theirs).
+        if (barberId && !isMine(barberId)) {
+            denyNotYours();
+            await renderPage({ keepScroll: true });
+            return;
+        }
+        barberId = myBarberId();
+    } else if (!barberId) {
+        const barbers = await getActiveBarbers();
+        if (!barbers.length) {
+            toast(t('cashier.needBarber'), 'error');
+            return;
+        }
+        barberId = await pickBarber(barbers);
+        if (!barberId) return;
+    }
+    await runStatements([{
+        query: "UPDATE orders SET status = 'in-service', barber_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'waiting'",
+        params: [barberId, id]
+    }]);
+    toast(t('toast.taken'));
+    await renderPage({ keepScroll: true });
+}
 
-    const paymentMethod = document.getElementById('payment-method').value;
-    const cashReceived = Number(document.getElementById('cash-received')?.value || 0);
-    const date = getLocalDateString();
-    const time = new Date().toLocaleTimeString('en-GB', { hour12: false });
+async function backToWaiting(id) {
+    const ticket = await queryOne('SELECT barber_id FROM orders WHERE id = ?', [id]);
+    if (!ticket || !canManageTicket(ticket)) {
+        if (ticket) denyNotYours();
+        await renderPage({ keepScroll: true });
+        return;
+    }
+    await runStatements([{
+        query: "UPDATE orders SET status = 'waiting', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'in-service'",
+        params: [id]
+    }]);
+    await renderPage({ keepScroll: true });
+}
 
-    try {
-        const statements = [{
-            query: 'INSERT INTO orders (customer_id, date, time, total, discount, status, payment_method, barber_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-            params: [selectedCashierCustomerId, date, time, total, 0, 'completed', paymentMethod, barberId]
-        }];
-        for (const item of currentOrder) {
-            statements.push({
-                query: 'INSERT INTO order_items (order_id, item_type, item_id, quantity, price) VALUES (?, ?, ?, ?, ?)',
-                params: [{ lastIDFrom: 0 }, item.itemType, item.id, item.quantity, item.price]
-            });
-            if (item.itemType === 'product') {
-                statements.push({
-                    query: 'UPDATE products SET stock = MAX(stock - ?, 0) WHERE id = ?',
-                    params: [item.quantity, item.id]
+async function loadTicket(id) {
+    const [rows, items] = await queryMany([
+        {
+            query: `SELECT ${TICKET_COLUMNS}, b.name AS barber_name
+                    FROM orders o LEFT JOIN customers c ON c.id = o.customer_id
+                    LEFT JOIN barbers b ON b.id = o.barber_id WHERE o.id = ?`,
+            params: [id]
+        },
+        {
+            query: `SELECT ${ITEM_COLUMNS} FROM order_items oi ${ITEM_JOINS} WHERE oi.order_id = ? ORDER BY oi.id`,
+            params: [id]
+        }
+    ]);
+    if (!rows[0]) return null;
+    return { ...rows[0], id: Number(rows[0].id), items };
+}
+
+// Undoing a payment changes a finished client, so it needs the history edit password.
+async function undoPayment(id) {
+    const ticket = await loadTicket(id);
+    if (!ticket || ticket.status !== 'completed') {
+        await renderPage({ keepScroll: true });
+        return false;
+    }
+    if (!canManageTicket(ticket)) {
+        denyNotYours();
+        return false;
+    }
+    if (!await requireEditPassword()) return false;
+    const ok = await confirmDialog(t('confirm.undoPay'), { okLabel: t('cashier.undoPay') });
+    if (!ok) return false;
+    const statements = [{ query: 'DELETE FROM payments WHERE order_id = ?', params: [id] }];
+    ticket.items.filter(item => item.item_type === 'product').forEach(item => {
+        statements.push({
+            query: 'UPDATE products SET stock = COALESCE(stock, 0) + ? WHERE id = ?',
+            params: [Number(item.quantity || 1), Number(item.item_id)]
+        });
+    });
+    if (ticket.customer_id) {
+        statements.push({
+            query: `UPDATE customers SET total_visits = MAX(COALESCE(total_visits, 0) - 1, 0),
+                    total_spent = MAX(COALESCE(total_spent, 0) - ?, 0), updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+            params: [Number(ticket.total || 0), Number(ticket.customer_id)]
+        });
+    }
+    const backTo = ticket.barber_id != null ? 'in-service' : 'waiting';
+    statements.push({
+        query: "UPDATE orders SET status = ?, payment_method = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND COALESCE(status, 'completed') = 'completed'",
+        params: [backTo, id]
+    });
+    await runStatements(statements);
+    toast(t('toast.undone'));
+    await renderPage({ keepScroll: true });
+    return true;
+}
+
+/* ------------------------------------------------------------------ */
+/* Password for changing finished clients                              */
+/* ------------------------------------------------------------------ */
+
+async function getHistoryPasswordHash() {
+    const row = await queryOne("SELECT value FROM app_options WHERE key = 'history_password'");
+    return row?.value || DEFAULT_HISTORY_PASSWORD_HASH;
+}
+
+function editUnlocked() {
+    return Date.now() < state.editUnlockedUntil;
+}
+
+let relockTimer = null;
+
+function unlockEditing() {
+    state.editUnlockedUntil = Date.now() + EDIT_UNLOCK_MS;
+    clearTimeout(relockTimer);
+    relockTimer = setTimeout(() => {
+        if (state.page === 'history' && !modalStack.length) renderPage({ keepScroll: true });
+    }, EDIT_UNLOCK_MS + 500);
+}
+
+function lockEditing() {
+    state.editUnlockedUntil = 0;
+    clearTimeout(relockTimer);
+}
+
+// Asks for the password, unless it was entered in the last few minutes.
+async function requireEditPassword() {
+    if (editUnlocked()) {
+        unlockEditing();
+        return true;
+    }
+    const stored = await getHistoryPasswordHash();
+    return new Promise(resolve => {
+        let unlocked = false;
+        const entry = openModal({
+            title: t('lock.title'),
+            size: 'sm',
+            autofocus: true,
+            body: `
+                <form class="stack lock-form" data-lock-form>
+                    <div class="lock-hero">${icon('lock')}<p>${escapeHtml(t('lock.text'))}</p></div>
+                    <label class="field"><span>${escapeHtml(t('lock.password'))}</span>
+                        <input type="password" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="100" data-lock-input>
+                    </label>
+                    <p class="field-error" data-lock-error hidden>${icon('alert')}<span>${escapeHtml(t('lock.wrong'))}</span></p>
+                </form>`,
+            footer: `
+                <span class="spacer"></span>
+                <button type="button" class="btn btn-ghost" data-modal-close>${escapeHtml(t('common.cancel'))}</button>
+                <button type="button" class="btn btn-primary" data-lock-ok>${icon('unlock')}<span>${escapeHtml(t('lock.unlock'))}</span></button>`,
+            onClose: () => resolve(unlocked)
+        });
+        const input = entry.modal.querySelector('[data-lock-input]');
+        const error = entry.modal.querySelector('[data-lock-error]');
+        const check = () => {
+            if (XAuth.verifyPassword(input.value, stored)) {
+                unlocked = true;
+                unlockEditing();
+                entry.close();
+                if (state.page === 'history') renderPage({ keepScroll: true });
+                return;
+            }
+            error.hidden = false;
+            input.select();
+            input.classList.remove('shake');
+            void input.offsetWidth;
+            input.classList.add('shake');
+        };
+        entry.modal.querySelector('[data-lock-ok]').addEventListener('click', check);
+        entry.modal.querySelector('[data-lock-form]').addEventListener('submit', event => {
+            event.preventDefault();
+            check();
+        });
+        input.addEventListener('input', () => {
+            error.hidden = true;
+        });
+    });
+}
+
+async function editFinished(id) {
+    const ticket = await loadTicket(id);
+    if (!ticket || ticket.status !== 'completed') {
+        toast(t('client.notEditable'), 'error');
+        await renderPage({ keepScroll: true });
+        return;
+    }
+    if (!canManageTicket(ticket)) {
+        denyNotYours();
+        return;
+    }
+    if (!await requireEditPassword()) return;
+    await openClientModal({ ticketId: id, finished: true });
+}
+
+async function saveHistoryPassword(form) {
+    const current = form.elements.current.value;
+    const next = form.elements.next.value;
+    const repeat = form.elements.repeat.value;
+    if (!XAuth.verifyPassword(current, await getHistoryPasswordHash())) {
+        toast(t('lock.wrongCurrent'), 'error');
+        form.elements.current.focus();
+        return;
+    }
+    if (next.length < 4) {
+        toast(t('lock.tooShort'), 'error');
+        form.elements.next.focus();
+        return;
+    }
+    if (next !== repeat) {
+        toast(t('lock.mismatch'), 'error');
+        form.elements.repeat.focus();
+        return;
+    }
+    await runStatements([setOption('history_password', XAuth.hashPassword(next))]);
+    lockEditing();
+    form.reset();
+    toast(t('lock.changed'));
+}
+
+/* ------------------------------------------------------------------ */
+/* Client form (new / edit)                                            */
+/* ------------------------------------------------------------------ */
+
+// finished = true edits a paid client (opened from History after the password).
+async function openClientModal({ ticketId = null, barberId = null, focus = null, finished = false } = {}) {
+    const queries = [
+        { query: 'SELECT id, name, price FROM services WHERE is_active = 1 ORDER BY name' },
+        { query: 'SELECT id, name, price, stock, image_data, category_id FROM products WHERE is_active = 1 ORDER BY name' },
+        { query: 'SELECT id, name FROM categories ORDER BY name' },
+        { query: 'SELECT id, name, phone FROM customers WHERE is_active = 1 ORDER BY id DESC LIMIT 3000' },
+        { query: 'SELECT id, name, is_active FROM barbers ORDER BY id' }
+    ];
+    const [services, products, categories, customers, allBarbers] = await queryMany(queries);
+    const ticket = ticketId ? await loadTicket(ticketId) : null;
+
+    const editableStatus = ticket && (finished ? ticket.status === 'completed' : OPEN_STATUSES.includes(ticket.status));
+    if (ticketId && !editableStatus) {
+        toast(t('client.notEditable'), 'error');
+        await renderPage({ keepScroll: true });
+        return;
+    }
+    if (ticket && !canManageTicket(ticket)) {
+        denyNotYours();
+        await renderPage({ keepScroll: true });
+        return;
+    }
+    // A barber always adds clients to their own column.
+    if (!ticket && !isAdmin()) barberId = myBarberId();
+
+    // Active barbers, plus the client's current barber if that barber was removed (finished clients).
+    const barbers = allBarbers.filter(barber => Number(barber.is_active)
+        || (finished && ticket?.barber_id != null && Number(barber.id) === Number(ticket.barber_id)));
+
+    const draft = {
+        id: ticket ? ticket.id : null,
+        status: ticket ? ticket.status : 'waiting',
+        finished: Boolean(finished && ticket),
+        method: ticket?.payment_method === 'card' ? 'card' : 'cash',
+        customerId: ticket?.customer_id ? Number(ticket.customer_id) : null,
+        services: new Map(),
+        products: new Map()
+    };
+
+    // Keep items on the visit even if they were later removed from the catalog.
+    (ticket?.items || []).forEach(item => {
+        const id = Number(item.item_id);
+        const quantity = Number(item.quantity || 1);
+        const price = Number(item.price || 0);
+        if (item.item_type === 'service') {
+            const existing = draft.services.get(id);
+            draft.services.set(id, { price, quantity: (existing?.quantity || 0) + quantity });
+            if (!services.some(service => Number(service.id) === id)) {
+                services.push({ id, name: item.name || t('client.removedItem'), price, removed: true });
+            }
+        } else {
+            const existing = draft.products.get(id);
+            draft.products.set(id, { price, quantity: (existing?.quantity || 0) + quantity });
+            if (!products.some(product => Number(product.id) === id)) {
+                products.push({ id, name: item.name || t('client.removedItem'), price, stock: null, image_data: item.image_data, removed: true });
+            }
+        }
+    });
+
+    const selectedBarber = ticket
+        ? (ticket.barber_id != null && barbers.some(barber => Number(barber.id) === Number(ticket.barber_id)) ? String(ticket.barber_id) : '')
+        : (barberId ? String(barberId) : '');
+    const dateValue = ticket ? ticket.date : state.boardDate;
+    const timeValue = ticket ? String(ticket.time || '').slice(0, 5) : (state.boardDate === todayString() ? nowTime() : '');
+    const showProductFilters = products.length > 8 || categories.length > 0;
+    const usedCategories = categories.filter(category => products.some(product => Number(product.category_id) === Number(category.id)));
+
+    const serviceChoices = services.length
+        ? `<div class="choice-grid">${services.map(service => {
+            const selected = draft.services.get(Number(service.id));
+            return `
+                <button type="button" class="choice ${selected ? 'selected' : ''}" data-svc="${service.id}" aria-pressed="${Boolean(selected)}">
+                    <span class="choice-check">${icon('check')}</span>
+                    <span class="choice-name">${escapeHtml(service.name)}</span>
+                    <span class="choice-price">${money(selected ? selected.price : service.price)}</span>
+                </button>`;
+        }).join('')}</div>`
+        : `<div class="inline-empty">${escapeHtml(t('client.noServices'))} ${isAdmin() ? `<button type="button" class="link" data-goto-catalog="services">${escapeHtml(t('client.openCatalog'))}</button>` : ''}</div>`;
+
+    const productChoices = products.length
+        ? `
+            ${showProductFilters ? `
+                <div class="filter-row">
+                    <label class="search-field">${icon('search')}<input type="search" data-product-search placeholder="${escapeHtml(t('client.searchProducts'))}" aria-label="${escapeHtml(t('client.searchProducts'))}"></label>
+                    ${usedCategories.length ? `
+                        <div class="filter-chips">
+                            <button type="button" class="filter-chip active" data-product-filter="all">${escapeHtml(t('catalog.all'))}</button>
+                            ${usedCategories.map(category => `<button type="button" class="filter-chip" data-product-filter="${category.id}">${escapeHtml(category.name)}</button>`).join('')}
+                        </div>` : ''}
+                </div>` : ''}
+            <div class="pick-grid">${products.map(product => {
+                const selected = draft.products.get(Number(product.id));
+                const quantity = selected ? selected.quantity : 0;
+                const image = safeImage(product.image_data);
+                const stock = product.stock == null ? null : Number(product.stock);
+                return `
+                    <div class="pick ${quantity ? 'selected' : ''}" data-prod="${product.id}" data-cat="${product.category_id || ''}" data-name="${escapeHtml(String(product.name || '').toLowerCase())}">
+                        <button type="button" class="pick-main" data-prod-add="${product.id}">
+                            <span class="pick-img">${image ? `<img src="${escapeHtml(image)}" alt="">` : icon('package')}</span>
+                            <span class="pick-name">${escapeHtml(product.name || t('catalog.unnamedProduct'))}</span>
+                            <span class="pick-price">${money(selected ? selected.price : product.price)}</span>
+                            ${stock == null ? '' : `<span class="pick-stock ${stock <= 0 ? 'out' : ''}">${escapeHtml(stock <= 0 ? t('catalog.outOfStock') : t('catalog.inStock', { n: stock }))}</span>`}
+                        </button>
+                        <div class="pick-qty">
+                            <button type="button" data-prod-minus="${product.id}" aria-label="${escapeHtml(t('client.less'))}">${icon('minus')}</button>
+                            <span data-qty>${quantity}</span>
+                            <button type="button" data-prod-add="${product.id}" aria-label="${escapeHtml(t('client.more'))}">${icon('plus')}</button>
+                        </div>
+                    </div>`;
+            }).join('')}</div>`
+        : `<div class="inline-empty">${escapeHtml(t('client.noProducts'))} ${isAdmin() ? `<button type="button" class="link" data-goto-catalog="products">${escapeHtml(t('client.openCatalog'))}</button>` : ''}</div>`;
+
+    const optional = `<em>${escapeHtml(t('common.optional'))}</em>`;
+    const barberField = isAdmin()
+        ? `<select data-field="barber">
+                <option value="">${escapeHtml(t(draft.finished ? 'history.noBarber' : 'cashier.anyBarber'))}</option>
+                ${barbers.map(barber => `<option value="${barber.id}" ${String(barber.id) === selectedBarber ? 'selected' : ''}>${escapeHtml(barber.name)}${Number(barber.is_active) ? '' : ` (${escapeHtml(t('cashier.removedBarber'))})`}</option>`).join('')}
+           </select>`
+        : `<select data-field="barber" disabled>
+                ${barbers.filter(barber => isMine(barber.id)).map(barber => `<option value="${barber.id}" selected>${escapeHtml(barber.name)}</option>`).join('')}
+           </select>`;
+    const paymentSection = draft.finished ? `
+            <section class="form-section">
+                <h3 class="section-title">${icon('wallet')}${escapeHtml(t('pay.method'))}</h3>
+                <div class="segmented segmented-lg" data-finish-method>
+                    <button type="button" class="${draft.method === 'cash' ? 'active' : ''}" data-method="cash" aria-pressed="${draft.method === 'cash'}">${icon('cash')}${escapeHtml(t('pay.cash'))}</button>
+                    <button type="button" class="${draft.method === 'card' ? 'active' : ''}" data-method="card" aria-pressed="${draft.method === 'card'}">${icon('card')}${escapeHtml(t('pay.card'))}</button>
+                </div>
+            </section>` : '';
+    const body = `
+        <div class="client-form">
+            ${draft.finished ? `<p class="notice notice-unlocked">${icon('unlock')}<span>${escapeHtml(t('client.finishedNotice'))}</span></p>` : ''}
+            <section class="form-section">
+                <h3 class="section-title">${icon('user')}${escapeHtml(t('client.who'))}</h3>
+                <div class="grid-2">
+                    <label class="field"><span>${escapeHtml(t('client.name'))} ${optional}</span>
+                        <input type="text" data-field="name" maxlength="80" autocomplete="off" value="${escapeHtml(ticket?.customer_name || '')}">
+                    </label>
+                    <label class="field"><span>${escapeHtml(t('client.phone'))} ${optional}</span>
+                        <input type="tel" data-field="phone" maxlength="30" inputmode="tel" dir="ltr" autocomplete="off" value="${escapeHtml(ticket?.customer_phone || '')}">
+                    </label>
+                </div>
+                <div class="linked-row" data-linked></div>
+                <div class="suggestions" data-suggestions></div>
+            </section>
+            <section class="form-section">
+                <h3 class="section-title">${icon('calendar')}${escapeHtml(t('client.when'))}</h3>
+                <div class="grid-3">
+                    <label class="field"><span>${escapeHtml(t('client.barber'))}</span>
+                        ${barberField}
+                    </label>
+                    <label class="field"><span>${escapeHtml(t('client.date'))} ${optional}</span>
+                        <input type="date" data-field="date" value="${escapeHtml(dateValue)}">
+                    </label>
+                    <label class="field"><span>${escapeHtml(t('client.time'))} ${optional}</span>
+                        <input type="time" data-field="time" value="${escapeHtml(timeValue)}">
+                    </label>
+                </div>
+            </section>
+            ${paymentSection}
+            <section class="form-section" data-section="services">
+                <h3 class="section-title">${icon('scissors')}${escapeHtml(t('client.services'))} ${optional}</h3>
+                ${serviceChoices}
+            </section>
+            <section class="form-section" data-section="products">
+                <h3 class="section-title">${icon('bag')}${escapeHtml(t('client.products'))} ${optional}</h3>
+                ${productChoices}
+            </section>
+        </div>`;
+
+    const footer = `
+        <div class="foot-summary">
+            <span>${escapeHtml(t('client.services'))} <b data-sum="services"></b></span>
+            <span>${escapeHtml(t('client.products'))} <b data-sum="products"></b></span>
+            <span class="foot-total">${escapeHtml(t('client.total'))} <b data-sum="total"></b></span>
+        </div>
+        <div class="foot-buttons">
+            ${draft.finished
+                ? `<button type="button" class="btn btn-ghost-danger" data-finished-delete>${icon('trash')}<span>${escapeHtml(t('common.delete'))}</span></button>
+                   <button type="button" class="btn btn-ghost" data-finished-reopen>${icon('undo')}<span>${escapeHtml(t('cashier.undoPay'))}</span></button>
+                   <span class="spacer"></span>
+                   <button type="button" class="btn btn-ghost" data-modal-close>${escapeHtml(t('common.cancel'))}</button>
+                   <button type="button" class="btn btn-primary" data-client-save>${icon('check')}<span>${escapeHtml(t('client.saveChanges'))}</span></button>`
+                : draft.id
+                ? `<button type="button" class="btn btn-ghost-danger" data-client-remove>${icon('trash')}<span>${escapeHtml(t('client.remove'))}</span></button>
+                   <span class="spacer"></span>
+                   <button type="button" class="btn btn-ghost" data-modal-close>${escapeHtml(t('common.cancel'))}</button>
+                   <button type="button" class="btn btn-primary" data-client-save>${icon('check')}<span>${escapeHtml(t('client.saveChanges'))}</span></button>`
+                : `<button type="button" class="btn btn-ghost" data-modal-close>${escapeHtml(t('common.cancel'))}</button>
+                   <span class="spacer"></span>
+                   <button type="button" class="btn btn-outline" data-client-save="take">${icon('scissors')}<span>${escapeHtml(t('client.saveAndTake'))}</span></button>
+                   <button type="button" class="btn btn-primary" data-client-save>${icon('plus')}<span>${escapeHtml(t('client.addClient'))}</span></button>`}
+        </div>`;
+
+    const entry = openModal({
+        title: draft.finished ? t('client.editFinishedTitle') : draft.id ? t('client.editTitle') : t('client.newTitle'),
+        size: 'lg',
+        dismissible: false,
+        body,
+        footer,
+        className: 'client-modal'
+    });
+    const modal = entry.modal;
+    const field = name => modal.querySelector(`[data-field="${name}"]`);
+    const servicePrice = id => Number(services.find(service => Number(service.id) === id)?.price || 0);
+    const productPrice = id => Number(products.find(product => Number(product.id) === id)?.price || 0);
+
+    const updateSummary = () => {
+        const servicesTotal = sum([...draft.services.values()], item => item.price * item.quantity);
+        const productsTotal = sum([...draft.products.values()], item => item.price * item.quantity);
+        modal.querySelector('[data-sum="services"]').innerHTML = money(servicesTotal);
+        modal.querySelector('[data-sum="products"]').innerHTML = money(productsTotal);
+        modal.querySelector('[data-sum="total"]').innerHTML = money(servicesTotal + productsTotal);
+    };
+
+    const renderLinked = () => {
+        const container = modal.querySelector('[data-linked]');
+        if (!draft.customerId) {
+            container.innerHTML = '';
+            return;
+        }
+        const customer = customers.find(item => Number(item.id) === draft.customerId);
+        const label = customer ? (customer.name || customer.phone || t('cashier.walkIn')) : (ticket?.customer_name || ticket?.customer_phone || t('cashier.walkIn'));
+        container.innerHTML = `
+            <span class="linked-pill">${icon('user')}<span>${escapeHtml(t('client.linked', { name: label }))}</span>
+                <button type="button" data-unlink aria-label="${escapeHtml(t('client.unlink'))}" title="${escapeHtml(t('client.unlink'))}">${icon('x')}</button>
+            </span>`;
+    };
+
+    const renderSuggestions = () => {
+        const box = modal.querySelector('[data-suggestions]');
+        const name = field('name').value.trim().toLowerCase();
+        const phone = digits(field('phone').value);
+        if (draft.customerId || (name.length < 2 && phone.length < 3)) {
+            box.innerHTML = '';
+            return;
+        }
+        const matches = customers.filter(customer =>
+            (name.length >= 2 && String(customer.name || '').toLowerCase().includes(name))
+            || (phone.length >= 3 && digits(customer.phone).includes(phone))
+        ).slice(0, 4);
+        box.innerHTML = matches.length ? `
+            <span class="suggest-label">${escapeHtml(t('client.savedClients'))}</span>
+            ${matches.map(customer => `
+                <button type="button" class="suggest" data-pick-customer="${customer.id}">
+                    ${icon('user')}<span>${escapeHtml(customer.name || t('cashier.walkIn'))}</span>
+                    ${customer.phone ? `<bdi dir="ltr">${escapeHtml(customer.phone)}</bdi>` : ''}
+                </button>`).join('')}` : '';
+    };
+
+    const updateProductTile = id => {
+        const tile = modal.querySelector(`[data-prod="${id}"]`);
+        if (!tile) return;
+        const quantity = draft.products.get(id)?.quantity || 0;
+        tile.classList.toggle('selected', quantity > 0);
+        tile.querySelector('[data-qty]').textContent = String(quantity);
+    };
+
+    const filterProducts = () => {
+        const search = (modal.querySelector('[data-product-search]')?.value || '').trim().toLowerCase();
+        const category = modal.querySelector('[data-product-filter].active')?.dataset.productFilter || 'all';
+        modal.querySelectorAll('[data-prod]').forEach(tile => {
+            const matchesSearch = !search || tile.dataset.name.includes(search);
+            const matchesCategory = category === 'all' || tile.dataset.cat === category;
+            tile.hidden = !(matchesSearch && matchesCategory);
+        });
+    };
+
+    let saving = false;
+    const setSaving = value => {
+        saving = value;
+        modal.querySelectorAll('[data-client-save], [data-client-remove], [data-finished-delete], [data-finished-reopen]').forEach(button => {
+            button.disabled = value;
+        });
+    };
+
+    const save = async takeNow => {
+        if (saving) return;
+        const name = field('name').value.trim();
+        const phone = field('phone').value.trim();
+        const date = isValidDate(field('date').value) ? field('date').value : (ticket?.date || state.boardDate);
+        const time = isValidTime(field('time').value) ? field('time').value.slice(0, 5) : '';
+        const barberValue = field('barber').value;
+        const chosenBarber = isAdmin() ? (barberValue ? Number(barberValue) : null) : myBarberId();
+        if (takeNow && !chosenBarber) {
+            toast(t('client.chooseBarberToTake'), 'error');
+            field('barber').focus();
+            return;
+        }
+
+        const items = [
+            ...[...draft.services.entries()].map(([id, item]) => ({ type: 'service', id, ...item })),
+            ...[...draft.products.entries()].map(([id, item]) => ({ type: 'product', id, ...item }))
+        ];
+        const total = sum(items, item => item.price * item.quantity);
+
+        setSaving(true);
+        try {
+            let current = null;
+            if (draft.id) {
+                current = await loadTicket(draft.id);
+                const stillEditable = current && canManageTicket(current)
+                    && (draft.finished ? current.status === 'completed' : OPEN_STATUSES.includes(current.status));
+                if (!stillEditable) {
+                    toast(t('client.notEditable'), 'error');
+                    entry.close();
+                    await renderPage({ keepScroll: true });
+                    return;
+                }
+            }
+
+            const statements = [];
+            let customerRef = null;
+            if (draft.customerId) {
+                if (name || phone) {
+                    statements.push({
+                        query: 'UPDATE customers SET name = ?, phone = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                        params: [name || null, phone || null, draft.customerId]
+                    });
+                    customerRef = draft.customerId;
+                }
+            } else if (name || phone) {
+                const phoneDigits = digits(phone);
+                const match = phoneDigits
+                    ? customers.find(customer => digits(customer.phone) === phoneDigits)
+                    : null;
+                if (match) {
+                    customerRef = Number(match.id);
+                    if (name && !String(match.name || '').trim()) {
+                        statements.push({
+                            query: 'UPDATE customers SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                            params: [name, customerRef]
+                        });
+                    }
+                } else {
+                    statements.push({
+                        query: 'INSERT INTO customers (name, phone, total_visits, total_spent) VALUES (?, ?, 0, 0)',
+                        params: [name || null, phone || null]
+                    });
+                    customerRef = { lastIDFrom: statements.length - 1 };
+                }
+            }
+
+            if (draft.finished) {
+                const payments = await queryOne('SELECT COUNT(*) AS count FROM payments WHERE order_id = ?', [draft.id]);
+                finishedEditStatements(statements, {
+                    current,
+                    customerRef,
+                    items,
+                    total,
+                    date,
+                    time,
+                    barberId: chosenBarber,
+                    method: draft.method,
+                    hasPayment: Number(payments?.count || 0) > 0
+                });
+            } else {
+                let orderRef;
+                if (draft.id) {
+                    const status = chosenBarber ? draft.status : 'waiting';
+                    statements.push({
+                        query: 'UPDATE orders SET customer_id = ?, date = ?, time = ?, total = ?, barber_id = ?, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                        params: [customerRef, date, time, total, chosenBarber, status, draft.id]
+                    });
+                    statements.push({ query: 'DELETE FROM order_items WHERE order_id = ?', params: [draft.id] });
+                    orderRef = draft.id;
+                } else {
+                    statements.push({
+                        query: 'INSERT INTO orders (customer_id, date, time, total, discount, status, payment_method, barber_id) VALUES (?, ?, ?, ?, 0, ?, NULL, ?)',
+                        params: [customerRef, date, time, total, takeNow ? 'in-service' : 'waiting', chosenBarber]
+                    });
+                    orderRef = { lastIDFrom: statements.length - 1 };
+                }
+                items.forEach(item => {
+                    statements.push({
+                        query: 'INSERT INTO order_items (order_id, item_type, item_id, quantity, price) VALUES (?, ?, ?, ?, ?)',
+                        params: [orderRef, item.type, item.id, item.quantity, item.price]
+                    });
                 });
             }
+
+            await runStatements(statements);
+            entry.close();
+            if (!draft.finished && date !== state.boardDate) state.boardDate = date;
+            toast(draft.finished ? t('toast.finishedSaved')
+                : draft.id ? t('toast.clientSaved') : (takeNow ? t('toast.clientTaken') : t('toast.clientAdded')));
+            if (['cashier', 'history'].includes(state.page)) await renderPage({ keepScroll: true });
+        } catch (error) {
+            handleError(error);
+        } finally {
+            setSaving(false);
         }
+    };
 
-        const receivedAmount = paymentMethod === 'cash' ? cashReceived : total;
-        const changeAmount = paymentMethod === 'cash' ? Math.max(receivedAmount - total, 0) : 0;
-
-        statements.push({
-            query: 'INSERT INTO payments (order_id, amount, method, received_amount, change_amount) VALUES (?, ?, ?, ?, ?)',
-            params: [{ lastIDFrom: 0 }, total, paymentMethod, receivedAmount, changeAmount]
-        });
-        if (selectedCashierCustomerId) {
-            statements.push({
-                query: 'UPDATE customers SET total_visits = COALESCE(total_visits, 0) + 1, total_spent = COALESCE(total_spent, 0) + ? WHERE id = ?',
-                params: [total, selectedCashierCustomerId]
+    const removeFinished = async () => {
+        const ok = await confirmDialog(t('confirm.deleteFinished'), { okLabel: t('common.delete'), danger: true });
+        if (!ok) return;
+        setSaving(true);
+        try {
+            const current = await loadTicket(draft.id);
+            if (!current || current.status !== 'completed' || !canManageTicket(current)) {
+                toast(t('client.notEditable'), 'error');
+                entry.close();
+                await renderPage({ keepScroll: true });
+                return;
+            }
+            const statements = [];
+            current.items.filter(item => item.item_type === 'product').forEach(item => {
+                statements.push({
+                    query: 'UPDATE products SET stock = COALESCE(stock, 0) + ? WHERE id = ?',
+                    params: [Number(item.quantity || 1), Number(item.item_id)]
+                });
             });
+            if (current.customer_id) {
+                statements.push({
+                    query: `UPDATE customers SET total_visits = MAX(COALESCE(total_visits, 0) - 1, 0),
+                            total_spent = MAX(COALESCE(total_spent, 0) - ?, 0), updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+                    params: [Number(current.total || 0), Number(current.customer_id)]
+                });
+            }
+            statements.push(
+                { query: 'DELETE FROM payments WHERE order_id = ?', params: [draft.id] },
+                { query: 'DELETE FROM order_items WHERE order_id = ?', params: [draft.id] },
+                { query: "DELETE FROM orders WHERE id = ? AND COALESCE(status, 'completed') = 'completed'", params: [draft.id] }
+            );
+            await runStatements(statements);
+            entry.close();
+            toast(t('toast.finishedDeleted'));
+            await renderPage({ keepScroll: true });
+        } catch (error) {
+            handleError(error);
+        } finally {
+            setSaving(false);
         }
-        if (selectedCashierAppointmentId) {
-            statements.push({
-                query: "UPDATE appointments SET status = 'completed' WHERE id = ? AND status <> 'cancelled'",
-                params: [selectedCashierAppointmentId]
-            });
-        }
-        await api.runTransaction(statements);
+    };
 
-        currentOrder = [];
-        await loadCashier();
-        if (document.getElementById('schedule-date')) await loadAppointmentsForSelectedDate();
-        alert('Order completed successfully.');
-    } catch (error) {
-        console.error('Order failed:', error);
-        alert('Could not complete order.');
+    const reopenFinished = async () => {
+        setSaving(true);
+        try {
+            if (await undoPayment(draft.id)) entry.close();
+        } catch (error) {
+            handleError(error);
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const remove = async () => {
+        const ok = await confirmDialog(t('confirm.removeClient'), { okLabel: t('client.remove'), danger: true });
+        if (!ok) return;
+        setSaving(true);
+        try {
+            await runStatements([
+                { query: 'DELETE FROM order_items WHERE order_id = ?', params: [draft.id] },
+                { query: 'DELETE FROM payments WHERE order_id = ?', params: [draft.id] },
+                { query: "DELETE FROM orders WHERE id = ? AND status IN ('waiting', 'in-service')", params: [draft.id] }
+            ]);
+            entry.close();
+            toast(t('toast.clientRemoved'));
+            await renderPage({ keepScroll: true });
+        } catch (error) {
+            handleError(error);
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    modal.addEventListener('click', event => {
+        const serviceButton = event.target.closest('[data-svc]');
+        if (serviceButton) {
+            const id = Number(serviceButton.dataset.svc);
+            if (draft.services.has(id)) draft.services.delete(id);
+            else draft.services.set(id, { price: servicePrice(id), quantity: 1 });
+            const selected = draft.services.has(id);
+            serviceButton.classList.toggle('selected', selected);
+            serviceButton.setAttribute('aria-pressed', String(selected));
+            updateSummary();
+            return;
+        }
+        const addButton = event.target.closest('[data-prod-add]');
+        if (addButton) {
+            const id = Number(addButton.dataset.prodAdd);
+            const current = draft.products.get(id);
+            draft.products.set(id, { price: current ? current.price : productPrice(id), quantity: (current?.quantity || 0) + 1 });
+            updateProductTile(id);
+            updateSummary();
+            return;
+        }
+        const minusButton = event.target.closest('[data-prod-minus]');
+        if (minusButton) {
+            const id = Number(minusButton.dataset.prodMinus);
+            const current = draft.products.get(id);
+            if (current) {
+                if (current.quantity <= 1) draft.products.delete(id);
+                else current.quantity -= 1;
+            }
+            updateProductTile(id);
+            updateSummary();
+            return;
+        }
+        const filterButton = event.target.closest('[data-product-filter]');
+        if (filterButton) {
+            modal.querySelectorAll('[data-product-filter]').forEach(button => button.classList.toggle('active', button === filterButton));
+            filterProducts();
+            return;
+        }
+        const suggestion = event.target.closest('[data-pick-customer]');
+        if (suggestion) {
+            const customer = customers.find(item => Number(item.id) === Number(suggestion.dataset.pickCustomer));
+            if (customer) {
+                draft.customerId = Number(customer.id);
+                field('name').value = customer.name || '';
+                field('phone').value = customer.phone || '';
+                renderLinked();
+                renderSuggestions();
+            }
+            return;
+        }
+        if (event.target.closest('[data-unlink]')) {
+            draft.customerId = null;
+            field('name').value = '';
+            field('phone').value = '';
+            renderLinked();
+            renderSuggestions();
+            field('name').focus();
+            return;
+        }
+        const catalogLink = event.target.closest('[data-goto-catalog]');
+        if (catalogLink) {
+            state.catalogTab = catalogLink.dataset.gotoCatalog;
+            entry.close();
+            go('catalog');
+            return;
+        }
+        const methodButton = event.target.closest('[data-finish-method] [data-method]');
+        if (methodButton) {
+            draft.method = methodButton.dataset.method === 'card' ? 'card' : 'cash';
+            modal.querySelectorAll('[data-finish-method] [data-method]').forEach(button => {
+                button.classList.toggle('active', button === methodButton);
+                button.setAttribute('aria-pressed', String(button === methodButton));
+            });
+            return;
+        }
+        const saveButton = event.target.closest('[data-client-save]');
+        if (saveButton) {
+            save(saveButton.dataset.clientSave === 'take');
+            return;
+        }
+        if (event.target.closest('[data-client-remove]')) remove();
+        if (event.target.closest('[data-finished-delete]')) removeFinished();
+        if (event.target.closest('[data-finished-reopen]')) reopenFinished();
+    });
+
+    modal.addEventListener('input', event => {
+        if (event.target.matches('[data-field="name"], [data-field="phone"]')) renderSuggestions();
+        if (event.target.matches('[data-product-search]')) filterProducts();
+    });
+
+    renderLinked();
+    updateSummary();
+    if (focus === 'services' || focus === 'products') {
+        setTimeout(() => {
+            modal.querySelector(`[data-section="${focus}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        }, 80);
     }
 }
 
-async function loadSalesHistory() {
-    const content = document.getElementById('sales-history-content');
-    try {
-        const [barberStats, orders] = await Promise.all([
-            api.dbQuery(
-                `SELECT b.id AS barber_id, COALESCE(b.name, 'Unassigned') AS barber_name,
-                        COUNT(o.id) AS clients_finished, COALESCE(SUM(o.total), 0) AS earned
-                 FROM orders o
-                 LEFT JOIN barbers b ON b.id = o.barber_id
-                 WHERE COALESCE(o.status, 'completed') != 'cancelled'
-                 GROUP BY b.id, b.name
-                 ORDER BY barber_name`
-            ),
-            api.dbQuery(
-            `SELECT o.id, o.date, o.time, o.total, o.payment_method,
-                    o.barber_id, COALESCE(b.name, 'Unassigned') AS barber_name,
-                    COALESCE(NULLIF(c.name, ''), 'Walk-in') AS customer_name,
-                    GROUP_CONCAT(oi.quantity || ' x ' || COALESCE(s.name, p.name, 'Item unavailable'), ', ') AS items
-             FROM orders o
-             LEFT JOIN barbers b ON b.id = o.barber_id
-             LEFT JOIN customers c ON c.id = o.customer_id
-             LEFT JOIN order_items oi ON oi.order_id = o.id
-             LEFT JOIN services s ON oi.item_type = 'service' AND s.id = oi.item_id
-             LEFT JOIN products p ON oi.item_type = 'product' AND p.id = oi.item_id
-             WHERE COALESCE(o.status, 'completed') != 'cancelled'
-             GROUP BY o.id
-             ORDER BY o.date DESC, o.time DESC
-             LIMIT 200`
-            )
-        ]);
+// Changes to a paid client: its items, product stock (only the difference), customer totals and payment.
+function finishedEditStatements(statements, { current, customerRef, items, total, date, time, barberId, method, hasPayment }) {
+    const id = current.id;
+    const quantities = list => {
+        const map = new Map();
+        list.forEach(item => map.set(item.id, (map.get(item.id) || 0) + item.quantity));
+        return map;
+    };
+    const before = quantities(current.items
+        .filter(item => item.item_type === 'product')
+        .map(item => ({ id: Number(item.item_id), quantity: Number(item.quantity || 1) })));
+    const after = quantities(items.filter(item => item.type === 'product'));
+    new Set([...before.keys(), ...after.keys()]).forEach(productId => {
+        const change = (after.get(productId) || 0) - (before.get(productId) || 0);
+        if (change > 0) {
+            statements.push({ query: 'UPDATE products SET stock = MAX(COALESCE(stock, 0) - ?, 0) WHERE id = ?', params: [change, productId] });
+        } else if (change < 0) {
+            statements.push({ query: 'UPDATE products SET stock = COALESCE(stock, 0) + ? WHERE id = ?', params: [-change, productId] });
+        }
+    });
 
-        const ordersByBarber = new Map();
-        orders.forEach(order => {
-            const key = order.barber_id == null ? 'unassigned' : String(order.barber_id);
-            const group = ordersByBarber.get(key) || [];
-            group.push(order);
-            ordersByBarber.set(key, group);
+    const oldCustomer = current.customer_id ? Number(current.customer_id) : null;
+    const oldTotal = Number(current.total || 0);
+    if (oldCustomer && customerRef === oldCustomer) {
+        if (total !== oldTotal) {
+            statements.push({
+                query: 'UPDATE customers SET total_spent = MAX(COALESCE(total_spent, 0) + ?, 0), updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                params: [total - oldTotal, oldCustomer]
+            });
+        }
+    } else {
+        if (oldCustomer) {
+            statements.push({
+                query: `UPDATE customers SET total_visits = MAX(COALESCE(total_visits, 0) - 1, 0),
+                        total_spent = MAX(COALESCE(total_spent, 0) - ?, 0), updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+                params: [oldTotal, oldCustomer]
+            });
+        }
+        if (customerRef != null) {
+            statements.push({
+                query: `UPDATE customers SET total_visits = COALESCE(total_visits, 0) + 1,
+                        total_spent = COALESCE(total_spent, 0) + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+                params: [total, customerRef]
+            });
+        }
+    }
+
+    statements.push({
+        query: `UPDATE orders SET customer_id = ?, date = ?, time = ?, total = ?, barber_id = ?, payment_method = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND COALESCE(status, 'completed') = 'completed'`,
+        params: [customerRef, date, time, total, barberId, method, id]
+    });
+    statements.push({ query: 'DELETE FROM order_items WHERE order_id = ?', params: [id] });
+    items.forEach(item => {
+        statements.push({
+            query: 'INSERT INTO order_items (order_id, item_type, item_id, quantity, price) VALUES (?, ?, ?, ?, ?)',
+            params: [id, item.type, item.id, item.quantity, item.price]
         });
+    });
 
-        content.innerHTML = barberStats.length ? `
-            <div class="barber-history-list">
-                ${barberStats.map(barber => {
-                    const key = barber.barber_id == null ? 'unassigned' : String(barber.barber_id);
-                    const barberOrders = ordersByBarber.get(key) || [];
-                    const initials = barber.barber_name.trim().slice(0, 1).toUpperCase();
+    if (!hasPayment) {
+        statements.push({
+            query: 'INSERT INTO payments (order_id, amount, method, received_amount, change_amount) VALUES (?, ?, ?, ?, 0)',
+            params: [id, total, method, total]
+        });
+    } else if (method === 'card') {
+        statements.push({
+            query: "UPDATE payments SET amount = ?, method = 'card', received_amount = ?, change_amount = 0 WHERE order_id = ?",
+            params: [total, total, id]
+        });
+    } else {
+        // Keep the cash received when it still covers the new total; otherwise it equals the total.
+        statements.push({
+            query: `UPDATE payments SET amount = ?, method = 'cash',
+                    change_amount = CASE WHEN received_amount IS NOT NULL AND received_amount >= ? THEN received_amount - ? ELSE 0 END,
+                    received_amount = CASE WHEN received_amount IS NOT NULL AND received_amount >= ? THEN received_amount ELSE ? END
+                    WHERE order_id = ?`,
+            params: [total, total, total, total, total, id]
+        });
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Finish & pay                                                        */
+/* ------------------------------------------------------------------ */
+
+async function openPayModal(id) {
+    const ticket = await loadTicket(id);
+    if (!ticket || !OPEN_STATUSES.includes(ticket.status)) {
+        await renderPage({ keepScroll: true });
+        return;
+    }
+    if (!canManageTicket(ticket)) {
+        denyNotYours();
+        await renderPage({ keepScroll: true });
+        return;
+    }
+    const total = sum(ticket.items, item => Number(item.price) * Number(item.quantity || 1));
+    const name = String(ticket.customer_name || '').trim() || t('cashier.walkIn');
+
+    const body = `
+        <div class="pay">
+            <div class="pay-who">
+                <span class="avatar">${escapeHtml(initials(name))}</span>
+                <div><strong>${escapeHtml(name)}</strong><span>${escapeHtml(ticket.barber_name || t('cashier.anyBarber'))}</span></div>
+            </div>
+            ${ticket.items.length ? `
+                <ul class="pay-items">
+                    ${ticket.items.map(item => `
+                        <li>
+                            <span class="pay-item-icon">${icon(item.item_type === 'product' ? 'bag' : 'scissors')}</span>
+                            <span class="pay-item-name">${escapeHtml(item.name || t('client.removedItem'))}${Number(item.quantity) > 1 ? ` <b>×${Number(item.quantity)}</b>` : ''}</span>
+                            <span>${money(Number(item.price) * Number(item.quantity || 1))}</span>
+                        </li>`).join('')}
+                </ul>` : `<p class="inline-empty">${escapeHtml(t('pay.noItems'))}</p>`}
+            <div class="pay-edit-row">
+                <button type="button" class="btn btn-ghost btn-sm" data-pay-edit>${icon('pencil')}<span>${escapeHtml(t('pay.editItems'))}</span></button>
+            </div>
+            <div class="pay-total"><span>${escapeHtml(t('client.total'))}</span><strong>${money(total)}</strong></div>
+            <div class="field">
+                <span>${escapeHtml(t('pay.method'))}</span>
+                <div class="segmented segmented-lg" data-pay-method>
+                    <button type="button" class="active" data-method="cash" aria-pressed="true">${icon('cash')}${escapeHtml(t('pay.cash'))}</button>
+                    <button type="button" data-method="card" aria-pressed="false">${icon('card')}${escapeHtml(t('pay.card'))}</button>
+                </div>
+            </div>
+            <div class="grid-2" data-cash-only>
+                <label class="field"><span>${escapeHtml(t('pay.received'))} <em>${escapeHtml(t('common.optional'))}</em></span>
+                    <input type="number" min="0" step="any" inputmode="decimal" data-received>
+                </label>
+                <div class="pay-change"><span>${escapeHtml(t('pay.change'))}</span><strong data-change>${money(0)}</strong></div>
+            </div>
+        </div>`;
+
+    const entry = openModal({
+        title: t('pay.title'),
+        size: 'md',
+        body,
+        footer: `
+            <span class="spacer"></span>
+            <button type="button" class="btn btn-ghost" data-modal-close>${escapeHtml(t('common.cancel'))}</button>
+            <button type="button" class="btn btn-primary btn-lg" data-pay-confirm>${icon('check')}<span>${escapeHtml(t('pay.confirm'))}</span></button>`
+    });
+    const modal = entry.modal;
+    let method = 'cash';
+    const receivedInput = modal.querySelector('[data-received]');
+
+    const updateChange = () => {
+        const received = Number(receivedInput.value || 0);
+        const change = modal.querySelector('[data-change]');
+        const changeBox = modal.querySelector('.pay-change');
+        if (receivedInput.value !== '' && received < total) {
+            change.innerHTML = `${escapeHtml(t('pay.short'))} ${money(total - received)}`;
+            changeBox.classList.add('short');
+        } else {
+            change.innerHTML = money(Math.max(received - total, 0));
+            changeBox.classList.remove('short');
+        }
+    };
+
+    modal.addEventListener('click', async event => {
+        const methodButton = event.target.closest('[data-method]');
+        if (methodButton) {
+            method = methodButton.dataset.method;
+            modal.querySelectorAll('[data-method]').forEach(button => {
+                button.classList.toggle('active', button === methodButton);
+                button.setAttribute('aria-pressed', String(button === methodButton));
+            });
+            modal.querySelector('[data-cash-only]').hidden = method !== 'cash';
+            return;
+        }
+        if (event.target.closest('[data-pay-edit]')) {
+            entry.close();
+            await openClientModal({ ticketId: id });
+            return;
+        }
+        const confirmButton = event.target.closest('[data-pay-confirm]');
+        if (!confirmButton || confirmButton.disabled) return;
+        confirmButton.disabled = true;
+        try {
+            const current = await queryOne("SELECT COALESCE(status, 'completed') AS status FROM orders WHERE id = ?", [id]);
+            if (!current || !OPEN_STATUSES.includes(current.status)) {
+                entry.close();
+                await renderPage({ keepScroll: true });
+                return;
+            }
+            const received = method === 'cash' && receivedInput.value !== '' ? Number(receivedInput.value) : total;
+            const change = method === 'cash' ? Math.max(received - total, 0) : 0;
+            const statements = [
+                {
+                    query: "UPDATE orders SET status = 'completed', payment_method = ?, total = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    params: [method, total, id]
+                },
+                {
+                    query: 'INSERT INTO payments (order_id, amount, method, received_amount, change_amount) VALUES (?, ?, ?, ?, ?)',
+                    params: [id, total, method, received, change]
+                }
+            ];
+            ticket.items.filter(item => item.item_type === 'product').forEach(item => {
+                statements.push({
+                    query: 'UPDATE products SET stock = MAX(COALESCE(stock, 0) - ?, 0) WHERE id = ?',
+                    params: [Number(item.quantity || 1), Number(item.item_id)]
+                });
+            });
+            if (ticket.customer_id) {
+                statements.push({
+                    query: `UPDATE customers SET total_visits = COALESCE(total_visits, 0) + 1,
+                            total_spent = COALESCE(total_spent, 0) + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+                    params: [total, Number(ticket.customer_id)]
+                });
+            }
+            await runStatements(statements);
+            entry.close();
+            toast(t('toast.paid', { amount: moneyText(total) }));
+            await renderPage({ keepScroll: true });
+        } catch (error) {
+            confirmButton.disabled = false;
+            handleError(error);
+        }
+    });
+    receivedInput.addEventListener('input', updateChange);
+    updateChange();
+}
+
+/* ------------------------------------------------------------------ */
+/* Dashboard                                                           */
+/* ------------------------------------------------------------------ */
+
+async function renderDashboard() {
+    const { start, end } = periodRange(state.dashPeriod);
+    const completed = "COALESCE(o.status, 'completed') = 'completed' AND o.date BETWEEN ? AND ?";
+    const [summaryRows, openRows, splitRows, barberRows, topProducts, topServices] = await queryMany([
+        { query: `SELECT COUNT(*) AS clients, COALESCE(SUM(o.total), 0) AS money FROM orders o WHERE ${completed}`, params: [start, end] },
+        { query: "SELECT COUNT(*) AS total FROM orders o WHERE o.status IN ('waiting', 'in-service') AND o.date BETWEEN ? AND ?", params: [start, end] },
+        {
+            query: `SELECT oi.item_type, COALESCE(SUM(oi.price * oi.quantity), 0) AS money, COALESCE(SUM(oi.quantity), 0) AS quantity
+                    FROM order_items oi JOIN orders o ON o.id = oi.order_id WHERE ${completed} GROUP BY oi.item_type`,
+            params: [start, end]
+        },
+        {
+            query: `SELECT o.barber_id, b.name AS barber_name, COUNT(*) AS clients, COALESCE(SUM(o.total), 0) AS money
+                    FROM orders o LEFT JOIN barbers b ON b.id = o.barber_id WHERE ${completed}
+                    GROUP BY o.barber_id ORDER BY money DESC`,
+            params: [start, end]
+        },
+        {
+            query: `SELECT oi.item_id, p.name, p.image_data, SUM(oi.quantity) AS quantity, SUM(oi.price * oi.quantity) AS money
+                    FROM order_items oi JOIN orders o ON o.id = oi.order_id LEFT JOIN products p ON p.id = oi.item_id
+                    WHERE oi.item_type = 'product' AND ${completed}
+                    GROUP BY oi.item_id ORDER BY quantity DESC, money DESC LIMIT 5`,
+            params: [start, end]
+        },
+        {
+            query: `SELECT oi.item_id, s.name, SUM(oi.quantity) AS quantity, SUM(oi.price * oi.quantity) AS money
+                    FROM order_items oi JOIN orders o ON o.id = oi.order_id LEFT JOIN services s ON s.id = oi.item_id
+                    WHERE oi.item_type = 'service' AND ${completed}
+                    GROUP BY oi.item_id ORDER BY quantity DESC, money DESC LIMIT 5`,
+            params: [start, end]
+        }
+    ]);
+
+    const clients = Number(summaryRows[0]?.clients || 0);
+    const total = Number(summaryRows[0]?.money || 0);
+    const open = Number(openRows[0]?.total || 0);
+    const servicesRow = splitRows.find(row => row.item_type === 'service') || {};
+    const productsRow = splitRows.find(row => row.item_type === 'product') || {};
+    const servicesMoney = Number(servicesRow.money || 0);
+    const productsMoney = Number(productsRow.money || 0);
+    const splitTotal = servicesMoney + productsMoney;
+    const share = value => (splitTotal ? Math.round((value / splitTotal) * 100) : 0);
+
+    const actions = segmented(periodOptions(), state.dashPeriod, 'dash-period', t('dash.period'));
+
+    const kpis = `
+        <div class="kpis">
+            <article class="kpi">
+                <div class="kpi-label">${icon('users')}<span>${escapeHtml(t('dash.clientsDone'))}</span></div>
+                <div class="kpi-value">${escapeHtml(I18N.formatNumber(clients))}</div>
+                <div class="kpi-sub">${escapeHtml(t('dash.stillWaiting', { n: open }))}</div>
+            </article>
+            <article class="kpi kpi-hero">
+                <div class="kpi-label">${icon('wallet')}<span>${escapeHtml(t('dash.totalMoney'))}</span></div>
+                <div class="kpi-value">${money(total)}</div>
+                <div class="kpi-sub">${escapeHtml(t('dash.totalMoneySub'))}</div>
+            </article>
+            <article class="kpi">
+                <div class="kpi-label"><span class="swatch swatch-services"></span><span>${escapeHtml(t('dash.servicesMoney'))}</span></div>
+                <div class="kpi-value">${money(servicesMoney)}</div>
+                <div class="kpi-sub">${escapeHtml(t('dash.servicesSub', { n: Number(servicesRow.quantity || 0) }))}</div>
+            </article>
+            <article class="kpi">
+                <div class="kpi-label"><span class="swatch swatch-products"></span><span>${escapeHtml(t('dash.productsMoney'))}</span></div>
+                <div class="kpi-value">${money(productsMoney)}</div>
+                <div class="kpi-sub">${escapeHtml(t('dash.productsSub', { n: Number(productsRow.quantity || 0) }))}</div>
+            </article>
+        </div>`;
+
+    const splitCard = `
+        <article class="card">
+            <h3 class="card-title">${escapeHtml(t('dash.split'))}</h3>
+            ${splitTotal ? `
+                <div class="segbar" role="img" aria-label="${escapeHtml(`${t('client.services')} ${share(servicesMoney)}%, ${t('client.products')} ${share(productsMoney)}%`)}">
+                    ${servicesMoney ? `<div class="seg seg-services" style="width:${(servicesMoney / splitTotal) * 100}%" title="${escapeHtml(`${t('client.services')}: ${moneyText(servicesMoney)} (${share(servicesMoney)}%)`)}">${share(servicesMoney) >= 12 ? `<span>${share(servicesMoney)}%</span>` : ''}</div>` : ''}
+                    ${productsMoney ? `<div class="seg seg-products" style="width:${(productsMoney / splitTotal) * 100}%" title="${escapeHtml(`${t('client.products')}: ${moneyText(productsMoney)} (${share(productsMoney)}%)`)}">${share(productsMoney) >= 12 ? `<span>${share(productsMoney)}%</span>` : ''}</div>` : ''}
+                </div>
+                <ul class="legend">
+                    <li><span class="swatch swatch-services"></span><span>${escapeHtml(t('client.services'))}</span></li>
+                    <li><span class="swatch swatch-products"></span><span>${escapeHtml(t('client.products'))}</span></li>
+                </ul>` : `<p class="card-empty">${escapeHtml(t('dash.noData'))}</p>`}
+        </article>`;
+
+    const maxBarber = Math.max(...barberRows.map(row => Number(row.money || 0)), 0);
+    const barberCard = `
+        <article class="card">
+            <h3 class="card-title">${escapeHtml(t('dash.byBarber'))}</h3>
+            ${barberRows.length ? `
+                <div class="hbars">
+                    ${barberRows.map(row => {
+                        const value = Number(row.money || 0);
+                        const width = maxBarber ? Math.max((value / maxBarber) * 100, value ? 2 : 0) : 0;
+                        const name = row.barber_id == null ? t('history.noBarber') : (row.barber_name || t('history.noBarber'));
+                        return `
+                            <div class="hbar-row" title="${escapeHtml(`${name}: ${moneyText(value)} · ${t('dash.clientsCount', { n: Number(row.clients) })}`)}">
+                                <span class="hbar-name">${escapeHtml(name)}</span>
+                                <div class="hbar-track"><div class="hbar" style="width:${width}%"></div></div>
+                                <span class="hbar-value">${money(value)}<span class="hbar-sub">${escapeHtml(t('dash.clientsCount', { n: Number(row.clients) }))}</span></span>
+                            </div>`;
+                    }).join('')}
+                </div>` : `<p class="card-empty">${escapeHtml(t('dash.noData'))}</p>`}
+        </article>`;
+
+    const rankList = (rows, kind) => rows.length ? `
+        <ol class="rank-list">
+            ${rows.map((row, index) => {
+                const image = kind === 'product' ? safeImage(row.image_data) : '';
+                return `
+                    <li>
+                        <span class="rank-num">${index + 1}</span>
+                        <span class="rank-thumb">${image ? `<img src="${escapeHtml(image)}" alt="">` : icon(kind === 'product' ? 'package' : 'scissors')}</span>
+                        <span class="rank-name">${escapeHtml(row.name || t('client.removedItem'))}<small>${escapeHtml(t('dash.timesSold', { n: Number(row.quantity || 0) }))}</small></span>
+                        <span class="rank-value">${money(row.money)}</span>
+                    </li>`;
+            }).join('')}
+        </ol>` : `<p class="card-empty">${escapeHtml(t('dash.noData'))}</p>`;
+
+    const body = `
+        ${kpis}
+        <div class="dash-grid">
+            ${splitCard}
+            ${barberCard}
+            <article class="card">
+                <h3 class="card-title">${escapeHtml(t('dash.topServices'))}</h3>
+                ${rankList(topServices, 'service')}
+            </article>
+            <article class="card">
+                <h3 class="card-title">${escapeHtml(t('dash.topProducts'))}</h3>
+                ${rankList(topProducts, 'product')}
+            </article>
+        </div>`;
+
+    return { actions, body };
+}
+
+/* ------------------------------------------------------------------ */
+/* History                                                             */
+/* ------------------------------------------------------------------ */
+
+async function renderHistory() {
+    const period = state.historyPeriod;
+    const { start, end } = periodRange(period, state.historyDay);
+    // A barber sees only their own column.
+    const own = !isAdmin();
+    const where = `COALESCE(o.status, 'completed') = 'completed' AND o.date BETWEEN ? AND ?${own ? ' AND o.barber_id = ?' : ''}`;
+    const params = own ? [start, end, myBarberId()] : [start, end];
+    const limit = 3000;
+    const [allBarbers, ticketRows, itemRows] = await queryMany([
+        { query: 'SELECT id, name, is_active FROM barbers ORDER BY id' },
+        {
+            query: `SELECT ${TICKET_COLUMNS} FROM orders o LEFT JOIN customers c ON c.id = o.customer_id
+                    WHERE ${where} ORDER BY o.date DESC, o.time DESC, o.id DESC LIMIT ${limit}`,
+            params
+        },
+        {
+            query: `SELECT ${ITEM_COLUMNS} FROM order_items oi JOIN orders o ON o.id = oi.order_id ${ITEM_JOINS}
+                    WHERE ${where} ORDER BY oi.id`,
+            params
+        }
+    ]);
+    const barbers = own ? allBarbers.filter(barber => isMine(barber.id)) : allBarbers;
+    const tickets = buildTickets(ticketRows, itemRows.map(item => ({ ...item, image_data: null })));
+    const multiDay = start !== end;
+
+    const byKey = new Map();
+    tickets.forEach(ticket => {
+        const key = ticket.barber_id == null ? 'none' : `b${ticket.barber_id}`;
+        const list = byKey.get(key) || [];
+        list.push(ticket);
+        byKey.set(key, list);
+    });
+
+    const knownBarbers = new Set(barbers.map(barber => `b${barber.id}`));
+    const columns = [];
+    barbers.forEach(barber => {
+        const key = `b${barber.id}`;
+        const list = byKey.get(key) || [];
+        if (Number(barber.is_active) || list.length) columns.push({ key, name: barber.name, removed: !Number(barber.is_active), tickets: list });
+    });
+    const orphaned = [...byKey.entries()].filter(([key]) => key === 'none' || !knownBarbers.has(key)).flatMap(([, list]) => list);
+    if (orphaned.length) columns.push({ key: 'none', name: t('history.noBarber'), noBarber: true, tickets: orphaned });
+
+    const totalMoney = sum(tickets, ticket => ticket.total);
+    const actions = `
+        ${segmented(periodOptions(), period, 'history-period', t('dash.period'))}
+        <label class="date-pill date-pill-sm ${period === 'day' ? 'active' : ''}">
+            ${icon('calendar')}<span>${escapeHtml(t('history.pickDay'))}</span>
+            <input type="date" value="${escapeHtml(state.historyDay)}" data-date-input="history" aria-label="${escapeHtml(t('history.pickDay'))}">
+        </label>
+        <button type="button" class="btn btn-ghost btn-sm" data-action="print">${icon('printer')}<span>${escapeHtml(t('history.print'))}</span></button>
+        ${editUnlocked() ? `<button type="button" class="btn btn-sm unlock-pill" data-action="lock-editing" title="${escapeHtml(t('history.lockNow'))}">${icon('unlock')}<span>${escapeHtml(t('history.unlocked'))}</span><b>${escapeHtml(t('history.lock'))}</b></button>` : ''}`;
+
+    const itemsText = ticket => {
+        const services = ticket.items.filter(item => item.item_type === 'service')
+            .map(item => `${item.name || t('client.removedItem')}${Number(item.quantity) > 1 ? ` ×${Number(item.quantity)}` : ''}`);
+        const products = ticket.items.filter(item => item.item_type === 'product')
+            .map(item => `${item.name || t('client.removedItem')}${Number(item.quantity) > 1 ? ` ×${Number(item.quantity)}` : ''}`);
+        return `
+            ${services.length ? `<span class="hrow-items">${icon('scissors')}${escapeHtml(services.join(I18N.listSeparator()))}</span>` : ''}
+            ${products.length ? `<span class="hrow-items hrow-products">${icon('bag')}${escapeHtml(products.join(I18N.listSeparator()))}</span>` : ''}`;
+    };
+
+    const body = `
+        <div class="print-header">
+            <strong>${escapeHtml(state.shopName)}</strong>
+            <span>${escapeHtml(t('page.history.title'))} · ${escapeHtml(periodLabel(period, state.historyDay))}</span>
+        </div>
+        <div class="day-strip">
+            <div class="day-stat"><span>${escapeHtml(periodLabel(period, state.historyDay))}</span></div>
+            <div class="day-stat"><span>${escapeHtml(t('dash.clientsDone'))}</span><strong>${escapeHtml(I18N.formatNumber(tickets.length))}</strong></div>
+            <div class="day-stat day-stat-money"><span>${escapeHtml(t('dash.totalMoney'))}</span><strong>${money(totalMoney)}</strong></div>
+        </div>
+        ${ticketRows.length >= limit ? `<p class="notice">${escapeHtml(t('history.limited', { n: limit }))}</p>` : ''}
+        ${columns.length ? `
+            <div class="board history-board" data-scroll-x>
+                ${columns.map(column => {
+                    const earned = sum(column.tickets, ticket => ticket.total);
                     return `
-                        <section class="barber-history-card">
-                            <header class="barber-history-header">
-                                <div class="barber-history-identity">
-                                    <span class="barber-history-avatar">${escapeHtml(initials || 'B')}</span>
-                                    <div>
-                                        <h3>${escapeHtml(barber.barber_name)}</h3>
-                                        <p>${Number(barber.clients_finished)} completed client${Number(barber.clients_finished) === 1 ? '' : 's'}</p>
+                        <section class="col hcol">
+                            <header class="col-head">
+                                <div class="col-id">
+                                    <span class="avatar ${column.noBarber ? 'avatar-muted' : ''}">${column.noBarber ? icon('users') : escapeHtml(initials(column.name))}</span>
+                                    <div class="col-name">
+                                        <h3>${escapeHtml(column.name)}</h3>
+                                        ${column.removed ? `<span class="tag">${escapeHtml(t('cashier.removedBarber'))}</span>` : ''}
                                     </div>
                                 </div>
-                                <div class="barber-history-earned">
-                                    <span>Money earned</span>
-                                    <strong>${formatCurrency(barber.earned)}</strong>
-                                </div>
                             </header>
-                            <div class="barber-history-orders">
-                                ${barberOrders.map(order => `
-                                    <article class="barber-history-order">
-                                        <div class="barber-history-order-main">
-                                            <strong>${escapeHtml(order.customer_name)}</strong>
-                                            <span>${escapeHtml(order.date)} · ${escapeHtml(order.time)}</span>
-                                            <span>${escapeHtml(order.items || 'No item details available')}</span>
-                                        </div>
-                                        <div class="barber-history-order-total">
-                                            <strong>${formatCurrency(order.total)}</strong>
-                                            <span>${escapeHtml(order.payment_method || 'Unknown')} · #${Number(order.id)}</span>
-                        </div>
-                                    </article>
-                                `).join('')}
-                                ${!barberOrders.length ? '<p class="barber-history-empty">No recent order details.</p>' : ''}
+                            <div class="hcol-totals">
+                                <div><span>${escapeHtml(t('history.earned'))}</span><strong>${money(earned)}</strong></div>
+                                <div><span>${escapeHtml(t('history.clientsFinished'))}</span><strong>${escapeHtml(I18N.formatNumber(column.tickets.length))}</strong></div>
                             </div>
-                        </section>
-                    `;
+                            <div class="col-body" data-scroll-key="h-${column.key}">
+                                ${column.tickets.length ? `
+                                    <ol class="hlist">
+                                        ${column.tickets.map(ticket => `
+                                            <li class="hrow">
+                                                <div class="hrow-when">
+                                                    ${ticket.time ? `<span>${timeLabel(ticket.time)}</span>` : ''}
+                                                    ${multiDay ? `<small>${escapeHtml(I18N.formatDateShort(ticket.date))}</small>` : ''}
+                                                </div>
+                                                <div class="hrow-main">
+                                                    <strong>${escapeHtml(String(ticket.customer_name || '').trim() || t('cashier.walkIn'))}</strong>
+                                                    ${ticket.customer_phone ? `<bdi dir="ltr" class="hrow-phone">${escapeHtml(ticket.customer_phone)}</bdi>` : ''}
+                                                    ${itemsText(ticket)}
+                                                </div>
+                                                <div class="hrow-amount">
+                                                    ${money(ticket.total)}
+                                                    ${canManageTicket(ticket) ? `<button type="button" class="hrow-edit" data-action="edit-finished" data-id="${ticket.id}" title="${escapeHtml(t('history.editLocked'))}">${icon(editUnlocked() ? 'pencil' : 'lock')}<span>${escapeHtml(t('common.edit'))}</span></button>` : ''}
+                                                </div>
+                                            </li>`).join('')}
+                                    </ol>` : `<p class="col-empty">${escapeHtml(t('history.empty'))}</p>`}
+                            </div>
+                        </section>`;
                 }).join('')}
-            </div>
-        ` : '<p>No completed orders yet.</p>';
-    } catch (error) {
-        console.error('Could not load sales history:', error);
-        content.innerHTML = '<p>Sales history could not be loaded. Please try again.</p>';
-    }
+            </div>` : `
+            <div class="empty-hero">
+                <span class="empty-hero-icon">${icon('history')}</span>
+                <h2>${escapeHtml(t('history.noBarbersTitle'))}</h2>
+                <p>${escapeHtml(t('history.noBarbersText'))}</p>
+                <button type="button" class="btn btn-primary" data-action="go" data-page="barbers">${icon('users')}<span>${escapeHtml(t('nav.barbers'))}</span></button>
+            </div>`}`;
+
+    return { actions, body };
 }
 
-function getPrintDateRange(period, anchorDate) {
-    const [year, month, day] = anchorDate.split('-').map(Number);
-    const start = new Date(year, month - 1, day);
-    const end = new Date(year, month - 1, day);
-    if (period === 'week') {
-        const daysSinceMonday = (start.getDay() + 6) % 7;
-        start.setDate(start.getDate() - daysSinceMonday);
-        end.setTime(start.getTime());
-        end.setDate(start.getDate() + 6);
-    } else if (period === 'month') {
-        start.setDate(1);
-        end.setMonth(end.getMonth() + 1, 0);
-    }
-    return { startDate: getLocalDateString(start), endDate: getLocalDateString(end) };
-}
+/* ------------------------------------------------------------------ */
+/* Catalog                                                             */
+/* ------------------------------------------------------------------ */
 
-async function loadPrintSection() {
-    const content = document.getElementById('print-content');
-    content.innerHTML = `
-        <section class="print-panel">
-            <h3>Appointment List</h3>
-            <p>Choose a day, week, or month to preview appointments with customer contact details and arrival times.</p>
-            <div class="print-filters">
-                <div class="form-group">
-                    <label for="print-period">Period</label>
-                    <select id="print-period">
-                        <option value="day">Day</option>
-                        <option value="week">Week</option>
-                        <option value="month">Month</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="print-date">Date to use</label>
-                    <input type="date" id="print-date" value="${getLocalDateString()}">
-                </div>
-                <button type="button" class="btn btn-primary" id="show-print-appointments">Show Appointments</button>
-                <button type="button" class="btn" id="save-appointments-pdf" disabled>Save as PDF</button>
-            </div>
-            <p id="print-range-label" class="print-range-label"></p>
-            <div id="print-appointments-preview"></div>
-        </section>
-        <section class="history-danger-zone">
-            <div>
-                <h3>Clear All History</h3>
-                <p>Permanently deletes sales/orders and past appointment history. Active and future appointments are kept.</p>
-            </div>
-            <button type="button" class="btn btn-danger" id="clear-all-history">Clear All History</button>
-        </section>
-    `;
-
-    document.getElementById('show-print-appointments').addEventListener('click', renderPrintAppointments);
-    document.getElementById('print-period').addEventListener('change', renderPrintAppointments);
-    document.getElementById('print-date').addEventListener('change', renderPrintAppointments);
-    document.getElementById('save-appointments-pdf').addEventListener('click', exportPrintAppointments);
-    document.getElementById('clear-all-history').addEventListener('click', clearAllHistory);
-    await renderPrintAppointments();
-}
-
-async function renderPrintAppointments() {
-    const period = document.getElementById('print-period');
-    const date = document.getElementById('print-date');
-    const preview = document.getElementById('print-appointments-preview');
-    const saveButton = document.getElementById('save-appointments-pdf');
-    if (!period || !date || !preview || !saveButton) return;
-    if (!date.value) {
-        alert('Choose a date to use.');
-        return;
-    }
-
-    const { startDate, endDate } = getPrintDateRange(period.value, date.value);
-    const rangeLabel = period.value === 'day'
-        ? startDate
-        : `${startDate} - ${endDate}`;
-    document.getElementById('print-range-label').textContent = `${period.options[period.selectedIndex].text}: ${rangeLabel}`;
-    try {
-        const appointments = await api.dbQuery(
-            `SELECT a.date, a.time,
-                    COALESCE(NULLIF(c.name, ''), 'Walk-in') AS customer_name,
-                    COALESCE(c.phone, '') AS phone,
-                    COALESCE(s.name, 'Service unavailable') AS service_name,
-                    COALESCE(a.status, 'scheduled') AS status
-             FROM appointments a
-             LEFT JOIN customers c ON c.id = a.customer_id
-             LEFT JOIN services s ON s.id = a.service_id
-             WHERE a.date BETWEEN ? AND ?
-             ORDER BY a.date, a.time
-             LIMIT 2000`,
-            [startDate, endDate]
-        );
-        preview.innerHTML = appointments.length ? `
-            <div class="table-scroll">
-                <table class="print-appointments-table">
-                    <thead><tr><th>Date</th><th>Arrival time</th><th>Customer</th><th>Phone</th><th>Service</th><th>Status</th></tr></thead>
-                    <tbody>${appointments.map(appointment => `
-                        <tr>
-                            <td>${escapeHtml(appointment.date)}</td>
-                            <td>${escapeHtml(appointment.time)}</td>
-                            <td>${escapeHtml(appointment.customer_name)}</td>
-                            <td>${escapeHtml(appointment.phone || '—')}</td>
-                            <td>${escapeHtml(appointment.service_name)}</td>
-                            <td>${escapeHtml(appointment.status)}</td>
-                        </tr>
-                    `).join('')}</tbody>
-                </table>
-            </div>
-            <p class="print-result-count">${appointments.length} appointment${appointments.length === 1 ? '' : 's'}</p>
-        ` : '<p>No appointments in this period.</p>';
-        saveButton.disabled = false;
-        saveButton.dataset.rangeLabel = rangeLabel;
-        saveButton.dataset.appointments = JSON.stringify(appointments);
-    } catch (error) {
-        console.error('Could not load appointments for printing:', error);
-        preview.innerHTML = '<p>Could not load appointments for printing.</p>';
-        saveButton.disabled = true;
-        delete saveButton.dataset.appointments;
-    }
-}
-
-async function exportPrintAppointments() {
-    const button = document.getElementById('save-appointments-pdf');
-    if (!button?.dataset.appointments) return;
-    try {
-        const appointments = JSON.parse(button.dataset.appointments);
-        const result = await api.exportSchedulePdf(appointments, button.dataset.rangeLabel || 'appointments');
-        if (!result.canceled && result.filePath) {
-            alert(`Appointment PDF saved: ${result.filePath}`);
-        }
-    } catch (error) {
-        console.error('Could not create appointment PDF:', error);
-        alert(`Could not create PDF: ${error.message}`);
-    }
-}
-
-async function clearAllHistory() {
-    if (!confirm('Delete all sales/orders and past appointment history? Active and future appointments will remain. This cannot be undone.')) return;
-    try {
-        await api.clearHistory(getLocalDateString());
-        await loadPrintSection();
-        alert('History cleared. Upcoming appointments were kept.');
-    } catch (error) {
-        console.error('Could not clear history:', error);
-        alert(`Could not clear history: ${error.message}`);
-    }
-}
-
-async function loadCustomers() {
-    const content = document.getElementById('customers-content');
-
-    const [customers, barbers, assignments] = await Promise.all([
-        api.dbQuery('SELECT id, name, phone, image_data, total_visits, total_spent FROM customers WHERE is_active = 1 ORDER BY created_at DESC LIMIT 50'),
-        api.dbQuery('SELECT id, name FROM barbers WHERE is_active = 1 ORDER BY name'),
-        api.dbQuery('SELECT cb.customer_id, cb.barber_id, b.name AS barber_name FROM customer_barbers cb JOIN barbers b ON b.id = cb.barber_id ORDER BY b.name')
+async function renderCatalog() {
+    const [services, products, categories] = await queryMany([
+        { query: 'SELECT id, name, price, duration FROM services WHERE is_active = 1 ORDER BY name' },
+        { query: 'SELECT id, name, price, stock, image_data, category_id, description FROM products WHERE is_active = 1 ORDER BY name' },
+        { query: 'SELECT id, name FROM categories ORDER BY name' }
     ]);
-    const assignmentsByCustomer = new Map();
-    assignments.forEach(assignment => {
-        const assigned = assignmentsByCustomer.get(Number(assignment.customer_id)) || [];
-        assigned.push(Number(assignment.barber_id));
-        assignmentsByCustomer.set(Number(assignment.customer_id), assigned);
-    });
-    const barberOptions = barbers.map(barber => `<option value="${barber.id}">${escapeHtml(barber.name)}</option>`).join('');
-
-    content.innerHTML = `
-        <section class="customer-create-panel">
-            <h3>Add a customer</h3>
-            <div class="customer-create-fields">
-                <div class="form-group">
-                    <label for="customer-name">Name (optional)</label>
-                    <input type="text" id="customer-name">
-                </div>
-                <div class="form-group">
-                    <label for="customer-phone">Phone (optional)</label>
-                    <input type="text" id="customer-phone">
-                </div>
-                <div class="form-group">
-                    <label for="customer-photo">Photo (optional)</label>
-                    <input type="file" id="customer-photo" accept="image/*">
-                    <div id="customer-photo-preview" class="photo-preview" hidden></div>
-                </div>
-                <div class="form-group">
-                    <label for="new-customer-barbers">Assign barbers (optional)</label>
-                    <select id="new-customer-barbers" multiple size="3">${barberOptions}</select>
-                </div>
-            </div>
-            <button class="btn btn-primary" id="save-customer-btn">Add Customer</button>
-        </section>
-
-        <div class="customer-list">
-            ${customers.length ? customers.map(customer => `
-                <div class="appointment-item customer-record">
-                    <div class="customer-avatar">
-                        ${customer.image_data
-                            ? `<img src="${escapeHtml(customer.image_data)}" alt="${escapeHtml(customer.name || 'Customer photo')}">`
-                            : `<span aria-hidden="true">${escapeHtml((customer.name || 'C').trim().slice(0, 1).toUpperCase())}</span>`}
-                    </div>
-                    <div>
-                        <div class="appointment-time">${escapeHtml(customer.name || `Customer #${customer.id}`)}</div>
-                        ${customer.phone ? `<div>${escapeHtml(customer.phone)}</div>` : ''}
-                        <div>${escapeHtml((assignments
-                            .filter(assignment => Number(assignment.customer_id) === Number(customer.id))
-                            .map(assignment => assignment.barber_name)
-                            .join(', ')) || 'Unassigned')}</div>
-                        <div>Visits: ${customer.total_visits || 0} | Spent: ${formatCurrency(customer.total_spent || 0)}</div>
-                    </div>
-                    <div class="appointment-actions">
-                        <label class="btn btn-sm customer-photo-button" for="customer-photo-${customer.id}">${customer.image_data ? 'Change photo' : 'Add photo'}</label>
-                        <input class="visually-hidden" type="file" id="customer-photo-${customer.id}" accept="image/*" data-customer-photo="${customer.id}">
-                        ${customer.image_data ? `<button class="btn btn-sm" data-clear-customer-photo="${customer.id}">Remove photo</button>` : ''}
-                        <button class="btn btn-primary btn-sm" data-schedule-customer="${customer.id}">Schedule</button>
-                        <button class="btn btn-danger btn-sm" data-delete-customer="${customer.id}">Delete</button>
-                    </div>
-                    <div class="form-group customer-barber-assignment">
-                        <label for="customer-barbers-${customer.id}">Assign barbers</label>
-                        <select id="customer-barbers-${customer.id}" multiple size="3" data-customer-barbers="${customer.id}">
-                            ${barbers.map(barber => `<option value="${barber.id}" ${assignmentsByCustomer.get(Number(customer.id))?.includes(Number(barber.id)) ? 'selected' : ''}>${escapeHtml(barber.name)}</option>`).join('')}
-                        </select>
-                        <button class="btn btn-sm" data-save-customer-barbers="${customer.id}">Save Barbers</button>
-                    </div>
-                </div>
-            `).join('') : '<p>No customers yet.</p>'}
-        </div>
-    `;
-
-    document.getElementById('save-customer-btn').addEventListener('click', async () => {
-        const name = document.getElementById('customer-name').value.trim();
-        const phone = document.getElementById('customer-phone').value.trim();
-        const imageFile = document.getElementById('customer-photo').files?.[0];
-        const barberIds = [...document.getElementById('new-customer-barbers').selectedOptions]
-            .map(option => Number(option.value));
-
-        let imageData;
-        try {
-            imageData = await readImageFile(imageFile);
-        } catch (error) {
-            alert(error.message);
-            return;
-        }
-
-        const statements = [{
-            query: 'INSERT INTO customers (name, phone, image_data, total_visits, total_spent) VALUES (?, ?, ?, 0, 0)',
-            params: [name || null, phone || null, imageData]
-        }];
-        barberIds.forEach(barberId => statements.push({
-            query: 'INSERT INTO customer_barbers (customer_id, barber_id) VALUES (?, ?)',
-            params: [{ lastIDFrom: 0 }, barberId]
-        }));
-        try {
-            await api.runTransaction(statements);
-        } catch (error) {
-            console.error('Could not add customer:', error);
-            alert(`Could not add customer: ${error.message}`);
-            return;
-        }
-        await loadCustomers();
-        alert('Customer added.');
-    });
-    document.getElementById('customer-photo').addEventListener('change', async event => {
-        const preview = document.getElementById('customer-photo-preview');
-        try {
-            const imageData = await readImageFile(event.target.files?.[0]);
-            preview.hidden = !imageData;
-            preview.innerHTML = imageData ? `<img src="${escapeHtml(imageData)}" alt="Customer photo preview">` : '';
-        } catch (error) {
-            alert(error.message);
-            event.target.value = '';
-        }
-    });
-    content.onchange = async event => {
-        const input = event.target.closest('[data-customer-photo]');
-        if (!input || !input.files?.[0]) return;
-        const customerId = Number(input.dataset.customerPhoto);
-        try {
-            const imageData = await readImageFile(input.files[0]);
-            await api.dbRun('UPDATE customers SET image_data = ? WHERE id = ?', [imageData, customerId]);
-            await loadCustomers();
-        } catch (error) {
-            console.error('Could not update customer photo:', error);
-            alert(`Could not update customer photo: ${error.message}`);
-        }
-    };
-
-    content.onclick = async (event) => {
-        const clearPhotoButton = event.target.closest('[data-clear-customer-photo]');
-        if (clearPhotoButton) {
-            const customerId = Number(clearPhotoButton.dataset.clearCustomerPhoto);
-            try {
-                await api.dbRun('UPDATE customers SET image_data = NULL WHERE id = ?', [customerId]);
-                await loadCustomers();
-            } catch (error) {
-                alert(`Could not remove customer photo: ${error.message}`);
-            }
-            return;
-        }
-        const saveBarbersButton = event.target.closest('[data-save-customer-barbers]');
-        if (saveBarbersButton) {
-            const customerId = Number(saveBarbersButton.dataset.saveCustomerBarbers);
-            const select = content.querySelector(`[data-customer-barbers="${customerId}"]`);
-            const barberIds = [...select.selectedOptions].map(option => Number(option.value));
-            try {
-                await api.dbRun('DELETE FROM customer_barbers WHERE customer_id = ?', [customerId]);
-                for (const barberId of barberIds) {
-                    await api.dbRun('INSERT INTO customer_barbers (customer_id, barber_id) VALUES (?, ?)', [customerId, barberId]);
-                }
-                await loadCustomers();
-            } catch (error) {
-                console.error('Could not assign customer to barbers:', error);
-                alert(`Could not assign customer to barbers: ${error.message}`);
-            }
-            return;
-        }
-
-        const deleteButton = event.target.closest('[data-delete-customer]');
-        if (deleteButton) {
-            const customerId = Number(deleteButton.dataset.deleteCustomer);
-            if (!Number.isInteger(customerId) || !confirm('Remove this customer from active customers? Past appointments will remain in history.')) return;
-
-            try {
-                const result = await api.dbRun('UPDATE customers SET is_active = 0 WHERE id = ?', [customerId]);
-                if (result.changes > 0) await loadCustomers();
-            } catch (error) {
-                console.error('Could not remove customer:', error);
-                alert(`Could not remove customer: ${error.message}`);
-            }
-            return;
-        }
-
-        const scheduleButton = event.target.closest('[data-schedule-customer]');
-        if (!scheduleButton) return;
-
-        pendingScheduleCustomerId = Number(scheduleButton.dataset.scheduleCustomer);
-        showPage('workspace');
-        selectWorkspaceTab('appointments');
-        setActiveNav(document.querySelector('[data-page="workspace"]'));
-    };
-}
-
-async function loadBarbers() {
-    const content = document.getElementById('barbers-content');
-    const [barbers, assignments] = await Promise.all([
-        api.dbQuery('SELECT id, name FROM barbers WHERE is_active = 1 ORDER BY name'),
-        api.dbQuery('SELECT cb.barber_id, c.name AS customer_name FROM customer_barbers cb JOIN customers c ON c.id = cb.customer_id WHERE c.is_active = 1 ORDER BY c.name')
-    ]);
-    const customersByBarber = new Map();
-    assignments.forEach(assignment => {
-        const customers = customersByBarber.get(Number(assignment.barber_id)) || [];
-        customers.push(assignment.customer_name || 'Walk-in');
-        customersByBarber.set(Number(assignment.barber_id), customers);
-    });
-
-    content.innerHTML = `
-        <div class="form-group">
-            <label for="barber-name">Barber name</label>
-            <input type="text" id="barber-name">
-        </div>
-        <div class="form-group">
-            <button class="btn btn-primary" id="add-barber-btn">Add Barber</button>
-        </div>
-        <div class="customer-list">
-            ${barbers.length ? barbers.map(barber => {
-                const customers = customersByBarber.get(Number(barber.id)) || [];
-                return `
-                    <div class="appointment-item">
-                        <div>
-                            <div class="appointment-time">${escapeHtml(barber.name)}</div>
-                            <div>Customers: ${customers.length ? escapeHtml(customers.join(', ')) : 'No customers assigned.'}</div>
-                        </div>
-                        <button class="btn btn-danger btn-sm" data-deactivate-barber="${barber.id}">Deactivate</button>
-                    </div>
-                `;
-            }).join('') : '<p>No barbers yet.</p>'}
-        </div>
-    `;
-
-    document.getElementById('add-barber-btn').addEventListener('click', async () => {
-        const name = document.getElementById('barber-name').value.trim();
-        if (!name) {
-            alert('Enter a barber name.');
-            return;
-        }
-
-        try {
-            await api.dbRun('INSERT INTO barbers (name) VALUES (?)', [name]);
-            await loadBarbers();
-        } catch (error) {
-            console.error('Could not add barber:', error);
-            alert(`Could not add barber: ${error.message}`);
-        }
-    });
-
-    content.onclick = async event => {
-        const deactivateButton = event.target.closest('[data-deactivate-barber]');
-        if (!deactivateButton) return;
-        const barberId = Number(deactivateButton.dataset.deactivateBarber);
-        if (!Number.isInteger(barberId) || !confirm('This barber will no longer be available for new assignments. Past orders and customer assignments will remain.')) return;
-
-        try {
-            await api.dbRun('UPDATE barbers SET is_active = 0 WHERE id = ?', [barberId]);
-            await loadBarbers();
-        } catch (error) {
-            console.error('Could not deactivate barber:', error);
-            alert(`Could not deactivate barber: ${error.message}`);
-        }
-    };
-}
-
-async function loadHistory() {
-    const content = document.getElementById('history-content');
-    const today = getLocalDateString();
-    const appointments = await api.dbQuery(
-        `SELECT a.id, a.date, a.time, a.status,
-                COALESCE(NULLIF(c.name, ''), 'Walk-in') AS customer_name,
-                c.phone, s.name AS service_name
-         FROM appointments a
-         LEFT JOIN customers c ON c.id = a.customer_id
-         LEFT JOIN services s ON s.id = a.service_id
-         WHERE a.date < ? OR (a.date = ? AND a.status IN ('completed', 'cancelled'))
-         ORDER BY a.date DESC, a.time DESC`,
-        [today, today]
-    );
-    historyAppointmentIds = appointments.map(appointment => Number(appointment.id));
-    const completedVisits = appointments.filter(appointment => appointment.status === 'completed').length;
-
-    content.innerHTML = `
-        <div class="dashboard-grid">
-            <div class="stat-card">
-                <h3>Recorded Appointments</h3>
-                <div class="value">${appointments.length}</div>
-            </div>
-            <div class="stat-card">
-                <h3>Completed Visits</h3>
-                <div class="value">${completedVisits}</div>
-            </div>
-        </div>
-        <div class="history-toolbar">
-            <label class="history-select-all">
-                <input type="checkbox" id="select-all-history" ${appointments.length ? '' : 'disabled'}>
-                <span>Select all</span>
-            </label>
-            <span id="history-selection-count">0 selected</span>
-            <div class="history-actions">
-                <button type="button" class="btn btn-danger btn-sm" id="delete-selected-history" disabled>Delete Selected</button>
-                <button type="button" class="btn btn-danger btn-sm" id="delete-all-history" ${appointments.length ? '' : 'disabled'}>Delete All History</button>
-            </div>
-        </div>
-        <div class="appointment-list">
-            ${appointments.length ? appointments.map(appointment => `
-                <div class="appointment-item history-item">
-                    <label class="history-row-select" aria-label="Select ${escapeHtml(appointment.customer_name)} visit">
-                        <input type="checkbox" data-history-selection="${appointment.id}">
-                    </label>
-                    <div>
-                        <div class="appointment-time">${escapeHtml(appointment.date)} at ${escapeHtml(appointment.time)}</div>
-                        <div>${escapeHtml(appointment.customer_name)}${appointment.phone ? ` · ${escapeHtml(appointment.phone)}` : ''}</div>
-                        <div>${escapeHtml(appointment.service_name || 'Service unavailable')}</div>
-                    </div>
-                    <span class="appointment-status status-${String(appointment.status || 'scheduled').replace(/[^a-z-]/g, '-')}" >${escapeHtml((appointment.status || 'scheduled').replace('-', ' '))}</span>
-                </div>
-            `).join('') : '<p>No appointment history yet.</p>'}
-        </div>
-    `;
-
-    content.onchange = event => {
-        if (event.target.id === 'select-all-history') {
-            content.querySelectorAll('[data-history-selection]').forEach(checkbox => {
-                checkbox.checked = event.target.checked;
-            });
-        }
-        if (event.target.id === 'select-all-history' || event.target.matches('[data-history-selection]')) {
-            updateHistorySelection();
-        }
-    };
-
-    content.onclick = async event => {
-        const selectedIds = [...content.querySelectorAll('[data-history-selection]:checked')]
-            .map(checkbox => Number(checkbox.dataset.historySelection));
-
-        if (event.target.closest('#delete-selected-history')) {
-            if (!selectedIds.length || !confirm('Delete selected history items? This cannot be undone.')) return;
-            await deleteHistoryAppointments(selectedIds);
-        } else if (event.target.closest('#delete-all-history')) {
-            if (!historyAppointmentIds.length || !confirm('Delete all past visit history? Future appointments will remain. This cannot be undone.')) return;
-            await deleteHistoryAppointments(historyAppointmentIds);
-        }
-    };
-
-    updateHistorySelection();
-}
-
-function updateHistorySelection() {
-    const content = document.getElementById('history-content');
-    if (!content) return;
-
-    const checkboxes = [...content.querySelectorAll('[data-history-selection]')];
-    const selectedCount = checkboxes.filter(checkbox => checkbox.checked).length;
-    const selectAll = document.getElementById('select-all-history');
-    const selectedLabel = document.getElementById('history-selection-count');
-    const deleteSelectedButton = document.getElementById('delete-selected-history');
-
-    if (selectAll) {
-        selectAll.checked = checkboxes.length > 0 && selectedCount === checkboxes.length;
-        selectAll.indeterminate = selectedCount > 0 && selectedCount < checkboxes.length;
-    }
-    if (selectedLabel) selectedLabel.textContent = `${selectedCount} selected`;
-    if (deleteSelectedButton) deleteSelectedButton.disabled = selectedCount === 0;
-}
-
-async function deleteHistoryAppointments(appointmentIds) {
-    try {
-        await Promise.all(appointmentIds.map(appointmentId =>
-            api.dbRun('DELETE FROM appointments WHERE id = ?', [appointmentId])
-        ));
-        await loadHistory();
-    } catch (error) {
-        console.error('Could not delete visit history:', error);
-        alert(`Could not delete visit history: ${error.message}`);
-    }
-}
-
-async function loadServices() {
-    const content = document.getElementById('services-content');
-    const services = await api.dbQuery('SELECT id, name, price, duration FROM services WHERE is_active = 1 ORDER BY name');
-
-    content.innerHTML = `
-        <div class="form-group">
-            <button class="btn btn-primary" id="add-service-btn">Add Service</button>
-        </div>
-
-        <div class="service-list">
-            ${services.map(service => `
-                <div class="service-item">
-                    <div class="service-name">${escapeHtml(service.name)}</div>
-                    <div class="service-price">${formatCurrency(service.price)}</div>
-                    <div class="service-duration">${service.duration} min</div>
-                    <div class="service-actions">
-                        <button class="btn btn-sm" data-edit-service="${service.id}">Edit</button>
-                        <button class="btn btn-sm btn-danger" data-delete-service="${service.id}">Delete</button>
-                    </div>
-                </div>
-            `).join('') || '<p>No services available.</p>'}
-        </div>
-
-        <div id="service-modal" class="modal" style="display:none;">
-            <div class="modal-content">
-                <h3 id="service-modal-title">Add Service</h3>
-                <div class="form-group">
-                    <label for="service-name">Name</label>
-                    <input type="text" id="service-name">
-                </div>
-                <div class="form-group">
-                    <label for="service-price">Price</label>
-                    <input type="number" id="service-price" step="0.01">
-                </div>
-                <div class="form-group">
-                    <label for="service-duration">Duration (minutes)</label>
-                    <input type="number" id="service-duration">
-                </div>
-                <div class="btn-group">
-                    <button class="btn btn-primary" id="save-service-btn">Save</button>
-                    <button class="btn" id="cancel-service-btn">Cancel</button>
-                </div>
-            </div>
-        </div>
-    `;
-
-    document.getElementById('add-service-btn').addEventListener('click', () => openServiceModal());
-    document.getElementById('cancel-service-btn').addEventListener('click', closeServiceModal);
-    document.getElementById('save-service-btn').addEventListener('click', saveService);
-
-    document.querySelectorAll('[data-delete-service]').forEach((button) => {
-        button.addEventListener('click', async () => {
-            const id = Number(button.dataset.deleteService);
-            await api.dbRun('UPDATE services SET is_active = 0 WHERE id = ?', [id]);
-            await loadServices();
-        });
-    });
-
-    document.querySelectorAll('[data-edit-service]').forEach((button) => {
-        button.addEventListener('click', async () => {
-            const id = Number(button.dataset.editService);
-            const service = (await api.dbQuery('SELECT id, name, price, duration FROM services WHERE id = ?', [id]))[0];
-            if (!service) return;
-            openServiceModal(service);
-        });
-    });
-}
-
-function openServiceModal(service = null) {
-    const modal = document.getElementById('service-modal');
-    const title = document.getElementById('service-modal-title');
-    const nameInput = document.getElementById('service-name');
-    const priceInput = document.getElementById('service-price');
-    const durationInput = document.getElementById('service-duration');
-
-    modal.style.display = 'flex';
-    title.textContent = service ? 'Edit Service' : 'Add Service';
-    nameInput.value = service?.name || '';
-    priceInput.value = service?.price || '';
-    durationInput.value = service?.duration || '';
-    localStorage.setItem('editingServiceId', service ? String(service.id) : '');
-}
-
-function closeServiceModal() {
-    document.getElementById('service-modal').style.display = 'none';
-    localStorage.removeItem('editingServiceId');
-}
-
-async function saveService() {
-    const name = document.getElementById('service-name').value.trim();
-    const price = Number(document.getElementById('service-price').value);
-    const duration = Number(document.getElementById('service-duration').value);
-    const id = localStorage.getItem('editingServiceId');
-
-    if (!name || !price || !duration) {
-        alert('Fill in all service fields.');
-        return;
+    const tab = state.catalogTab === 'products' ? 'products' : 'services';
+    if (state.productCategory !== 'all' && !categories.some(category => String(category.id) === state.productCategory)) {
+        state.productCategory = 'all';
     }
 
-    if (id) {
-        await api.dbRun('UPDATE services SET name = ?, price = ?, duration = ? WHERE id = ?', [name, price, duration, Number(id)]);
+    const actions = `
+        <div class="segmented" role="tablist" aria-label="${escapeHtml(t('nav.catalog'))}">
+            <button type="button" role="tab" class="${tab === 'services' ? 'active' : ''}" aria-selected="${tab === 'services'}" data-action="catalog-tab" data-value="services">${icon('scissors')}${escapeHtml(t('catalog.services'))} <span class="count">${services.length}</span></button>
+            <button type="button" role="tab" class="${tab === 'products' ? 'active' : ''}" aria-selected="${tab === 'products'}" data-action="catalog-tab" data-value="products">${icon('bag')}${escapeHtml(t('catalog.products'))} <span class="count">${products.length}</span></button>
+        </div>
+        <button type="button" class="btn btn-primary" data-action="${tab === 'services' ? 'add-service' : 'add-product'}">${icon('plus')}<span>${escapeHtml(t(tab === 'services' ? 'catalog.addService' : 'catalog.addProduct'))}</span></button>`;
+
+    let body;
+    if (tab === 'services') {
+        body = services.length ? `
+            <div class="service-grid">
+                ${services.map(service => `
+                    <button type="button" class="service-card" data-action="edit-service" data-id="${service.id}">
+                        <span class="service-icon">${icon('scissors')}</span>
+                        <span class="service-name">${escapeHtml(service.name)}</span>
+                        <span class="service-price">${money(service.price)}</span>
+                        ${Number(service.duration) > 0 ? `<span class="service-duration">${icon('clock')}${escapeHtml(t('catalog.minutes', { n: Number(service.duration) }))}</span>` : ''}
+                        <span class="card-edit">${icon('pencil')}</span>
+                    </button>`).join('')}
+            </div>` : emptyCatalog('services');
     } else {
-        await api.dbRun('INSERT INTO services (name, price, duration, is_active) VALUES (?, ?, ?, 1)', [name, price, duration]);
-    }
-
-    closeServiceModal();
-    await loadServices();
-    alert('Service saved.');
-}
-
-async function loadProducts() {
-    const content = document.getElementById('products-content');
-    const [products, categories] = await Promise.all([
-        api.dbQuery('SELECT p.id, p.name, p.price, p.stock, p.description, p.category_id, p.image_data, c.name AS category_name FROM products p LEFT JOIN categories c ON c.id = p.category_id WHERE p.is_active = 1 ORDER BY p.name'),
-        api.dbQuery('SELECT id, name FROM categories ORDER BY name')
-    ]);
-
-    content.innerHTML = `
-        <div class="form-group">
-            <button class="btn btn-primary" id="add-product-btn">Add Product</button>
-        </div>
-
-        <div class="product-list">
-            ${products.map(product => {
-                const productName = String(product.name || '').trim() || `Unnamed product #${product.id}`;
-                return `
-                    <div class="product-item">
-                        <div class="product-image-placeholder">
-                            ${product.image_data
-                                ? `<img src="${escapeHtml(product.image_data)}" alt="${escapeHtml(productName)}">`
-                                : '<span aria-hidden="true">No photo</span>'}
-                        </div>
-                        <div class="product-info">
-                            <div class="product-name">${escapeHtml(productName)}</div>
-                            <div class="product-price">${formatCurrency(product.price)}</div>
-                            <div class="product-stock">Stock: ${product.stock}</div>
-                            <div class="product-category">${escapeHtml(product.category_name || 'Uncategorized')}</div>
-                    </div>
-                    <div class="product-actions">
-                        <button class="btn btn-sm" data-edit-product="${product.id}">Edit</button>
-                        <button class="btn btn-sm btn-danger" data-delete-product="${product.id}">Delete</button>
-                    </div>
-                </div>
-            `;
-        }).join('') || '<p>No products available.</p>'}
-        </div>
-
-        <div id="product-modal" class="modal" style="display:none;">
-            <div class="modal-content">
-                <h3 id="product-modal-title">Add Product</h3>
-                <div class="form-group">
-                    <label for="product-name">Product Name</label>
-                    <input type="text" id="product-name" class="product-name-input" placeholder="Enter product name">
-                </div>
-                <div class="form-group">
-                    <label for="product-price">Price</label>
-                    <input type="number" id="product-price" step="0.01">
-                </div>
-                <div class="form-group">
-                    <label for="product-stock">Stock (optional; defaults to 0)</label>
-                    <input type="number" id="product-stock" min="0" step="1">
-                </div>
-                <div class="form-group">
-                    <label for="product-description">Description (optional)</label>
-                    <textarea id="product-description" rows="3"></textarea>
-                </div>
-                <div class="form-group">
-                    <label for="product-category">Category (optional)</label>
-                    <select id="product-category">
-                        <option value="">Uncategorized</option>
-                        ${categories.map(category => `<option value="${category.id}">${escapeHtml(category.name)}</option>`).join('')}
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="product-image">Product photo (optional)</label>
-                    <input type="file" id="product-image" accept="image/*">
-                    <div id="product-image-preview" class="photo-preview" hidden></div>
-                    <button type="button" class="btn btn-sm" id="clear-product-image" hidden>Remove photo</button>
-                </div>
-                <div class="btn-group">
-                    <button class="btn btn-primary" id="save-product-btn">Save</button>
-                    <button class="btn" id="cancel-product-btn">Cancel</button>
-                </div>
+        const visible = state.productCategory === 'all'
+            ? products
+            : products.filter(product => String(product.category_id) === state.productCategory);
+        body = `
+            <div class="filter-chips catalog-filters">
+                <button type="button" class="filter-chip ${state.productCategory === 'all' ? 'active' : ''}" data-action="catalog-category" data-value="all">${escapeHtml(t('catalog.all'))}</button>
+                ${categories.map(category => `<button type="button" class="filter-chip ${state.productCategory === String(category.id) ? 'active' : ''}" data-action="catalog-category" data-value="${category.id}">${escapeHtml(category.name)}</button>`).join('')}
+                <button type="button" class="filter-chip filter-chip-ghost" data-action="manage-categories">${icon('sliders')}${escapeHtml(t('catalog.manageCategories'))}</button>
             </div>
-        </div>
-    `;
-
-    document.getElementById('add-product-btn').addEventListener('click', () => openProductModal());
-    document.getElementById('cancel-product-btn').addEventListener('click', closeProductModal);
-    document.getElementById('save-product-btn').addEventListener('click', saveProduct);
-    document.getElementById('product-image').addEventListener('change', async event => {
-        const file = event.target.files?.[0];
-        if (!file) return;
-        try {
-            draftProductImageData = await readImageFile(file);
-            updateProductImagePreview();
-        } catch (error) {
-            alert(error.message);
-            event.target.value = '';
-        }
-    });
-    document.getElementById('clear-product-image').addEventListener('click', () => {
-        draftProductImageData = null;
-        document.getElementById('product-image').value = '';
-        updateProductImagePreview();
-    });
-
-    document.querySelectorAll('[data-delete-product]').forEach((button) => {
-        button.addEventListener('click', async () => {
-            const id = Number(button.dataset.deleteProduct);
-            await api.dbRun('UPDATE products SET is_active = 0 WHERE id = ?', [id]);
-            await loadProducts();
-        });
-    });
-
-    document.querySelectorAll('[data-edit-product]').forEach((button) => {
-        button.addEventListener('click', async () => {
-            const id = Number(button.dataset.editProduct);
-            const product = (await api.dbQuery('SELECT id, name, price, stock, description, category_id, image_data FROM products WHERE id = ?', [id]))[0];
-            if (!product) return;
-            openProductModal(product);
-        });
-    });
-}
-
-function openProductModal(product = null) {
-    const modal = document.getElementById('product-modal');
-    const title = document.getElementById('product-modal-title');
-    document.getElementById('product-name').value = product?.name || '';
-    document.getElementById('product-price').value = product?.price || '';
-    document.getElementById('product-stock').value = product ? product.stock : '0';
-    document.getElementById('product-description').value = product?.description || '';
-    document.getElementById('product-category').value = product?.category_id || '';
-    document.getElementById('product-image').value = '';
-    draftProductImageData = product?.image_data || null;
-    updateProductImagePreview();
-    title.textContent = product ? 'Edit Product' : 'Add Product';
-    localStorage.setItem('editingProductId', product ? String(product.id) : '');
-    modal.style.display = 'flex';
-}
-
-function updateProductImagePreview() {
-    const preview = document.getElementById('product-image-preview');
-    const clearButton = document.getElementById('clear-product-image');
-    if (!preview || !clearButton) return;
-    preview.hidden = !draftProductImageData;
-    clearButton.hidden = !draftProductImageData;
-    preview.innerHTML = draftProductImageData
-        ? `<img src="${escapeHtml(draftProductImageData)}" alt="Product photo preview">`
-        : '';
-}
-
-function closeProductModal() {
-    document.getElementById('product-modal').style.display = 'none';
-    localStorage.removeItem('editingProductId');
-    draftProductImageData = null;
-}
-
-async function saveProduct() {
-    const name = document.getElementById('product-name').value.trim();
-    const priceValue = document.getElementById('product-price').value.trim();
-    const stockValue = document.getElementById('product-stock').value.trim();
-    const price = Number(priceValue);
-    const stock = stockValue === '' ? 0 : Number(stockValue);
-    const description = document.getElementById('product-description').value.trim();
-    const categoryValue = document.getElementById('product-category').value;
-    const categoryId = categoryValue ? Number(categoryValue) : null;
-    const productId = localStorage.getItem('editingProductId');
-
-    if (!name || priceValue === '' || !Number.isFinite(price) || price < 0 || !Number.isInteger(stock) || stock < 0) {
-        alert('Enter a product name and valid non-negative price. Stock can be left blank or set to a whole-number quantity.');
-        return;
+            ${visible.length ? `
+                <div class="product-grid">
+                    ${visible.map(product => {
+                        const image = safeImage(product.image_data);
+                        const stock = Number(product.stock || 0);
+                        const category = categories.find(item => Number(item.id) === Number(product.category_id));
+                        return `
+                            <button type="button" class="product-card" data-action="edit-product" data-id="${product.id}">
+                                <span class="product-photo ${image ? '' : 'empty'}">${image ? `<img src="${escapeHtml(image)}" alt="">` : `${icon('image')}<small>${escapeHtml(t('catalog.addPhoto'))}</small>`}</span>
+                                <span class="product-body">
+                                    <span class="product-name">${escapeHtml(product.name || t('catalog.unnamedProduct'))}</span>
+                                    <span class="product-meta">
+                                        <span class="product-price">${money(product.price)}</span>
+                                        <span class="stock-badge ${stock <= 0 ? 'out' : stock < 5 ? 'low' : ''}">${escapeHtml(stock <= 0 ? t('catalog.outOfStock') : t('catalog.inStock', { n: stock }))}</span>
+                                    </span>
+                                    ${category ? `<span class="product-category">${icon('tag')}${escapeHtml(category.name)}</span>` : ''}
+                                </span>
+                            </button>`;
+                    }).join('')}
+                </div>` : (products.length ? `<p class="card-empty">${escapeHtml(t('catalog.noneInCategory'))}</p>` : emptyCatalog('products'))}`;
     }
-
-    try {
-        if (productId) {
-            await api.dbRun('UPDATE products SET name = ?, price = ?, stock = ?, description = ?, category_id = ?, image_data = ? WHERE id = ?', [name, price, stock, description, categoryId, draftProductImageData, Number(productId)]);
-        } else {
-            await api.dbRun('INSERT INTO products (name, price, stock, description, category_id, image_data, is_active) VALUES (?, ?, ?, ?, ?, ?, 1)', [name, price, stock, description, categoryId, draftProductImageData]);
-        }
-
-        closeProductModal();
-        await loadProducts();
-        alert('Product saved.');
-    } catch (error) {
-        console.error('Could not save product:', error);
-        alert(`Could not save product: ${error.message}`);
-    }
+    return { actions, body };
 }
 
-async function loadCategories() {
-    const content = document.getElementById('categories-content');
-    const categories = await api.dbQuery('SELECT id, name FROM categories ORDER BY name');
-    content.innerHTML = `
-        <div class="form-group">
-            <label for="category-name">Category name</label>
-            <input type="text" id="category-name" maxlength="80">
-            <button type="button" class="btn btn-primary" id="save-category-btn">Add Category</button>
-        </div>
-        <div class="product-list">
-            ${categories.map(category => `
-                <div class="product-item">
-                    <div class="product-info"><div class="product-name">${escapeHtml(category.name)}</div></div>
-                    <div class="product-actions">
-                        <button type="button" class="btn btn-sm btn-danger" data-delete-category="${category.id}">Delete</button>
-                    </div>
+function emptyCatalog(kind) {
+    return `
+        <div class="empty-hero">
+            <span class="empty-hero-icon">${icon(kind === 'services' ? 'scissors' : 'bag')}</span>
+            <h2>${escapeHtml(t(kind === 'services' ? 'catalog.noServicesTitle' : 'catalog.noProductsTitle'))}</h2>
+            <p>${escapeHtml(t(kind === 'services' ? 'catalog.noServicesText' : 'catalog.noProductsText'))}</p>
+            <button type="button" class="btn btn-primary" data-action="${kind === 'services' ? 'add-service' : 'add-product'}">${icon('plus')}<span>${escapeHtml(t(kind === 'services' ? 'catalog.addService' : 'catalog.addProduct'))}</span></button>
+        </div>`;
+}
+
+function parsePrice(value) {
+    const text = String(value ?? '').trim();
+    if (text === '') return null;
+    const number = Number(text);
+    return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+async function openServiceModal(id = null) {
+    const service = id ? await queryOne('SELECT id, name, price, duration FROM services WHERE id = ?', [id]) : null;
+    const entry = openModal({
+        title: service ? t('catalog.editService') : t('catalog.addService'),
+        size: 'sm',
+        autofocus: !service,
+        body: `
+            <form class="stack" data-service-form>
+                <label class="field"><span>${escapeHtml(t('catalog.serviceName'))}</span>
+                    <input type="text" name="name" maxlength="80" required value="${escapeHtml(service?.name || '')}" placeholder="${escapeHtml(t('catalog.serviceNamePlaceholder'))}">
+                </label>
+                <div class="grid-2">
+                    <label class="field"><span>${escapeHtml(t('catalog.price'))} (${escapeHtml(I18N.currency())})</span>
+                        <input type="number" name="price" min="0" step="any" inputmode="decimal" required value="${service ? escapeHtml(service.price) : ''}">
+                    </label>
+                    <label class="field"><span>${escapeHtml(t('catalog.duration'))} <em>${escapeHtml(t('common.optional'))}</em></span>
+                        <input type="number" name="duration" min="0" step="1" inputmode="numeric" value="${service && Number(service.duration) > 0 ? escapeHtml(service.duration) : ''}">
+                    </label>
                 </div>
-            `).join('') || '<p>No categories yet.</p>'}
-        </div>
-    `;
-
-    document.getElementById('save-category-btn').addEventListener('click', async () => {
-        const name = document.getElementById('category-name').value.trim();
-        if (!name) {
-            alert('Enter a category name.');
+            </form>`,
+        footer: `
+            ${service ? `<button type="button" class="btn btn-ghost-danger" data-delete>${icon('trash')}<span>${escapeHtml(t('common.delete'))}</span></button>` : ''}
+            <span class="spacer"></span>
+            <button type="button" class="btn btn-ghost" data-modal-close>${escapeHtml(t('common.cancel'))}</button>
+            <button type="button" class="btn btn-primary" data-save>${icon('check')}<span>${escapeHtml(t('common.save'))}</span></button>`
+    });
+    const form = entry.modal.querySelector('[data-service-form]');
+    const save = async () => {
+        const name = form.elements.name.value.trim();
+        const price = parsePrice(form.elements.price.value);
+        const durationText = form.elements.duration.value.trim();
+        const duration = durationText === '' ? 0 : Math.round(Number(durationText));
+        if (!name || price == null || !Number.isFinite(duration) || duration < 0) {
+            toast(t('catalog.needNamePrice'), 'error');
             return;
         }
+        try {
+            if (service) {
+                await api.dbRun('UPDATE services SET name = ?, price = ?, duration = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [name, price, duration, Number(service.id)]);
+            } else {
+                await api.dbRun('INSERT INTO services (name, price, duration, is_active) VALUES (?, ?, ?, 1)', [name, price, duration]);
+            }
+            entry.close();
+            toast(t('toast.saved'));
+            await renderPage({ keepScroll: true });
+        } catch (error) {
+            handleError(error);
+        }
+    };
+    form.addEventListener('submit', event => {
+        event.preventDefault();
+        save();
+    });
+    entry.modal.querySelector('[data-save]').addEventListener('click', save);
+    entry.modal.querySelector('[data-delete]')?.addEventListener('click', async () => {
+        if (!await confirmDialog(t('confirm.deleteService'), { okLabel: t('common.delete'), danger: true })) return;
+        try {
+            await api.dbRun('UPDATE services SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [Number(service.id)]);
+            entry.close();
+            toast(t('toast.deleted'));
+            await renderPage({ keepScroll: true });
+        } catch (error) {
+            handleError(error);
+        }
+    });
+}
+
+function readImageFile(file, maxSize = 720) {
+    if (!file) return Promise.resolve(null);
+    if (!file.type.startsWith('image/')) return Promise.reject(new Error(t('err.imageType')));
+    if (file.size > 15 * 1024 * 1024) return Promise.reject(new Error(t('err.imageSize')));
+
+    // Read as a data: URL; the page's security policy does not allow blob: images.
+    const readAsDataUrl = () => new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(new Error(t('err.imageOpen')));
+        reader.readAsDataURL(file);
+    });
+
+    return readAsDataUrl().then(source => new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => {
+            const scale = Math.min(1, maxSize / Math.max(image.naturalWidth, image.naturalHeight));
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+            canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+            const context = canvas.getContext('2d');
+            if (!context) {
+                reject(new Error(t('err.imageOpen')));
+                return;
+            }
+            context.fillStyle = '#ffffff';
+            context.fillRect(0, 0, canvas.width, canvas.height);
+            context.drawImage(image, 0, 0, canvas.width, canvas.height);
+            resolve(canvas.toDataURL('image/jpeg', 0.84));
+        };
+        image.onerror = () => reject(new Error(t('err.imageOpen')));
+        image.src = source;
+    }));
+}
+
+async function openProductModal(id = null) {
+    const [rows, categories] = await queryMany([
+        { query: 'SELECT id, name, price, stock, description, category_id, image_data FROM products WHERE id = ?', params: [id || 0] },
+        { query: 'SELECT id, name FROM categories ORDER BY name' }
+    ]);
+    const product = id ? rows[0] || null : null;
+    let imageData = safeImage(product?.image_data) || null;
+    const defaultCategory = !product && state.productCategory !== 'all' ? state.productCategory : String(product?.category_id || '');
+
+    const entry = openModal({
+        title: product ? t('catalog.editProduct') : t('catalog.addProduct'),
+        size: 'md',
+        body: `
+            <form class="product-form" data-product-form>
+                <div class="photo-picker">
+                    <label class="photo-drop" data-photo-drop>
+                        <input type="file" accept="image/*" hidden data-photo-input>
+                        <span class="photo-preview" data-photo-preview></span>
+                    </label>
+                    <div class="photo-actions">
+                        <button type="button" class="btn btn-ghost btn-sm" data-photo-choose>${icon('upload')}<span>${escapeHtml(t('catalog.choosePhoto'))}</span></button>
+                        <button type="button" class="btn btn-ghost btn-sm" data-photo-remove>${icon('trash')}<span>${escapeHtml(t('catalog.removePhoto'))}</span></button>
+                    </div>
+                </div>
+                <div class="stack">
+                    <label class="field"><span>${escapeHtml(t('catalog.productName'))}</span>
+                        <input type="text" name="name" maxlength="80" required value="${escapeHtml(product?.name || '')}" placeholder="${escapeHtml(t('catalog.productNamePlaceholder'))}">
+                    </label>
+                    <div class="grid-2">
+                        <label class="field"><span>${escapeHtml(t('catalog.price'))} (${escapeHtml(I18N.currency())})</span>
+                            <input type="number" name="price" min="0" step="any" inputmode="decimal" required value="${product ? escapeHtml(product.price) : ''}">
+                        </label>
+                        <label class="field"><span>${escapeHtml(t('catalog.stock'))} <em>${escapeHtml(t('common.optional'))}</em></span>
+                            <input type="number" name="stock" min="0" step="1" inputmode="numeric" value="${product ? escapeHtml(product.stock ?? 0) : ''}">
+                        </label>
+                    </div>
+                    <label class="field"><span>${escapeHtml(t('catalog.category'))} <em>${escapeHtml(t('common.optional'))}</em></span>
+                        <select name="category">
+                            <option value="">${escapeHtml(t('catalog.noCategory'))}</option>
+                            ${categories.map(category => `<option value="${category.id}" ${String(category.id) === defaultCategory ? 'selected' : ''}>${escapeHtml(category.name)}</option>`).join('')}
+                        </select>
+                    </label>
+                    <label class="field"><span>${escapeHtml(t('catalog.description'))} <em>${escapeHtml(t('common.optional'))}</em></span>
+                        <textarea name="description" rows="2" maxlength="300">${escapeHtml(product?.description || '')}</textarea>
+                    </label>
+                </div>
+            </form>`,
+        footer: `
+            ${product ? `<button type="button" class="btn btn-ghost-danger" data-delete>${icon('trash')}<span>${escapeHtml(t('common.delete'))}</span></button>` : ''}
+            <span class="spacer"></span>
+            <button type="button" class="btn btn-ghost" data-modal-close>${escapeHtml(t('common.cancel'))}</button>
+            <button type="button" class="btn btn-primary" data-save>${icon('check')}<span>${escapeHtml(t('common.save'))}</span></button>`
+    });
+    const modal = entry.modal;
+    const form = modal.querySelector('[data-product-form]');
+    const fileInput = modal.querySelector('[data-photo-input]');
+
+    const showPhoto = () => {
+        modal.querySelector('[data-photo-preview]').innerHTML = imageData
+            ? `<img src="${escapeHtml(imageData)}" alt="">`
+            : `${icon('image')}<span>${escapeHtml(t('catalog.tapToAddPhoto'))}</span>`;
+        modal.querySelector('[data-photo-drop]').classList.toggle('has-photo', Boolean(imageData));
+        modal.querySelector('[data-photo-remove]').hidden = !imageData;
+    };
+    showPhoto();
+
+    modal.querySelector('[data-photo-choose]').addEventListener('click', () => fileInput.click());
+    modal.querySelector('[data-photo-remove]').addEventListener('click', () => {
+        imageData = null;
+        fileInput.value = '';
+        showPhoto();
+    });
+    fileInput.addEventListener('change', async () => {
+        try {
+            const result = await readImageFile(fileInput.files?.[0]);
+            if (result) imageData = result;
+            showPhoto();
+        } catch (error) {
+            toast(error.message, 'error');
+            fileInput.value = '';
+        }
+    });
+
+    const save = async () => {
+        const name = form.elements.name.value.trim();
+        const price = parsePrice(form.elements.price.value);
+        const stockText = form.elements.stock.value.trim();
+        const stock = stockText === '' ? 0 : Number(stockText);
+        const categoryId = form.elements.category.value ? Number(form.elements.category.value) : null;
+        const description = form.elements.description.value.trim();
+        if (!name || price == null || !Number.isInteger(stock) || stock < 0) {
+            toast(t('catalog.needNamePrice'), 'error');
+            return;
+        }
+        try {
+            if (product) {
+                await api.dbRun(
+                    'UPDATE products SET name = ?, price = ?, stock = ?, description = ?, category_id = ?, image_data = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                    [name, price, stock, description || null, categoryId, imageData, Number(product.id)]
+                );
+            } else {
+                await api.dbRun(
+                    'INSERT INTO products (name, price, stock, description, category_id, image_data, is_active) VALUES (?, ?, ?, ?, ?, ?, 1)',
+                    [name, price, stock, description || null, categoryId, imageData]
+                );
+            }
+            entry.close();
+            toast(t('toast.saved'));
+            await renderPage({ keepScroll: true });
+        } catch (error) {
+            handleError(error);
+        }
+    };
+    form.addEventListener('submit', event => {
+        event.preventDefault();
+        save();
+    });
+    modal.querySelector('[data-save]').addEventListener('click', save);
+    modal.querySelector('[data-delete]')?.addEventListener('click', async () => {
+        if (!await confirmDialog(t('confirm.deleteProduct'), { okLabel: t('common.delete'), danger: true })) return;
+        try {
+            await api.dbRun('UPDATE products SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [Number(product.id)]);
+            entry.close();
+            toast(t('toast.deleted'));
+            await renderPage({ keepScroll: true });
+        } catch (error) {
+            handleError(error);
+        }
+    });
+}
+
+async function openCategoriesModal() {
+    const entry = openModal({
+        title: t('catalog.categories'),
+        size: 'sm',
+        body: `
+            <form class="inline-form" data-category-form>
+                <input type="text" name="name" maxlength="60" placeholder="${escapeHtml(t('catalog.categoryName'))}" aria-label="${escapeHtml(t('catalog.categoryName'))}" required>
+                <button type="submit" class="btn btn-primary">${icon('plus')}<span>${escapeHtml(t('common.add'))}</span></button>
+            </form>
+            <ul class="category-list" data-category-list></ul>`,
+        onClose: () => renderPage({ keepScroll: true })
+    });
+    const modal = entry.modal;
+    const list = modal.querySelector('[data-category-list]');
+    const refresh = async () => {
+        const categories = await api.dbQuery('SELECT id, name FROM categories ORDER BY name');
+        list.innerHTML = categories.length
+            ? categories.map(category => `
+                <li><span>${icon('tag')}${escapeHtml(category.name)}</span>
+                    <button type="button" class="btn-icon" data-delete-category="${category.id}" aria-label="${escapeHtml(t('common.delete'))}">${icon('trash')}</button>
+                </li>`).join('')
+            : `<li class="muted">${escapeHtml(t('catalog.noCategories'))}</li>`;
+    };
+    modal.querySelector('[data-category-form]').addEventListener('submit', async event => {
+        event.preventDefault();
+        const input = event.target.elements.name;
+        const name = input.value.trim();
+        if (!name) return;
         try {
             await api.dbRun('INSERT INTO categories (name) VALUES (?)', [name]);
-            await loadCategories();
-            await loadProducts();
+            input.value = '';
+            await refresh();
         } catch (error) {
-            alert(`Could not save category: ${error.message}`);
+            toast(t('catalog.categoryExists'), 'error');
         }
     });
-
-    content.querySelectorAll('[data-delete-category]').forEach(button => {
-        button.addEventListener('click', async () => {
-            if (!confirm('Delete this category? Products in it will become uncategorized.')) return;
-            const id = Number(button.dataset.deleteCategory);
-            try {
-                await api.runTransaction([
-                    { query: 'UPDATE products SET category_id = NULL WHERE category_id = ?', params: [id] },
-                    { query: 'DELETE FROM categories WHERE id = ?', params: [id] }
-                ]);
-                await loadCategories();
-                await loadProducts();
-            } catch (error) {
-                alert(`Could not delete category: ${error.message}`);
-            }
-        });
+    list.addEventListener('click', async event => {
+        const button = event.target.closest('[data-delete-category]');
+        if (!button) return;
+        if (!await confirmDialog(t('confirm.deleteCategory'), { okLabel: t('common.delete'), danger: true })) return;
+        const id = Number(button.dataset.deleteCategory);
+        try {
+            await runStatements([
+                { query: 'UPDATE products SET category_id = NULL WHERE category_id = ?', params: [id] },
+                { query: 'DELETE FROM categories WHERE id = ?', params: [id] }
+            ]);
+            await refresh();
+        } catch (error) {
+            handleError(error);
+        }
     });
+    await refresh();
 }
 
-async function loadSettings() {
-    const content = document.getElementById('settings-content');
-    const settings = (await api.dbQuery('SELECT shop_name, phone, address, currency FROM settings ORDER BY id DESC LIMIT 1'))[0] || {
-        shop_name: 'XBARBER SHOP',
-        phone: '',
-        address: '',
-        currency: 'IQD',
+/* ------------------------------------------------------------------ */
+/* Barbers                                                             */
+/* ------------------------------------------------------------------ */
+
+async function renderBarbers() {
+    const today = todayString();
+    const [barbers, stats, accounts] = await queryMany([
+        { query: 'SELECT id, name FROM barbers WHERE is_active = 1 ORDER BY id' },
+        {
+            query: `SELECT barber_id,
+                        SUM(CASE WHEN COALESCE(status, 'completed') = 'completed' THEN 1 ELSE 0 END) AS done,
+                        SUM(CASE WHEN COALESCE(status, 'completed') = 'completed' THEN total ELSE 0 END) AS money,
+                        SUM(CASE WHEN status IN ('waiting', 'in-service') THEN 1 ELSE 0 END) AS open
+                    FROM orders WHERE date = ? GROUP BY barber_id`,
+            params: [today]
+        },
+        { query: 'SELECT barber_id, username FROM barber_accounts WHERE is_active = 1' }
+    ]);
+    const statsByBarber = new Map(stats.map(row => [Number(row.barber_id), row]));
+    const accountByBarber = new Map(accounts.map(row => [Number(row.barber_id), row]));
+
+    const body = `
+        <form class="card add-barber" data-form="add-barber">
+            <div class="add-barber-text">
+                <h3 class="card-title">${escapeHtml(t('barbers.addTitle'))}</h3>
+                <p>${escapeHtml(t('barbers.addText'))}</p>
+            </div>
+            <div class="inline-form">
+                <input type="text" name="name" maxlength="60" placeholder="${escapeHtml(t('barbers.namePlaceholder'))}" aria-label="${escapeHtml(t('barbers.name'))}" required>
+                <button type="submit" class="btn btn-primary">${icon('plus')}<span>${escapeHtml(t('barbers.add'))}</span></button>
+            </div>
+        </form>
+        ${barbers.length ? `
+            <div class="barber-grid">
+                ${barbers.map((barber, index) => {
+                    const row = statsByBarber.get(Number(barber.id)) || {};
+                    const account = accountByBarber.get(Number(barber.id));
+                    return `
+                        <article class="barber-card">
+                            <div class="barber-card-head">
+                                <span class="avatar avatar-lg">${escapeHtml(initials(barber.name))}</span>
+                                <div>
+                                    <h3>${escapeHtml(barber.name)}</h3>
+                                    <span class="muted">${escapeHtml(t('barbers.column', { n: index + 1 }))}</span>
+                                </div>
+                            </div>
+                            <div class="barber-card-stats">
+                                <div><strong>${escapeHtml(I18N.formatNumber(Number(row.done || 0)))}</strong><span>${escapeHtml(t('barbers.doneToday'))}</span></div>
+                                <div><strong>${escapeHtml(I18N.formatNumber(Number(row.open || 0)))}</strong><span>${escapeHtml(t('barbers.openNow'))}</span></div>
+                                <div><strong>${money(row.money || 0)}</strong><span>${escapeHtml(t('barbers.moneyToday'))}</span></div>
+                            </div>
+                            <div class="barber-account ${account ? 'has-account' : ''}">
+                                <span class="barber-account-icon">${icon('key')}</span>
+                                <div class="barber-account-text">
+                                    <strong>${escapeHtml(t(account ? 'accounts.hasSignIn' : 'accounts.noSignIn'))}</strong>
+                                    <span>${account ? `${escapeHtml(t('login.username'))}: <bdi dir="ltr">${escapeHtml(account.username)}</bdi>` : escapeHtml(t('accounts.noSignInText'))}</span>
+                                </div>
+                                <button type="button" class="btn ${account ? 'btn-ghost' : 'btn-outline'} btn-sm" data-action="barber-account" data-id="${barber.id}">${icon(account ? 'pencil' : 'plus')}<span>${escapeHtml(t(account ? 'accounts.change' : 'accounts.create'))}</span></button>
+                            </div>
+                            <div class="barber-card-actions">
+                                <button type="button" class="btn btn-ghost btn-sm" data-action="rename-barber" data-id="${barber.id}" data-name="${escapeHtml(barber.name)}">${icon('pencil')}<span>${escapeHtml(t('barbers.rename'))}</span></button>
+                                <button type="button" class="btn btn-ghost-danger btn-sm" data-action="remove-barber" data-id="${barber.id}" data-name="${escapeHtml(barber.name)}">${icon('trash')}<span>${escapeHtml(t('barbers.remove'))}</span></button>
+                            </div>
+                        </article>`;
+                }).join('')}
+            </div>` : `<p class="card-empty">${escapeHtml(t('barbers.empty'))}</p>`}`;
+
+    return { actions: '', body };
+}
+
+async function addBarber(name) {
+    const clean = String(name || '').trim();
+    if (!clean) {
+        toast(t('barbers.needName'), 'error');
+        return false;
+    }
+    await api.dbRun('INSERT INTO barbers (name, is_active) VALUES (?, 1)', [clean]);
+    toast(t('toast.barberAdded', { name: clean }));
+    await renderPage({ keepScroll: true });
+    return true;
+}
+
+async function renameBarber(id, currentName) {
+    const name = await promptDialog({ title: t('barbers.rename'), label: t('barbers.name'), value: currentName, maxLength: 60 });
+    if (!name) return;
+    await api.dbRun('UPDATE barbers SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [name, id]);
+    toast(t('toast.saved'));
+    await renderPage({ keepScroll: true });
+}
+
+async function removeBarber(id, name) {
+    if (!await confirmDialog(t('confirm.removeBarber', { name }), { okLabel: t('barbers.remove'), danger: true })) return;
+    await runStatements([
+        { query: "UPDATE orders SET barber_id = NULL, status = 'waiting' WHERE barber_id = ? AND status IN ('waiting', 'in-service')", params: [id] },
+        { query: 'UPDATE barbers SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?', params: [id] },
+        { query: 'UPDATE barber_accounts SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE barber_id = ?', params: [id] }
+    ]);
+    toast(t('toast.barberRemoved', { name }));
+    await renderPage({ keepScroll: true });
+}
+
+// The admin creates a sign-in for a barber. That barber then sees only their own clients.
+async function openAccountModal(barberId) {
+    const [barberRows, accountRows] = await queryMany([
+        { query: 'SELECT id, name FROM barbers WHERE id = ? AND is_active = 1', params: [barberId] },
+        { query: 'SELECT barber_id, username, is_active FROM barber_accounts WHERE barber_id = ?', params: [barberId] }
+    ]);
+    const barber = barberRows[0];
+    if (!barber) return;
+    const existing = accountRows[0] || null;
+    const account = existing && Number(existing.is_active) ? existing : null;
+
+    const entry = openModal({
+        title: t('accounts.title', { name: barber.name }),
+        size: 'sm',
+        autofocus: true,
+        body: `
+            <form class="stack" data-account-form autocomplete="off">
+                <p class="card-text">${escapeHtml(t('accounts.text', { name: barber.name }))}</p>
+                <label class="field"><span>${escapeHtml(t('login.username'))}</span>
+                    <input type="text" name="username" maxlength="40" dir="ltr" autocapitalize="none" spellcheck="false" autocomplete="off" required value="${escapeHtml(account?.username || '')}">
+                </label>
+                <label class="field"><span>${escapeHtml(t(account ? 'accounts.newPassword' : 'login.password'))}</span>
+                    <input type="text" name="password" maxlength="100" dir="ltr" autocapitalize="none" spellcheck="false" autocomplete="off" ${account ? '' : 'required'}>
+                    <small class="field-hint">${escapeHtml(t(account ? 'accounts.keepPassword' : 'accounts.passwordHint'))}</small>
+                </label>
+            </form>`,
+        footer: `
+            ${account ? `<button type="button" class="btn btn-ghost-danger" data-account-remove>${icon('trash')}<span>${escapeHtml(t('accounts.remove'))}</span></button>` : ''}
+            <span class="spacer"></span>
+            <button type="button" class="btn btn-ghost" data-modal-close>${escapeHtml(t('common.cancel'))}</button>
+            <button type="button" class="btn btn-primary" data-account-save>${icon('check')}<span>${escapeHtml(t('common.save'))}</span></button>`
+    });
+    const modal = entry.modal;
+    const form = modal.querySelector('[data-account-form]');
+
+    const save = async () => {
+        const username = form.elements.username.value.trim();
+        const password = form.elements.password.value;
+        if (username.length < 3 || /\s/.test(username)) {
+            toast(t('accounts.badUsername'), 'error');
+            form.elements.username.focus();
+            return;
+        }
+        if (username.toLowerCase() === ADMIN_USERNAME) {
+            toast(t('accounts.adminReserved'), 'error');
+            form.elements.username.focus();
+            return;
+        }
+        if ((!account || password) && password.length < 4) {
+            toast(t('accounts.shortPassword'), 'error');
+            form.elements.password.focus();
+            return;
+        }
+        try {
+            const taken = await queryOne(
+                'SELECT barber_id FROM barber_accounts WHERE username = ? COLLATE NOCASE AND barber_id <> ?',
+                [username, barberId]
+            );
+            if (taken) {
+                toast(t('accounts.usernameTaken'), 'error');
+                form.elements.username.focus();
+                return;
+            }
+            let statement;
+            if (existing && !password) {
+                statement = { query: 'UPDATE barber_accounts SET username = ?, is_active = 1, updated_at = CURRENT_TIMESTAMP WHERE barber_id = ?', params: [username, barberId] };
+            } else if (existing) {
+                statement = { query: 'UPDATE barber_accounts SET username = ?, password_hash = ?, is_active = 1, updated_at = CURRENT_TIMESTAMP WHERE barber_id = ?', params: [username, XAuth.hashPassword(password), barberId] };
+            } else {
+                statement = { query: 'INSERT INTO barber_accounts (barber_id, username, password_hash, is_active) VALUES (?, ?, ?, 1)', params: [barberId, username, XAuth.hashPassword(password)] };
+            }
+            await runStatements([statement]);
+            entry.close();
+            toast(t('accounts.saved', { name: barber.name }));
+            await renderPage({ keepScroll: true });
+        } catch (error) {
+            handleError(error);
+        }
     };
 
-    content.innerHTML = `
-        <div class="form-group">
-            <label for="interface-language">Language</label>
-            <select id="interface-language">
-                <option value="en">English</option>
-                <option value="ckb">کوردی (سۆرانی)</option>
-            </select>
-        </div>
-        <div class="form-group">
-            <label for="shop-name">Shop Name</label>
-            <input type="text" id="shop-name" value="${escapeHtml(settings.shop_name || 'XBARBER SHOP')}">
-        </div>
-        <div class="form-group">
-            <label for="shop-phone">Phone</label>
-            <input type="text" id="shop-phone" value="${escapeHtml(settings.phone || '')}">
-        </div>
-        <div class="form-group">
-            <label for="shop-address">Address</label>
-            <textarea id="shop-address" rows="3">${escapeHtml(settings.address || '')}</textarea>
-        </div>
-        <div class="form-group">
-            <label for="shop-currency">Currency</label>
-            <select id="shop-currency">
-                <option value="IQD" selected>IQD</option>
-            </select>
-        </div>
-        <div class="btn-group">
-            <button class="btn btn-primary" id="save-settings-btn">Save Settings</button>
-            <button class="btn" id="backup-db-btn">Backup DB</button>
-        </div>
-        <div class="btn-group">
-            <button class="btn btn-danger" id="restore-db-btn">Restore DB</button>
-        </div>
-    `;
-
-    const languageSelect = document.getElementById('interface-language');
-    languageSelect.value = interfaceLanguage;
-    languageSelect.addEventListener('change', () => setInterfaceLanguage(languageSelect.value));
-
-    document.getElementById('save-settings-btn').addEventListener('click', async () => {
-        const shopName = document.getElementById('shop-name').value.trim() || 'XBARBER SHOP';
-        const phone = document.getElementById('shop-phone').value.trim();
-        const address = document.getElementById('shop-address').value.trim();
-        const currency = document.getElementById('shop-currency').value;
-
-        await api.dbRun(
-            'INSERT INTO settings (shop_name, phone, address, currency) VALUES (?, ?, ?, ?)',
-            [shopName, phone, address, currency]
-        );
-
-        alert('Settings saved.');
+    form.addEventListener('submit', event => {
+        event.preventDefault();
+        save();
     });
-
-    document.getElementById('backup-db-btn').addEventListener('click', async () => {
-        if (window.webApi) {
-            try {
-                const isLocalDatabase = await api.isLocalDatabase();
-                const backupPath = await api.backupDatabase();
-                alert(isLocalDatabase
-                    ? `Database backup downloaded: ${backupPath}`
-                    : `Database backup created. ${backupPath}`);
-            } catch (error) {
-                alert(`Could not create backup: ${error.message}`);
-            }
-            return;
+    modal.querySelector('[data-account-save]').addEventListener('click', save);
+    modal.querySelector('[data-account-remove]')?.addEventListener('click', async () => {
+        if (!await confirmDialog(t('confirm.removeSignIn', { name: barber.name }), { okLabel: t('accounts.remove'), danger: true })) return;
+        try {
+            await runStatements([{ query: 'DELETE FROM barber_accounts WHERE barber_id = ?', params: [barberId] }]);
+            entry.close();
+            toast(t('accounts.removed', { name: barber.name }));
+            await renderPage({ keepScroll: true });
+        } catch (error) {
+            handleError(error);
         }
-
-        const path = prompt('Enter backup file path (e.g. C:/backup/xbarber.db):');
-        if (!path) return;
-        await api.backupDatabase(path);
-        alert('Database backup created.');
-    });
-
-    document.getElementById('restore-db-btn').addEventListener('click', async () => {
-        if (window.webApi) {
-            try {
-                const isLocalDatabase = await api.isLocalDatabase();
-                if (isLocalDatabase) {
-                    const result = await api.restoreDatabase();
-                    if (result.canceled) return;
-                } else {
-                    const path = prompt('Enter backup file path to restore:');
-                    if (!path) return;
-                    await api.restoreDatabase(path);
-                }
-                alert('Database restored.');
-                showPage(activePageName);
-            } catch (error) {
-                alert(`Could not restore backup: ${error.message}`);
-            }
-            return;
-        }
-
-        const path = prompt('Enter backup file path to restore:');
-        if (!path) return;
-        await api.restoreDatabase(path);
-        alert('Database restored.');
     });
 }
+
+/* ------------------------------------------------------------------ */
+/* Settings                                                            */
+/* ------------------------------------------------------------------ */
+
+async function renderSettings() {
+    const settings = await queryOne('SELECT shop_name, phone, address FROM settings ORDER BY id DESC LIMIT 1') || {};
+    const isLocal = typeof api.isLocalDatabase === 'function' ? await api.isLocalDatabase() : false;
+    const current = I18N.getLanguage();
+    const booking = await loadBookingOptions();
+    const bookingCount = await queryOne("SELECT COUNT(*) AS count FROM online_bookings WHERE order_id IS NOT NULL");
+
+    const body = `
+        <div class="settings-grid">
+            <section class="card">
+                <h3 class="card-title">${icon('globe')}${escapeHtml(t('settings.language'))}</h3>
+                <div class="language-options">
+                    ${I18N.languages.map(language => `
+                        <button type="button" class="language-option ${language.code === current ? 'active' : ''}" data-action="lang" data-lang="${language.code}" aria-pressed="${language.code === current}" lang="${language.code}">
+                            <strong>${escapeHtml(language.name)}</strong>
+                            <span>${escapeHtml(language.english)}</span>
+                            ${language.code === current ? icon('check', 'language-check') : ''}
+                        </button>`).join('')}
+                </div>
+            </section>
+            <section class="card">
+                <h3 class="card-title">${icon('store')}${escapeHtml(t('settings.shop'))}</h3>
+                <form class="stack" data-form="shop">
+                    <label class="field"><span>${escapeHtml(t('settings.shopName'))}</span>
+                        <input type="text" name="shop_name" maxlength="60" value="${escapeHtml(settings.shop_name || 'XBARBER SHOP')}">
+                    </label>
+                    <div class="grid-2">
+                        <label class="field"><span>${escapeHtml(t('settings.phone'))} <em>${escapeHtml(t('common.optional'))}</em></span>
+                            <input type="tel" name="phone" maxlength="30" dir="ltr" value="${escapeHtml(settings.phone || '')}">
+                        </label>
+                        <label class="field"><span>${escapeHtml(t('settings.address'))} <em>${escapeHtml(t('common.optional'))}</em></span>
+                            <input type="text" name="address" maxlength="160" value="${escapeHtml(settings.address || '')}">
+                        </label>
+                    </div>
+                    <div><button type="submit" class="btn btn-primary">${icon('check')}<span>${escapeHtml(t('common.save'))}</span></button></div>
+                </form>
+            </section>
+            ${renderBookingCard(booking, Number(bookingCount?.count || 0))}
+            <section class="card">
+                <h3 class="card-title">${icon('lock')}${escapeHtml(t('lock.settingsTitle'))}</h3>
+                <p class="card-text">${escapeHtml(t('lock.settingsText'))}</p>
+                <form class="stack" data-form="history-password" autocomplete="off">
+                    <label class="field"><span>${escapeHtml(t('lock.current'))}</span>
+                        <input type="password" name="current" maxlength="100" autocomplete="off" required>
+                    </label>
+                    <div class="grid-2">
+                        <label class="field"><span>${escapeHtml(t('lock.new'))}</span>
+                            <input type="password" name="next" maxlength="100" autocomplete="new-password" required>
+                        </label>
+                        <label class="field"><span>${escapeHtml(t('lock.repeat'))}</span>
+                            <input type="password" name="repeat" maxlength="100" autocomplete="new-password" required>
+                        </label>
+                    </div>
+                    <div><button type="submit" class="btn btn-primary">${icon('check')}<span>${escapeHtml(t('lock.change'))}</span></button></div>
+                </form>
+            </section>
+            <section class="card">
+                <h3 class="card-title">${icon('database')}${escapeHtml(t('settings.data'))}</h3>
+                <p class="card-text">${escapeHtml(t(isLocal ? 'settings.dataLocal' : 'settings.dataShared'))}</p>
+                <div class="button-row">
+                    <button type="button" class="btn btn-outline" data-action="backup">${icon('download')}<span>${escapeHtml(t('settings.backup'))}</span></button>
+                    <button type="button" class="btn btn-outline" data-action="restore">${icon('upload')}<span>${escapeHtml(t('settings.restore'))}</span></button>
+                </div>
+            </section>
+            <section class="card card-danger">
+                <h3 class="card-title">${icon('alert')}${escapeHtml(t('settings.clearTitle'))}</h3>
+                <p class="card-text">${escapeHtml(t('settings.clearText'))}</p>
+                <div class="button-row">
+                    <button type="button" class="btn btn-danger" data-action="clear-history">${icon('trash')}<span>${escapeHtml(t('settings.clearButton'))}</span></button>
+                    <button type="button" class="btn btn-ghost" data-action="sign-out">${icon('logout')}<span>${escapeHtml(t('nav.signOut'))}</span></button>
+                </div>
+            </section>
+        </div>`;
+    return { actions: '', body };
+}
+
+async function saveShop(form) {
+    const shopName = form.elements.shop_name.value.trim() || 'XBARBER SHOP';
+    const phone = form.elements.phone.value.trim();
+    const address = form.elements.address.value.trim();
+    await api.dbRun(
+        "INSERT INTO settings (shop_name, phone, address, currency) VALUES (?, ?, ?, 'IQD')",
+        [shopName, phone || null, address || null]
+    );
+    state.shopName = shopName;
+    applyStaticText();
+    renderNav();
+    toast(t('toast.saved'));
+}
+
+async function backupDatabase() {
+    if (window.webApi) {
+        const isLocal = await api.isLocalDatabase();
+        const result = await api.backupDatabase();
+        toast(isLocal ? t('settings.backupDownloaded', { file: result }) : t('settings.backupSaved', { file: result }));
+        return;
+    }
+    const path = await promptDialog({ title: t('settings.backup'), label: t('settings.backupPath'), placeholder: 'C:\\backup\\xbarber.db', okLabel: t('settings.backup'), maxLength: 400 });
+    if (!path) return;
+    await api.backupDatabase(path);
+    toast(t('settings.backupSaved', { file: path }));
+}
+
+async function restoreDatabase() {
+    if (!await confirmDialog(t('confirm.restore'), { okLabel: t('settings.restore'), danger: true })) return;
+    if (window.webApi && await api.isLocalDatabase()) {
+        const result = await api.restoreDatabase();
+        if (result?.canceled) return;
+    } else {
+        const path = await promptDialog({ title: t('settings.restore'), label: t('settings.restorePath'), placeholder: 'C:\\backup\\xbarber.db', okLabel: t('settings.restore'), maxLength: 400 });
+        if (!path) return;
+        await api.restoreDatabase(path);
+    }
+    toast(t('settings.restored'));
+    await loadShopName();
+    await renderPage();
+}
+
+async function clearHistory() {
+    if (!await confirmDialog(t('confirm.clearHistory'), { okLabel: t('settings.clearButton'), danger: true })) return;
+    const finished = "SELECT id FROM orders WHERE COALESCE(status, 'completed') IN ('completed', 'cancelled')";
+    await runStatements([
+        // Online bookings keep their last status so the website is not told they were cancelled.
+        { query: `UPDATE online_bookings SET status = 'completed', order_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE order_id IN (${finished})`, params: [] },
+        { query: `DELETE FROM payments WHERE order_id IN (${finished}) OR order_id NOT IN (SELECT id FROM orders)`, params: [] },
+        { query: `DELETE FROM order_items WHERE order_id IN (${finished}) OR order_id NOT IN (SELECT id FROM orders)`, params: [] },
+        { query: "DELETE FROM orders WHERE COALESCE(status, 'completed') IN ('completed', 'cancelled')", params: [] },
+        { query: "DELETE FROM appointments WHERE date < ? OR COALESCE(status, 'scheduled') IN ('completed', 'cancelled', 'transferred')", params: [todayString()] }
+    ]);
+    toast(t('settings.cleared'));
+}
+
+/* ------------------------------------------------------------------ */
+/* Online booking (xoshawi.com)                                        */
+/*                                                                     */
+/* Every minute while online, the app sends the website its barbers,   */
+/* opening hours and taken times, plus status changes of earlier       */
+/* bookings. The website answers with new or changed bookings, which   */
+/* become waiting clients in the chosen barber's column at the chosen  */
+/* time. Full API: docs/ONLINE-BOOKING.md                              */
+/* ------------------------------------------------------------------ */
+
+const BOOKING_DOMAIN = 'xoshawi.com';
+const BOOKING_DEFAULTS = {
+    enabled: '0',
+    url: `https://${BOOKING_DOMAIN}`,
+    key: '',
+    open: '10:00',
+    close: '22:00',
+    slot: '30',
+    days: '14',
+    closed: '',
+    cursor: '',
+    last_sync: '',
+    last_error: '',
+    last_error_at: ''
+};
+const BOOKING_SYNC_MS = 60000;
+const BOOKING_TIMEOUT_MS = 15000;
+const BOOKING_MAX_ROUNDS = 5;
+const BOOKING_MAX_PER_REPLY = 200;
+let bookingTimer = null;
+let bookingSyncRunning = false;
+
+function clampInt(value, min, max, fallback) {
+    const number = Math.round(Number(value));
+    return Number.isFinite(number) && number >= min && number <= max ? number : fallback;
+}
+
+function parseWeekdays(value) {
+    return [...new Set(String(value || '').split(',').filter(Boolean).map(Number))]
+        .filter(day => Number.isInteger(day) && day >= 0 && day <= 6)
+        .sort();
+}
+
+function formatStamp(iso) {
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return '';
+    return `${I18N.formatDateShort(toDateString(date))} ${I18N.formatTime(`${pad(date.getHours())}:${pad(date.getMinutes())}`)}`;
+}
+
+async function loadBookingOptions() {
+    const rows = await api.dbQuery("SELECT key, value FROM app_options WHERE key LIKE 'booking.%'");
+    const options = { ...BOOKING_DEFAULTS };
+    rows.forEach(row => {
+        const name = String(row.key).slice('booking.'.length);
+        if (name in options) options[name] = row.value == null ? '' : String(row.value);
+    });
+    state.booking = options;
+    return options;
+}
+
+function bookingOptionStatements(values) {
+    return Object.entries(values).map(([key, value]) => setOption(`booking.${key}`, value));
+}
+
+// Shop data is only sent to the shop's own website (or to this app's own address, for testing).
+function bookingEndpoint(url) {
+    let parsed;
+    try {
+        parsed = new URL(String(url || '').trim());
+    } catch (error) {
+        return null;
+    }
+    const host = parsed.hostname.toLowerCase();
+    const shopSite = parsed.protocol === 'https:' && (host === BOOKING_DOMAIN || host.endsWith(`.${BOOKING_DOMAIN}`));
+    if (!shopSite && parsed.origin !== window.location.origin) return null;
+    return `${parsed.origin}${parsed.pathname.replace(/\/+$/, '')}/api/cashier/sync`;
+}
+
+// The status the website is told about: received, in-service, completed or cancelled.
+function bookingLocalStatus(row) {
+    if (row.order_exists == null) return row.status === 'completed' ? 'completed' : 'cancelled';
+    if (row.order_status === 'waiting') return 'received';
+    if (row.order_status === 'in-service') return 'in-service';
+    if (row.order_status === 'completed') return 'completed';
+    return 'cancelled';
+}
+
+async function buildBookingPayload(options) {
+    const today = todayString();
+    const daysAhead = clampInt(options.days, 1, 60, 14);
+    const [barbers, busyRows, bookingRows, shopRows] = await queryMany([
+        { query: 'SELECT id, name FROM barbers WHERE is_active = 1 ORDER BY id' },
+        {
+            query: `SELECT barber_id, date, time FROM orders
+                    WHERE barber_id IS NOT NULL AND date BETWEEN ? AND ? AND time IS NOT NULL AND time <> ''
+                      AND COALESCE(status, 'completed') IN ('waiting', 'in-service', 'completed')
+                    ORDER BY date, time LIMIT 5000`,
+            params: [today, addDays(today, daysAhead)]
+        },
+        {
+            query: `SELECT ob.booking_id, ob.order_id, ob.status, ob.reported_status,
+                           o.id AS order_exists, COALESCE(o.status, 'completed') AS order_status
+                    FROM online_bookings ob LEFT JOIN orders o ON o.id = ob.order_id
+                    WHERE ob.reported_status IS NULL OR ob.reported_status <> ob.status OR ob.date >= ?
+                    LIMIT 2000`,
+            params: [addDays(today, -60)]
+        },
+        { query: 'SELECT shop_name, phone, address FROM settings ORDER BY id DESC LIMIT 1' }
+    ]);
+
+    const updates = [];
+    bookingRows.forEach(row => {
+        const status = bookingLocalStatus(row);
+        if (status !== row.reported_status) {
+            updates.push({ booking_id: String(row.booking_id), status, order_id: row.order_exists == null ? null : Number(row.order_id) });
+        }
+    });
+    const shop = shopRows[0] || {};
+    let timezone = 'Asia/Baghdad';
+    try {
+        timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || timezone;
+    } catch (error) {
+        // Keep the default.
+    }
+
+    return {
+        updates,
+        payload: {
+            version: 1,
+            sent_at: new Date().toISOString(),
+            cursor: options.cursor || null,
+            shop: {
+                name: String(shop.shop_name || state.shopName),
+                phone: shop.phone || null,
+                address: shop.address || null,
+                timezone,
+                currency: 'IQD'
+            },
+            hours: {
+                open: options.open,
+                close: options.close,
+                slot_minutes: clampInt(options.slot, 5, 240, 30),
+                days_ahead: daysAhead,
+                closed_weekdays: parseWeekdays(options.closed)
+            },
+            barbers: barbers.map(barber => ({ id: Number(barber.id), name: barber.name })),
+            busy: busyRows.map(row => ({ barber_id: Number(row.barber_id), date: row.date, time: String(row.time).slice(0, 5) })),
+            updates
+        }
+    };
+}
+
+async function postBookingSync(endpoint, key, payload) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), BOOKING_TIMEOUT_MS);
+    const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
+    if (key) headers.Authorization = `Bearer ${key}`;
+    try {
+        let response;
+        try {
+            response = await fetch(endpoint, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(payload),
+                cache: 'no-store',
+                credentials: 'omit',
+                mode: 'cors',
+                referrerPolicy: 'no-referrer',
+                signal: controller.signal
+            });
+        } catch (error) {
+            throw new Error(t(error.name === 'AbortError' ? 'booking.timeout' : 'booking.unreachable'));
+        }
+        if (response.status === 401 || response.status === 403) throw new Error(t('booking.badKey'));
+        if (response.status === 404) throw new Error(t('booking.notReady'));
+        if (!response.ok) throw new Error(t('booking.httpError', { status: response.status }));
+        const data = await response.json().catch(() => null);
+        if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error(t('booking.badReply'));
+        return data;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+function normalizeBooking(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const id = String(raw.id ?? '').trim();
+    if (!id || id.length > 100) return null;
+    const status = raw.status === 'cancelled' ? 'cancelled' : 'booked';
+    const date = String(raw.date || '').slice(0, 10);
+    const time = String(raw.time || '').slice(0, 5);
+    const hasWhen = isValidDate(date) && /^\d{2}:\d{2}$/.test(time);
+    if (status === 'booked' && !hasWhen) return null;
+    const barber = raw.barber_id === null || raw.barber_id === undefined || raw.barber_id === '' ? null : Number(raw.barber_id);
+    return {
+        id,
+        status,
+        barberId: Number.isInteger(barber) ? barber : null,
+        name: String(raw.name || '').trim().slice(0, 80),
+        phone: String(raw.phone || '').trim().slice(0, 30),
+        date: isValidDate(date) ? date : null,
+        time: hasWhen ? time : null
+    };
+}
+
+// Turns website bookings into waiting clients. Returns what changed, for the toast.
+async function applyOnlineBookings(rawList) {
+    const result = { added: [], changed: 0, cancelled: 0 };
+    const latest = new Map();
+    rawList.slice(0, BOOKING_MAX_PER_REPLY).map(normalizeBooking).filter(Boolean)
+        .forEach(booking => latest.set(booking.id, booking));
+    const bookings = [...latest.values()];
+    if (!bookings.length) return result;
+
+    const ids = bookings.map(booking => booking.id);
+    const [existingRows, customers, barbers] = await queryMany([
+        {
+            query: `SELECT ob.booking_id, ob.order_id, ob.barber_id, ob.date, ob.time, o.id AS order_exists, o.status AS order_status
+                    FROM online_bookings ob LEFT JOIN orders o ON o.id = ob.order_id
+                    WHERE ob.booking_id IN (${ids.map(() => '?').join(', ')})`,
+            params: ids
+        },
+        { query: 'SELECT id, name, phone FROM customers WHERE is_active = 1 ORDER BY id DESC' },
+        { query: 'SELECT id, name FROM barbers WHERE is_active = 1' }
+    ]);
+    const existing = new Map(existingRows.map(row => [String(row.booking_id), row]));
+    const barberNames = new Map(barbers.map(barber => [Number(barber.id), barber.name]));
+    const customerByPhone = new Map();
+    customers.forEach(customer => {
+        const key = digits(customer.phone);
+        if (key && !customerByPhone.has(key)) customerByPhone.set(key, customer);
+    });
+
+    let chunk = [];
+    let newCustomers = new Map();
+    const newCustomerNames = new Map();
+    const flush = async () => {
+        if (!chunk.length) return;
+        const results = await runStatements(chunk);
+        // Customers created in this batch can be reused by later bookings with the same phone.
+        newCustomers.forEach((ref, phoneKey) => {
+            const created = results[ref.lastIDFrom];
+            if (created?.lastID) customerByPhone.set(phoneKey, { id: created.lastID, name: newCustomerNames.get(phoneKey) || '' });
+        });
+        chunk = [];
+        newCustomers = new Map();
+    };
+
+    for (const booking of bookings) {
+        if (chunk.length > 85) await flush();
+        const row = existing.get(booking.id);
+        const barberId = booking.barberId != null && barberNames.has(booking.barberId) ? booking.barberId : null;
+
+        if (booking.status === 'cancelled') {
+            if (!row) {
+                chunk.push({
+                    query: `INSERT INTO online_bookings (booking_id, barber_id, customer_name, phone, date, time, status, reported_status)
+                            VALUES (?, ?, ?, ?, ?, ?, 'cancelled', 'cancelled')`,
+                    params: [booking.id, barberId, booking.name || null, booking.phone || null, booking.date, booking.time]
+                });
+            } else if (row.order_exists != null && row.order_status === 'waiting') {
+                // Only clients who have not started yet are removed.
+                chunk.push(
+                    { query: 'DELETE FROM order_items WHERE order_id = ?', params: [Number(row.order_id)] },
+                    { query: "DELETE FROM orders WHERE id = ? AND status = 'waiting'", params: [Number(row.order_id)] },
+                    {
+                        query: "UPDATE online_bookings SET status = 'cancelled', reported_status = 'cancelled', order_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE booking_id = ?",
+                        params: [booking.id]
+                    }
+                );
+                result.cancelled += 1;
+            }
+            continue;
+        }
+
+        if (!row) {
+            // The booking row goes first: a booking that is already here fails the batch instead of being added twice.
+            chunk.push({
+                query: `INSERT INTO online_bookings (booking_id, barber_id, customer_name, phone, date, time, status, reported_status)
+                        VALUES (?, ?, ?, ?, ?, ?, 'received', NULL)`,
+                params: [booking.id, barberId, booking.name || null, booking.phone || null, booking.date, booking.time]
+            });
+            let customerRef = null;
+            const phoneKey = digits(booking.phone);
+            const known = phoneKey ? customerByPhone.get(phoneKey) : null;
+            if (known) {
+                customerRef = Number(known.id);
+                if (booking.name && !String(known.name || '').trim()) {
+                    chunk.push({ query: 'UPDATE customers SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', params: [booking.name, customerRef] });
+                }
+            } else if (phoneKey && newCustomers.has(phoneKey)) {
+                customerRef = newCustomers.get(phoneKey);
+            } else if (booking.name || booking.phone) {
+                chunk.push({
+                    query: 'INSERT INTO customers (name, phone, total_visits, total_spent) VALUES (?, ?, 0, 0)',
+                    params: [booking.name || null, booking.phone || null]
+                });
+                customerRef = { lastIDFrom: chunk.length - 1 };
+                if (phoneKey) {
+                    newCustomers.set(phoneKey, customerRef);
+                    newCustomerNames.set(phoneKey, booking.name);
+                }
+            }
+            chunk.push({
+                query: "INSERT INTO orders (customer_id, date, time, total, discount, status, payment_method, barber_id) VALUES (?, ?, ?, 0, 0, 'waiting', NULL, ?)",
+                params: [customerRef, booking.date, booking.time, barberId]
+            });
+            chunk.push({
+                query: 'UPDATE online_bookings SET order_id = ?, updated_at = CURRENT_TIMESTAMP WHERE booking_id = ?',
+                params: [{ lastIDFrom: chunk.length - 1 }, booking.id]
+            });
+            result.added.push({ name: booking.name, barber: barberNames.get(barberId) || '', date: booking.date, time: booking.time });
+            continue;
+        }
+
+        // Changed on the website: move the client while they are still waiting.
+        const moved = row.date !== booking.date
+            || String(row.time || '').slice(0, 5) !== booking.time
+            || (row.barber_id == null ? null : Number(row.barber_id)) !== barberId;
+        if (moved && row.order_exists != null && row.order_status === 'waiting') {
+            chunk.push(
+                {
+                    query: "UPDATE orders SET date = ?, time = ?, barber_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'waiting'",
+                    params: [booking.date, booking.time, barberId, Number(row.order_id)]
+                },
+                {
+                    query: 'UPDATE online_bookings SET barber_id = ?, customer_name = ?, phone = ?, date = ?, time = ?, updated_at = CURRENT_TIMESTAMP WHERE booking_id = ?',
+                    params: [barberId, booking.name || null, booking.phone || null, booking.date, booking.time, booking.id]
+                }
+            );
+            result.changed += 1;
+        }
+    }
+    await flush();
+    return result;
+}
+
+async function syncOnlineBookings({ manual = false } = {}) {
+    if (!state.signedIn || bookingSyncRunning) return null;
+    if (!manual && state.booking && state.booking.enabled !== '1') return null;
+    bookingSyncRunning = true;
+    try {
+        const options = await loadBookingOptions();
+        if (options.enabled !== '1') {
+            if (manual) toast(t('booking.turnOnFirst'), 'error');
+            return null;
+        }
+        const endpoint = bookingEndpoint(options.url);
+        if (!endpoint) throw new Error(t('booking.badUrl'));
+        if (!navigator.onLine) {
+            if (manual) toast(t('booking.offline'), 'error');
+            return null;
+        }
+
+        const totals = { added: [], changed: 0, cancelled: 0 };
+        let cursor = options.cursor;
+        for (let round = 0; round < BOOKING_MAX_ROUNDS; round += 1) {
+            const { payload, updates } = await buildBookingPayload({ ...options, cursor });
+            const reply = await postBookingSync(endpoint, options.key, payload);
+            const result = await applyOnlineBookings(Array.isArray(reply.bookings) ? reply.bookings : []);
+            totals.added.push(...result.added);
+            totals.changed += result.changed;
+            totals.cancelled += result.cancelled;
+            if (reply.cursor !== undefined) cursor = reply.cursor == null ? '' : String(reply.cursor).slice(0, 500);
+
+            const statements = [
+                ...updates.map(update => ({
+                    query: 'UPDATE online_bookings SET status = ?, reported_status = ?, updated_at = CURRENT_TIMESTAMP WHERE booking_id = ?',
+                    params: [update.status, update.status, update.booking_id]
+                })),
+                ...bookingOptionStatements({ cursor, last_sync: new Date().toISOString(), last_error: '', last_error_at: '' })
+            ];
+            for (let index = 0; index < statements.length; index += 90) {
+                await runStatements(statements.slice(index, index + 90));
+            }
+            // Ask again right away when the website has more, or to confirm what just arrived.
+            if (!reply.has_more && !result.added.length && !result.cancelled && !result.changed) break;
+        }
+        await loadBookingOptions();
+        announceBookings(totals, manual);
+        return totals;
+    } catch (error) {
+        const message = String(error?.message || error).slice(0, 300);
+        try {
+            await runStatements(bookingOptionStatements({ last_error: message, last_error_at: new Date().toISOString() }));
+            await loadBookingOptions();
+        } catch (saveError) {
+            console.warn('Could not save the online booking status:', saveError);
+        }
+        if (manual) toast(t('booking.syncFailed', { message }), 'error');
+        else console.warn('Online booking sync failed:', message);
+        refreshSettingsIfOpen();
+        return null;
+    } finally {
+        bookingSyncRunning = false;
+    }
+}
+
+function announceBookings(totals, manual) {
+    const added = totals.added;
+    if (added.length === 1) {
+        const booking = added[0];
+        toast(t('booking.newOne', {
+            name: booking.name || t('cashier.walkIn'),
+            barber: booking.barber || t('cashier.anyBarber'),
+            when: `${I18N.formatDateShort(booking.date)} ${I18N.formatTime(booking.time)}`
+        }));
+    } else if (added.length > 1) {
+        toast(t('booking.newMany', { n: added.length }));
+    } else if (manual) {
+        toast(t('booking.upToDate'));
+    }
+    if ((added.length || totals.changed || totals.cancelled) && !modalStack.length && ['cashier', 'dashboard'].includes(state.page)) {
+        renderPage({ keepScroll: true });
+    }
+    refreshSettingsIfOpen();
+}
+
+// Only the status pill is updated, so settings that are being changed are not lost.
+function refreshSettingsIfOpen() {
+    const pill = state.page === 'settings' ? dom.page.querySelector('.booking-status') : null;
+    if (!pill || !state.booking) return;
+    const { status, text } = bookingStatusInfo(state.booking);
+    pill.dataset.state = status;
+    pill.innerHTML = `<span class="status-dot"></span>${escapeHtml(text)}`;
+}
+
+function bookingStatusInfo(options) {
+    const enabled = options.enabled === '1';
+    if (!enabled) return { status: 'off', text: t('booking.statusOff') };
+    if (!navigator.onLine) return { status: 'offline', text: t('booking.statusOffline') };
+    if (options.last_error) return { status: 'error', text: t('booking.statusError', { message: options.last_error, time: formatStamp(options.last_error_at) }) };
+    if (options.last_sync) return { status: 'ok', text: t('booking.statusOk', { time: formatStamp(options.last_sync) }) };
+    return { status: 'waiting', text: t('booking.statusWaiting') };
+}
+
+function startBookingSync() {
+    stopBookingSync();
+    bookingTimer = setInterval(() => syncOnlineBookings(), BOOKING_SYNC_MS);
+    loadBookingOptions()
+        .then(() => syncOnlineBookings())
+        .catch(error => console.warn('Could not start online booking:', error));
+}
+
+function stopBookingSync() {
+    clearInterval(bookingTimer);
+    bookingTimer = null;
+}
+
+function renderBookingCard(options, received) {
+    const enabled = options.enabled === '1';
+    const closed = parseWeekdays(options.closed);
+    const { status, text: statusText } = bookingStatusInfo(options);
+    const slot = clampInt(options.slot, 5, 240, 30);
+    const days = clampInt(options.days, 1, 60, 14);
+    const slotChoices = [...new Set([15, 20, 30, 45, 60, slot])].sort((a, b) => a - b);
+    const dayChoices = [...new Set([7, 14, 30, days])].sort((a, b) => a - b);
+    // The week starts on Saturday in Iraq.
+    const weekOrder = [6, 0, 1, 2, 3, 4, 5];
+
+    return `
+        <section class="card card-wide booking-card">
+            <div class="booking-head">
+                <h3 class="card-title">${icon('globe')}${escapeHtml(t('booking.title'))}</h3>
+                <span class="booking-status" data-state="${status}"><span class="status-dot"></span>${escapeHtml(statusText)}</span>
+            </div>
+            <p class="card-text">${escapeHtml(t('booking.text', { domain: BOOKING_DOMAIN }))}</p>
+            <form class="stack" data-form="booking" autocomplete="off">
+                <label class="switch-row">
+                    <input type="checkbox" name="enabled" ${enabled ? 'checked' : ''}>
+                    <span class="switch" aria-hidden="true"></span>
+                    <span class="switch-text"><strong>${escapeHtml(t('booking.enable'))}</strong><small>${escapeHtml(t('booking.enableHint'))}</small></span>
+                </label>
+                <div class="grid-2">
+                    <label class="field"><span>${escapeHtml(t('booking.url'))}</span>
+                        <input type="url" name="url" maxlength="200" dir="ltr" spellcheck="false" value="${escapeHtml(options.url || BOOKING_DEFAULTS.url)}">
+                    </label>
+                    <label class="field"><span>${escapeHtml(t('booking.key'))} <em>${escapeHtml(t('booking.keyHint'))}</em></span>
+                        <input type="text" name="key" maxlength="200" dir="ltr" spellcheck="false" autocomplete="off" value="${escapeHtml(options.key)}">
+                    </label>
+                </div>
+                <div class="grid-4">
+                    <label class="field"><span>${escapeHtml(t('booking.open'))}</span>
+                        <input type="time" name="open" value="${escapeHtml(options.open)}">
+                    </label>
+                    <label class="field"><span>${escapeHtml(t('booking.close'))}</span>
+                        <input type="time" name="close" value="${escapeHtml(options.close)}">
+                    </label>
+                    <label class="field"><span>${escapeHtml(t('booking.slot'))}</span>
+                        <select name="slot">${slotChoices.map(value => `<option value="${value}" ${value === slot ? 'selected' : ''}>${escapeHtml(t('catalog.minutes', { n: value }))}</option>`).join('')}</select>
+                    </label>
+                    <label class="field"><span>${escapeHtml(t('booking.daysAhead'))}</span>
+                        <select name="days">${dayChoices.map(value => `<option value="${value}" ${value === days ? 'selected' : ''}>${escapeHtml(t('booking.days', { n: value }))}</option>`).join('')}</select>
+                    </label>
+                </div>
+                <div class="field">
+                    <span>${escapeHtml(t('booking.closedDays'))}</span>
+                    <div class="day-checks">
+                        ${weekOrder.map(day => `
+                            <label class="day-check">
+                                <input type="checkbox" name="closed" value="${day}" ${closed.includes(day) ? 'checked' : ''}>
+                                <span>${escapeHtml(I18N.weekdayName(day))}</span>
+                            </label>`).join('')}
+                    </div>
+                </div>
+                <div class="button-row booking-actions">
+                    <button type="submit" class="btn btn-primary">${icon('check')}<span>${escapeHtml(t('common.save'))}</span></button>
+                    <button type="button" class="btn btn-outline" data-action="booking-sync">${icon('refresh')}<span>${escapeHtml(t('booking.syncNow'))}</span></button>
+                    <span class="booking-count">${escapeHtml(t('booking.received', { n: received }))}</span>
+                </div>
+            </form>
+        </section>`;
+}
+
+async function saveBookingSettings(form, { quiet = false } = {}) {
+    const url = form.elements.url.value.trim() || BOOKING_DEFAULTS.url;
+    if (!bookingEndpoint(url)) {
+        toast(t('booking.badUrl'), 'error');
+        form.elements.url.focus();
+        return false;
+    }
+    const open = isValidTime(form.elements.open.value) ? form.elements.open.value.slice(0, 5) : BOOKING_DEFAULTS.open;
+    const close = isValidTime(form.elements.close.value) ? form.elements.close.value.slice(0, 5) : BOOKING_DEFAULTS.close;
+    if (close <= open) {
+        toast(t('booking.badHours'), 'error');
+        form.elements.close.focus();
+        return false;
+    }
+    const previous = state.booking || await loadBookingOptions();
+    const values = {
+        enabled: form.elements.enabled.checked ? '1' : '0',
+        url,
+        key: form.elements.key.value.trim(),
+        open,
+        close,
+        slot: String(clampInt(form.elements.slot.value, 5, 240, 30)),
+        days: String(clampInt(form.elements.days.value, 1, 60, 14)),
+        closed: [...form.querySelectorAll('[name="closed"]:checked')].map(input => input.value).join(',')
+    };
+    // A different website starts from the beginning.
+    if (previous.url !== url) values.cursor = '';
+    if (values.enabled !== '1' || previous.url !== url || previous.key !== values.key) {
+        values.last_error = '';
+        values.last_error_at = '';
+    }
+    await runStatements(bookingOptionStatements(values));
+    await loadBookingOptions();
+    if (!quiet) toast(t('toast.saved'));
+    return true;
+}
+
+/* ------------------------------------------------------------------ */
+/* One-time move of upcoming appointments from the old design          */
+/* ------------------------------------------------------------------ */
+
+async function migrateLegacyAppointments() {
+    try {
+        const [appointments, services, assignments] = await queryMany([
+            {
+                query: `SELECT id, customer_id, date, time, service_id, additional_services, status FROM appointments
+                        WHERE date >= ? AND COALESCE(status, 'scheduled') IN ('scheduled', 'waiting', 'in-service')
+                        ORDER BY date, time LIMIT 500`,
+                params: [todayString()]
+            },
+            { query: 'SELECT id, price FROM services' },
+            {
+                query: `SELECT cb.customer_id, cb.barber_id FROM customer_barbers cb
+                        JOIN barbers b ON b.id = cb.barber_id WHERE b.is_active = 1`
+            }
+        ]);
+        if (!appointments.length) return;
+
+        const priceById = new Map(services.map(service => [Number(service.id), Number(service.price || 0)]));
+        const barbersByCustomer = new Map();
+        assignments.forEach(row => {
+            const list = barbersByCustomer.get(Number(row.customer_id)) || [];
+            list.push(Number(row.barber_id));
+            barbersByCustomer.set(Number(row.customer_id), list);
+        });
+
+        let chunk = [];
+        const flush = async () => {
+            if (chunk.length) await api.runTransaction(chunk);
+            chunk = [];
+        };
+        for (const appointment of appointments) {
+            let extra = [];
+            try {
+                extra = JSON.parse(appointment.additional_services || '[]');
+            } catch (error) {
+                extra = [];
+            }
+            const serviceIds = [appointment.service_id, ...(Array.isArray(extra) ? extra : [])]
+                .map(Number)
+                .filter((id, index, list) => priceById.has(id) && list.indexOf(id) === index);
+            const assigned = barbersByCustomer.get(Number(appointment.customer_id)) || [];
+            const barberId = assigned.length === 1 ? assigned[0] : null;
+            const status = appointment.status === 'in-service' && barberId ? 'in-service' : 'waiting';
+            const total = sum(serviceIds, id => priceById.get(id));
+
+            if (chunk.length + serviceIds.length + 2 > 90) await flush();
+            const orderIndex = chunk.length;
+            chunk.push({
+                query: 'INSERT INTO orders (customer_id, date, time, total, discount, status, payment_method, barber_id) VALUES (?, ?, ?, ?, 0, ?, NULL, ?)',
+                params: [appointment.customer_id ?? null, appointment.date, String(appointment.time || '').slice(0, 5), total, status, barberId]
+            });
+            serviceIds.forEach(id => chunk.push({
+                query: "INSERT INTO order_items (order_id, item_type, item_id, quantity, price) VALUES (?, 'service', ?, 1, ?)",
+                params: [{ lastIDFrom: orderIndex }, id, priceById.get(id)]
+            }));
+            chunk.push({
+                query: "UPDATE appointments SET status = 'transferred', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                params: [Number(appointment.id)]
+            });
+        }
+        await flush();
+    } catch (error) {
+        console.warn('Could not move old appointments to the cashier board:', error);
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* Global events                                                       */
+/* ------------------------------------------------------------------ */
+
+const actions = {
+    go: element => go(element.dataset.page),
+    'sign-out': () => signOut(),
+    lang: element => {
+        I18N.setLanguage(element.dataset.lang);
+        applyLanguage();
+    },
+    'board-day': element => {
+        state.boardDate = addDays(state.boardDate, Number(element.dataset.step || 0));
+        return renderPage();
+    },
+    'board-today': () => {
+        state.boardDate = todayString();
+        return renderPage();
+    },
+    'board-goto': element => {
+        if (isValidDate(element.dataset.date)) state.boardDate = element.dataset.date;
+        return renderPage();
+    },
+    'edit-finished': element => editFinished(Number(element.dataset.id)),
+    'lock-editing': () => {
+        lockEditing();
+        toast(t('history.locked'));
+        return renderPage({ keepScroll: true });
+    },
+    'barber-account': element => openAccountModal(Number(element.dataset.id)),
+    'booking-sync': async () => {
+        const form = document.querySelector('[data-form="booking"]');
+        if (form && !await saveBookingSettings(form, { quiet: true })) return;
+        await syncOnlineBookings({ manual: true });
+        if (state.page === 'settings' && !modalStack.length) await renderPage({ keepScroll: true });
+    },
+    'new-client': element => openClientModal({ barberId: element.dataset.barber ? Number(element.dataset.barber) : null }),
+    'edit-client': element => openClientModal({ ticketId: Number(element.dataset.id), focus: element.dataset.focus || null }),
+    'take-client': element => takeClient(Number(element.dataset.id)),
+    'pay-client': element => openPayModal(Number(element.dataset.id)),
+    'back-to-waiting': element => backToWaiting(Number(element.dataset.id)),
+    'undo-pay': element => undoPayment(Number(element.dataset.id)),
+    'add-barber': async () => {
+        const name = await promptDialog({ title: t('barbers.addTitle'), label: t('barbers.name'), placeholder: t('barbers.namePlaceholder'), okLabel: t('barbers.add'), maxLength: 60 });
+        if (name) await addBarber(name);
+    },
+    'rename-barber': element => renameBarber(Number(element.dataset.id), element.dataset.name || ''),
+    'remove-barber': element => removeBarber(Number(element.dataset.id), element.dataset.name || ''),
+    'dash-period': element => {
+        state.dashPeriod = element.dataset.value;
+        return renderPage();
+    },
+    'history-period': element => {
+        state.historyPeriod = element.dataset.value;
+        return renderPage();
+    },
+    print: () => window.print(),
+    'catalog-tab': element => {
+        state.catalogTab = element.dataset.value;
+        return renderPage();
+    },
+    'catalog-category': element => {
+        state.productCategory = element.dataset.value;
+        return renderPage({ keepScroll: true });
+    },
+    'manage-categories': () => openCategoriesModal(),
+    'add-service': () => openServiceModal(),
+    'edit-service': element => openServiceModal(Number(element.dataset.id)),
+    'add-product': () => openProductModal(),
+    'edit-product': element => openProductModal(Number(element.dataset.id)),
+    backup: () => backupDatabase(),
+    restore: () => restoreDatabase(),
+    'clear-history': () => clearHistory()
+};
+
+const busyActions = new Set(['take-client', 'back-to-waiting', 'undo-pay', 'pay-client', 'edit-client', 'new-client', 'edit-finished', 'barber-account', 'booking-sync']);
+
+document.addEventListener('click', event => {
+    const dateInput = event.target.closest('input[type="date"][data-date-input]');
+    if (dateInput && typeof dateInput.showPicker === 'function') {
+        try {
+            dateInput.showPicker();
+        } catch (error) {
+            // Some browsers only open the picker from the native control itself.
+        }
+    }
+
+    const element = event.target.closest('[data-action]');
+    if (!element || element.disabled) return;
+    const handler = actions[element.dataset.action];
+    if (!handler) return;
+    event.preventDefault();
+    const busy = busyActions.has(element.dataset.action);
+    if (busy) element.disabled = true;
+    Promise.resolve()
+        .then(() => handler(element, event))
+        .catch(handleError)
+        .finally(() => {
+            if (busy && document.contains(element)) element.disabled = false;
+        });
+});
+
+document.addEventListener('change', event => {
+    const input = event.target.closest('[data-date-input]');
+    if (!input || !isValidDate(input.value)) return;
+    if (input.dataset.dateInput === 'board') {
+        state.boardDate = input.value;
+    } else if (input.dataset.dateInput === 'history') {
+        state.historyDay = input.value;
+        state.historyPeriod = 'day';
+    }
+    renderPage();
+});
+
+document.addEventListener('submit', event => {
+    const form = event.target.closest('[data-form]');
+    if (!form) return;
+    event.preventDefault();
+    if (form.dataset.form === 'add-barber') {
+        addBarber(form.elements.name.value).catch(handleError);
+    } else if (form.dataset.form === 'shop') {
+        saveShop(form).catch(handleError);
+    } else if (form.dataset.form === 'history-password') {
+        saveHistoryPassword(form).catch(handleError);
+    } else if (form.dataset.form === 'booking') {
+        const button = form.querySelector('button[type="submit"]');
+        if (button) button.disabled = true;
+        saveBookingSettings(form)
+            .then(async saved => {
+                if (!saved) return;
+                if (state.booking?.enabled === '1') await syncOnlineBookings();
+                if (state.page === 'settings' && !modalStack.length) await renderPage({ keepScroll: true });
+            })
+            .catch(handleError)
+            .finally(() => {
+                if (button && document.contains(button)) button.disabled = false;
+            });
+    }
+});
+
+document.addEventListener('toggle', event => {
+    const details = event.target.closest?.('[data-done-key]');
+    if (!details) return;
+    if (details.open) state.openDone.add(details.dataset.doneKey);
+    else state.openDone.delete(details.dataset.doneKey);
+}, true);
+
+document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || !modalStack.length) return;
+    // The client form is not closed by Escape so typed details are never lost by accident.
+    const top = modalStack[modalStack.length - 1];
+    if (top.dismissible) top.close();
+});
+
+function autoRefresh() {
+    if (!state.signedIn || modalStack.length || document.visibilityState !== 'visible') return;
+    if (!['cashier', 'dashboard'].includes(state.page)) return;
+    if (document.activeElement && document.activeElement.matches('input, select, textarea')) return;
+    renderPage({ keepScroll: true });
+}
+
+setInterval(autoRefresh, REFRESH_INTERVAL_MS);
+document.addEventListener('visibilitychange', autoRefresh);
+// Bookings made while the shop was offline arrive as soon as the internet is back.
+window.addEventListener('online', () => syncOnlineBookings());
+window.addEventListener('offline', () => refreshSettingsIfOpen());
+
+dom.loginForm.addEventListener('submit', handleLogin);
+I18N.apply();
+applyStaticText();
+renderLanguageSwitches();

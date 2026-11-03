@@ -151,5 +151,42 @@ CREATE TABLE IF NOT EXISTS app_migrations (
     applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Sign-in accounts for barbers, created by the admin.
+-- password_hash format: sha256i$<iterations>$<salt>$<hex> (see src/js/auth.js)
+CREATE TABLE IF NOT EXISTS barber_accounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    barber_id INTEGER NOT NULL UNIQUE,
+    username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    password_hash TEXT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- App options as key/value pairs (history edit password, online booking settings)
+CREATE TABLE IF NOT EXISTS app_options (
+    key TEXT PRIMARY KEY,
+    value TEXT,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Appointments received from the booking website (xoshawi.com).
+-- status is the latest status in the cashier: received, in-service, completed, cancelled.
+-- reported_status is the last status sent back to the website.
+CREATE TABLE IF NOT EXISTS online_bookings (
+    booking_id TEXT PRIMARY KEY,
+    order_id INTEGER,
+    barber_id INTEGER,
+    customer_name TEXT,
+    phone TEXT,
+    date DATE,
+    time TIME,
+    status TEXT NOT NULL DEFAULT 'received',
+    reported_status TEXT,
+    received_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_online_bookings_order ON online_bookings(order_id);
+
 -- Insert default admin user (username: admin, password: admin123)
 INSERT OR IGNORE INTO admins (username, password_hash) VALUES ('admin', '$2b$10$example_hash_for_demo');

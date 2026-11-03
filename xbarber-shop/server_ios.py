@@ -2,7 +2,9 @@
 """Local SQLite web server for running XBARBER SHOP from a-Shell on iPad."""
 
 import http.server
+import hashlib
 import hmac
+import re
 import ipaddress
 import json
 import mimetypes
@@ -191,6 +193,44 @@ def restore_source(raw_path):
     return target
 
 
+def sha256_hex(text):
+    return hashlib.sha256(str(text).encode("utf-8")).hexdigest()
+
+
+def verify_password(password, stored):
+    """Same steps as src/js/auth.js: sha256i$<iterations>$<salt>$<hex>."""
+    parts = str(stored or "").split("$")
+    if len(parts) != 4 or parts[0] != "sha256i" or not parts[2]:
+        return False
+    try:
+        iterations = int(parts[1])
+    except ValueError:
+        return False
+    if not 1 <= iterations <= 100000:
+        return False
+    value = sha256_hex(f"{parts[2]}:{password}")
+    for _ in range(iterations - 1):
+        value = sha256_hex(value + parts[2])
+    return hmac.compare_digest(value, parts[3])
+
+
+def find_barber_account(username):
+    if not username:
+        return None
+    with database_lock:
+        connection = connect_database()
+        try:
+            row = connection.execute(
+                "SELECT a.username, a.password_hash, a.barber_id, b.name "
+                "FROM barber_accounts a JOIN barbers b ON b.id = a.barber_id "
+                "WHERE a.username = ? COLLATE NOCASE AND a.is_active = 1 AND b.is_active = 1",
+                (username,),
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            connection.close()
+
+
 def session_for(handler):
     token = None
     for part in handler.headers.get("Cookie", "").split(";"):
@@ -204,11 +244,11 @@ def session_for(handler):
         session = sessions.get(token)
         if session is None:
             return None
-        if session <= time.time():
+        if session["expires"] <= time.time():
             del sessions[token]
             return None
-        sessions[token] = time.time() + SESSION_TTL_SECONDS
-        return token
+        session["expires"] = time.time() + SESSION_TTL_SECONDS
+        return session
 
 
 class XBarberHandler(http.server.BaseHTTPRequestHandler):
@@ -308,14 +348,20 @@ class XBarberHandler(http.server.BaseHTTPRequestHandler):
             self.handle_login()
             return
 
-        if session_for(self) is None:
+        session = session_for(self)
+        if session is None:
             raise RequestError(401, "Please log in again.")
+        self.session = session
+        if pathname in ("/api/clear-history", "/api/backup-database", "/api/restore-database") and session["role"] != "admin":
+            raise RequestError(403, "Only the admin can do this.")
         if pathname == "/api/session":
             self.send_json(200, {"ok": True})
         elif pathname == "/api/db-query":
             self.handle_db_query()
         elif pathname == "/api/db-run":
             self.handle_db_run()
+        elif pathname == "/api/db-transaction":
+            self.handle_db_transaction()
         elif pathname == "/api/clear-history":
             self.handle_clear_history()
         elif pathname == "/api/backup-database":
@@ -340,10 +386,21 @@ class XBarberHandler(http.server.BaseHTTPRequestHandler):
         password = body.get("password", "")
         if not isinstance(username, str) or not isinstance(password, str):
             username = password = ""
-        valid = hmac.compare_digest(username.strip(), DEMO_USERNAME) and hmac.compare_digest(
-            password, DEMO_PASSWORD
-        )
-        if not valid:
+        username = username.strip()
+        user = None
+        if hmac.compare_digest(username.lower(), DEMO_USERNAME):
+            if hmac.compare_digest(password, DEMO_PASSWORD):
+                user = {"role": "admin", "username": DEMO_USERNAME}
+        else:
+            account = find_barber_account(username)
+            if account and verify_password(password, account["password_hash"]):
+                user = {
+                    "role": "barber",
+                    "username": account["username"],
+                    "barberId": int(account["barber_id"]),
+                    "name": account["name"],
+                }
+        if user is None:
             with auth_lock:
                 attempts = login_attempts.get(address)
                 if not attempts or attempts[1] <= now:
@@ -355,10 +412,14 @@ class XBarberHandler(http.server.BaseHTTPRequestHandler):
         with auth_lock:
             login_attempts.pop(address, None)
             token = secrets.token_hex(32)
-            sessions[token] = time.time() + SESSION_TTL_SECONDS
+            sessions[token] = {
+                "expires": time.time() + SESSION_TTL_SECONDS,
+                "role": user["role"],
+                "barber_id": user.get("barberId"),
+            }
         self.send_json(
             200,
-            {"ok": True},
+            {"ok": True, "user": user},
             {
                 "Set-Cookie": (
                     f"xbarber_session={token}; HttpOnly; Path=/; SameSite=Strict; "
@@ -366,6 +427,12 @@ class XBarberHandler(http.server.BaseHTTPRequestHandler):
                 )
             },
         )
+
+    def check_write_allowed(self, query):
+        # Barbers sign in on shared devices; they must not create or change sign-in accounts.
+        session = getattr(self, "session", None) or {}
+        if session.get("role") != "admin" and re.search(r"\bbarber_accounts\b", query, re.IGNORECASE):
+            raise RequestError(403, "Only the admin can change sign-in accounts.")
 
     def handle_db_query(self):
         body = self.read_json()
@@ -385,6 +452,7 @@ class XBarberHandler(http.server.BaseHTTPRequestHandler):
         query = check_query(body.get("query"))
         if query.lstrip().split(None, 1)[0].upper() not in ("INSERT", "UPDATE", "DELETE"):
             raise RequestError(403, "Only data-changing queries are allowed here.")
+        self.check_write_allowed(query)
         with database_lock:
             connection = connect_database()
             try:
@@ -394,6 +462,43 @@ class XBarberHandler(http.server.BaseHTTPRequestHandler):
                 self.send_json(200, result)
             finally:
                 connection.close()
+
+    def handle_db_transaction(self):
+        body = self.read_json()
+        statements = body.get("statements")
+        if not isinstance(statements, list) or not 1 <= len(statements) <= 100:
+            raise RequestError(400, "A transaction must contain between 1 and 100 statements.")
+        with database_lock:
+            connection = connect_database()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+                results = []
+                for statement in statements:
+                    if not isinstance(statement, dict):
+                        raise RequestError(400, "Invalid transaction statement.")
+                    query = check_query(statement.get("query"))
+                    if query.lstrip().split(None, 1)[0].upper() not in ("INSERT", "UPDATE", "DELETE", "REPLACE"):
+                        raise RequestError(403, "Transactions only accept data-changing queries.")
+                    self.check_write_allowed(query)
+                    raw_params = statement.get("params")
+                    params = []
+                    for value in raw_params if isinstance(raw_params, list) else []:
+                        reference = value.get("lastIDFrom") if isinstance(value, dict) else None
+                        if isinstance(reference, int) and not isinstance(reference, bool):
+                            if reference < 0 or reference >= len(results) or results[reference]["lastID"] is None:
+                                raise RequestError(400, "Invalid transaction result reference.")
+                            params.append(results[reference]["lastID"])
+                        else:
+                            params.append(value)
+                    cursor = connection.execute(query, normalized_params(params))
+                    results.append({"lastID": cursor.lastrowid, "changes": cursor.rowcount})
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                connection.close()
+        self.send_json(200, results)
 
     def handle_clear_history(self):
         body = self.read_json()
@@ -509,7 +614,7 @@ def main():
     print("XBARBER SHOP - iPad local server")
     print(f"Database:  {DB_PATH}")
     print(f"Open Safari on this iPad: http://127.0.0.1:{PORT}")
-    print("Login: admin / admin123")
+    print("Login: admin / admin123 (barber sign-ins are created on the Barbers page)")
     print("Keep a-Shell open while using the app. Press Ctrl+C to stop.")
     print("")
     try:

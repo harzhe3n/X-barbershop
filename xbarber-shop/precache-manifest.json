@@ -8,6 +8,8 @@
     "/precache-manifest.json",
     "/src/index.html",
     "/src/css/style.css",
+    "/src/js/i18n.js",
+    "/src/js/auth.js",
     "/src/js/app.js",
     "/src/js/web-api.js",
     "/database/schema.sql",

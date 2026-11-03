@@ -295,6 +295,46 @@ function safeEqual(left, right) {
   return crypto.timingSafeEqual(a, b);
 }
 
+// Same steps as src/js/auth.js: sha256i$<iterations>$<salt>$<hex>
+function sha256Hex(text) {
+  return crypto.createHash('sha256').update(String(text), 'utf8').digest('hex');
+}
+
+function verifyPassword(password, stored) {
+  const parts = String(stored || '').split('$');
+  if (parts.length !== 4 || parts[0] !== 'sha256i') return false;
+  const iterations = Number(parts[1]);
+  if (!Number.isInteger(iterations) || iterations < 1 || iterations > 100000 || !parts[2]) return false;
+  let hash = sha256Hex(`${parts[2]}:${password}`);
+  for (let i = 1; i < iterations; i += 1) hash = sha256Hex(hash + parts[2]);
+  return safeEqual(hash, parts[3]);
+}
+
+async function findBarberAccount(username) {
+  if (!username) return null;
+  return serialize(async () => {
+    const connection = await openDatabase();
+    return dbGet(
+      connection,
+      `SELECT a.username, a.password_hash, a.barber_id, b.name
+       FROM barber_accounts a JOIN barbers b ON b.id = a.barber_id
+       WHERE a.username = ? COLLATE NOCASE AND a.is_active = 1 AND b.is_active = 1`,
+      [username]
+    );
+  });
+}
+
+function requireAdmin(session) {
+  if (session.session.role !== 'admin') throw httpError(403, 'Only the admin can do this.');
+}
+
+// Barbers sign in on shared devices; they must not create or change sign-in accounts.
+function assertWriteAllowed(session, query) {
+  if (session.session.role !== 'admin' && /\bbarber_accounts\b/i.test(query)) {
+    throw httpError(403, 'Only the admin can change sign-in accounts.');
+  }
+}
+
 function clientAddress(req) {
   return req.socket.remoteAddress || 'unknown';
 }
@@ -389,15 +429,25 @@ async function handleLogin(req, res) {
   const username = typeof body.username === 'string' ? body.username.trim() : '';
   const password = typeof body.password === 'string' ? body.password : '';
 
-  if (!safeEqual(username, DEMO_USERNAME) || !safeEqual(password, DEMO_PASSWORD)) {
+  let user = null;
+  if (safeEqual(username.toLowerCase(), DEMO_USERNAME)) {
+    if (safeEqual(password, DEMO_PASSWORD)) user = { role: 'admin', username: DEMO_USERNAME };
+  } else {
+    const account = await findBarberAccount(username);
+    if (account && verifyPassword(password, account.password_hash)) {
+      user = { role: 'barber', username: account.username, barberId: Number(account.barber_id), name: account.name };
+    }
+  }
+
+  if (!user) {
     recordLoginFailure(address);
     return sendJson(res, 401, { error: 'Invalid username or password.' });
   }
 
   loginAttempts.delete(address);
   const token = crypto.randomBytes(32).toString('hex');
-  sessions.set(token, { expiresAt: Date.now() + SESSION_TTL_MS });
-  sendJson(res, 200, { ok: true }, {
+  sessions.set(token, { expiresAt: Date.now() + SESSION_TTL_MS, role: user.role, barberId: user.barberId || null });
+  sendJson(res, 200, { ok: true, user }, {
     'Set-Cookie': `xbarber_session=${token}; HttpOnly; Path=/; SameSite=Strict; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`
   });
 }
@@ -497,6 +547,7 @@ async function handleApi(req, res, pathname) {
     if (!/^\s*(INSERT|UPDATE|DELETE)\b/i.test(query)) {
       throw httpError(403, 'Only data-changing queries are allowed here.');
     }
+    assertWriteAllowed(session, query);
     const result = await serialize(async () => {
       const connection = await openDatabase();
       return dbRun(connection, query, normalizeParams(body.params));
@@ -510,6 +561,7 @@ async function handleApi(req, res, pathname) {
     if (!Array.isArray(statements) || !statements.length || statements.length > 100) {
       throw httpError(400, 'A transaction must contain between 1 and 100 statements.');
     }
+    statements.forEach(statement => assertWriteAllowed(session, assertQuery(statement && statement.query)));
 
     const results = await serialize(async () => {
       const connection = await openDatabase();
@@ -546,9 +598,18 @@ async function handleApi(req, res, pathname) {
     return sendJson(res, 200, results);
   }
 
-  if (pathname === '/api/clear-history') return handleClearHistory(req, res);
-  if (pathname === '/api/backup-database') return handleBackup(req, res);
-  if (pathname === '/api/restore-database') return handleRestore(req, res);
+  if (pathname === '/api/clear-history') {
+    requireAdmin(session);
+    return handleClearHistory(req, res);
+  }
+  if (pathname === '/api/backup-database') {
+    requireAdmin(session);
+    return handleBackup(req, res);
+  }
+  if (pathname === '/api/restore-database') {
+    requireAdmin(session);
+    return handleRestore(req, res);
+  }
 
   throw httpError(404, 'API route not found.');
 }
@@ -681,7 +742,7 @@ server.listen(PORT, HOST, () => {
   } else {
     console.log('No LAN address was found. Connect this PC to Wi-Fi and restart the server.');
   }
-  console.log('Login: admin / admin123');
+  console.log('Login: admin / admin123 (barber sign-ins are created on the Barbers page)');
   console.log('iPad cannot connect? Allow Node.js on Private networks in Windows Firewall.');
   console.log('Keep this window open. Press Ctrl+C to stop.');
   console.log('');

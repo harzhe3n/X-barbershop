@@ -1,7 +1,8 @@
 'use strict';
 
-const CACHE_NAME = 'xbarber-app-shell-v10';
+const CACHE_NAME = 'xbarber-app-shell-v12';
 const APP_ENTRY = '/src/index.html';
+const NETWORK_TIMEOUT_MS = 3500;
 const CORE_FILES = [
   '/',
   '/index.html',
@@ -11,6 +12,8 @@ const CORE_FILES = [
   '/precache-manifest.json',
   APP_ENTRY,
   '/src/css/style.css',
+  '/src/js/i18n.js',
+  '/src/js/auth.js',
   '/src/js/app.js',
   '/src/js/web-api.js',
   '/database/schema.sql',
@@ -23,6 +26,10 @@ const CORE_FILES = [
   '/vendor/sql-wasm.wasm',
   '/vendor/SQLJS-LICENSE'
 ];
+
+// App code is fetched fresh when online so updates arrive on the next load;
+// the cached copy is used offline or when the network is slow.
+const NETWORK_FIRST = /\.(?:html|js|css|json|sql)$/i;
 
 self.addEventListener('install', event => {
   event.waitUntil((async () => {
@@ -37,7 +44,12 @@ self.addEventListener('install', event => {
     } catch (error) {
       console.warn('Using the core offline file list:', error.message);
     }
-    await cache.addAll([...new Set(files)]);
+    // One missing file must not stop the rest of the app from working offline.
+    await Promise.all([...new Set(files)].map(file =>
+      cache.add(new Request(file, { cache: 'reload' })).catch(error => {
+        console.warn(`Could not cache ${file} for offline use:`, error.message);
+      })
+    ));
     await self.skipWaiting();
   })());
 });
@@ -50,6 +62,25 @@ self.addEventListener('activate', event => {
     await self.clients.claim();
   })());
 });
+
+async function networkFirst(request, key) {
+  const cache = await caches.open(CACHE_NAME);
+  const network = fetch(request).then(async response => {
+    if (response.ok) await cache.put(key, response.clone());
+    return response;
+  });
+  network.catch(() => {});
+
+  const cached = await cache.match(key);
+  if (!cached) return network;
+
+  const timeout = new Promise(resolve => setTimeout(() => resolve(null), NETWORK_TIMEOUT_MS));
+  try {
+    return (await Promise.race([network, timeout])) || cached;
+  } catch {
+    return cached;
+  }
+}
 
 self.addEventListener('fetch', event => {
   const request = event.request;
@@ -90,8 +121,13 @@ self.addEventListener('fetch', event => {
     return;
   }
 
+  if (NETWORK_FIRST.test(url.pathname) && !url.pathname.startsWith('/vendor/')) {
+    event.respondWith(networkFirst(request, url.pathname));
+    return;
+  }
+
   event.respondWith((async () => {
-    const cached = await caches.match(request);
+    const cached = await caches.match(request, { ignoreSearch: true });
     if (cached) return cached;
     const response = await fetch(request);
     if (response.ok) {
