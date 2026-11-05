@@ -731,7 +731,7 @@ const SLOT_PRESETS = [10, 20, 30];
 
 const {
     toMinutes, fromMinutes, closingMinutes, slotGrid, parseBarberSlots, barberStep,
-    offKey, extraKey, parseExtraSlots, daySlots, parseOffDays, clampInt, parseWeekdays
+    offKey, extraKey, skipKey, parseExtraSlots, parseSkippedSlots, daySlots, parseOffDays, clampInt, parseWeekdays
 } = XSlots;
 
 function nowMinutes() {
@@ -757,7 +757,7 @@ async function renderCashier() {
     const options = await loadBookingOptions();
     const hours = shopHours(options);
     const mineOnly = isAdmin() ? '' : ' AND (o.barber_id = ? OR o.barber_id IS NULL)';
-    const [barbers, ticketRows, itemRows, upcomingRows, services, slotRows, offRows, extraRows, onlineRows] = await queryMany([
+    const [barbers, ticketRows, itemRows, upcomingRows, services, slotRows, offRows, extraRows, onlineRows, skipRows] = await queryMany([
         { query: 'SELECT b.id, b.name, b.is_active, p.thumb_data FROM barbers b LEFT JOIN barber_photos p ON p.barber_id = b.id ORDER BY b.id' },
         {
             query: `SELECT ${TICKET_COLUMNS}
@@ -784,7 +784,8 @@ async function renderCashier() {
         BARBER_SLOT_QUERY,
         { query: "SELECT key, value FROM app_options WHERE key LIKE ?", params: [`off.%.${date}`] },
         { query: "SELECT key, value FROM app_options WHERE key LIKE ?", params: [`extra.%.${date}`] },
-        { query: "SELECT key, value FROM app_options WHERE key LIKE 'online.%'" }
+        { query: "SELECT key, value FROM app_options WHERE key LIKE 'online.%'" },
+        { query: "SELECT key, value FROM app_options WHERE key LIKE ?", params: [`skip.%.${date}`] }
     ]);
     if (state.addSlot != null && !barbers.some(barber => Number(barber.id) === state.addSlot && Number(barber.is_active))) state.addSlot = null;
 
@@ -863,11 +864,13 @@ async function renderCashier() {
     const barberSlots = parseBarberSlots(slotRows);
     const offDays = parseOffDays(offRows);
     const extraSlots = parseExtraSlots(extraRows);
+    const skippedSlots = parseSkippedSlots(skipRows);
     const offline = offlineBarbers(onlineRows);
     const ctx = {
         date,
         isOnline: barberId => !offline.has(Number(barberId)),
         extraFor: barberId => extraSlots.get(`${Number(barberId)}|${date}`) || [],
+        skipFor: barberId => skippedSlots.get(`${Number(barberId)}|${date}`) || [],
         isOff: barberId => offDays.has(`${Number(barberId)}|${date}`),
         today: date === today,
         hours,
@@ -928,7 +931,7 @@ function renderSlotBar(hours, pastFree) {
 // Ready-made start times for "Add slot", so nothing has to be typed: halfway between the barber's
 // slots, the barber's own steps after closing and before opening, plus every 5 minutes in "Other time". Slots that already
 // exist, and on today times that are already over, are left out.
-function addSlotChoices(hours, step, existing, isPast) {
+function addSlotChoices(hours, step, existing, isPast, deleted = []) {
     const open = toMinutes(hours.open);
     const close = closingMinutes(hours.close);
     const taken = new Set(existing);
@@ -953,7 +956,9 @@ function addSlotChoices(hours, step, existing, isPast) {
     for (let minutes = 0; minutes < 24 * 60; minutes += 5) {
         if (usable(minutes)) other.push(minutes);
     }
-    return { between, after, before, other };
+    // Regular slots deleted on this day come first, so they are easy to put back.
+    const removed = deleted.filter(usable);
+    return { removed, between, after, before, other };
 }
 
 // "Add slot": tap a start time; the new slot opens straight away, ready for the name, phone and service.
@@ -975,6 +980,7 @@ function renderAddSlot(barber, choices) {
                 <strong>${icon('clock')}<span>${escapeHtml(t('slots.pickStart'))}</span></strong>
                 <button type="button" class="btn-icon btn-icon-sm" data-action="add-slot-cancel" aria-label="${escapeHtml(t('common.cancel'))}">${icon('x')}</button>
             </div>
+            ${choices.removed.length ? `<span class="add-slot-group">${escapeHtml(t('slots.removedGroup'))}</span>${chips(choices.removed)}` : ''}
             ${choices.between.length ? `<span class="add-slot-group">${escapeHtml(t('slots.between'))}</span>${chips(choices.between)}` : ''}
             ${choices.after.length ? `<span class="add-slot-group">${escapeHtml(t('slots.afterClosing'))}</span>${chips(choices.after)}` : ''}
             ${choices.before.length ? `<span class="add-slot-group">${escapeHtml(t('slots.beforeOpening'))}</span>${chips(choices.before)}` : ''}
@@ -989,15 +995,15 @@ function renderAddSlot(barber, choices) {
         </div>`;
 }
 
-async function changeExtraSlots(barberId, change) {
+async function changeExtraSlots(barberId, change, keyFor = extraKey) {
     const id = Number(barberId);
     if (!Number.isInteger(id) || (!isAdmin() && !isMine(id))) {
         denyNotYours();
         return null;
     }
-    const key = extraKey(id, state.boardDate);
+    const key = keyFor(id, state.boardDate);
     const row = await queryOne('SELECT value FROM app_options WHERE key = ?', [key]);
-    const before = parseExtraSlots(row ? [{ key, value: row.value }] : []).get(`${id}|${state.boardDate}`) || [];
+    const before = [...new Set(String(row?.value || '').split(',').map(toMinutes).filter(value => value != null))].sort((a, b) => a - b);
     const after = change(before);
     if (!after) return null;
     await runStatements([after.length
@@ -1014,8 +1020,19 @@ async function addExtraSlot(barberId, time) {
     const [options, slotRows] = await Promise.all([loadBookingOptions(), api.dbQuery(BARBER_SLOT_QUERY.query)]);
     const hours = shopHours(options);
     const step = barberStep(hours, parseBarberSlots(slotRows), barberId);
+    // A regular slot deleted earlier on this day: bring it back instead of adding a new one.
+    const skipRow = await queryOne('SELECT value FROM app_options WHERE key = ?', [skipKey(barberId, state.boardDate)]);
+    const skipped = String(skipRow?.value || '').split(',').map(toMinutes).filter(value => value != null);
+    if (skipped.includes(minutes)) {
+        const restored = await changeExtraSlots(barberId, before => before.filter(value => value !== minutes), skipKey);
+        if (!restored) return;
+        state.addSlot = null;
+        toast(t('slots.slotAdded', { time: I18N.formatTime(fromMinutes(minutes)) }));
+        await openSlotForm(barberId, fromMinutes(minutes));
+        return;
+    }
     const saved = await changeExtraSlots(barberId, before => {
-        if (daySlots(hours, step, before).includes(minutes)) {
+        if (daySlots(hours, step, before, skipped).includes(minutes)) {
             toast(t('slots.slotExists', { time: I18N.formatTime(fromMinutes(minutes)) }), 'error');
             return null;
         }
@@ -1025,6 +1042,17 @@ async function addExtraSlot(barberId, time) {
     state.addSlot = null;
     toast(t('slots.slotAdded', { time: I18N.formatTime(fromMinutes(minutes)) }));
     await openSlotForm(barberId, fromMinutes(minutes));
+}
+
+// Deletes a regular (empty) slot on the day shown. The website stops offering it at once.
+async function skipSlot(barberId, time) {
+    const minutes = toMinutes(time);
+    if (minutes == null) return;
+    const saved = await changeExtraSlots(barberId, before => [...new Set([...before, minutes])].sort((a, b) => a - b), skipKey);
+    if (!saved) return;
+    if (state.slotForm && state.slotForm.barberId === Number(barberId) && !state.slotForm.ticketId && state.slotForm.time === time) state.slotForm = null;
+    toast(t('slots.slotDeleted', { time: I18N.formatTime(time) }));
+    await renderPage({ keepScroll: true });
 }
 
 async function removeExtraSlot(barberId, time) {
@@ -1203,7 +1231,8 @@ function renderColumn(column, ctx) {
     const off = Boolean(column.barber && !removed && ctx.isOff(column.barber.id));
     const step = column.barber ? ctx.stepFor(column.barber.id) : ctx.hours.slot;
     const extra = column.barber && !off ? ctx.extraFor(column.barber.id) : [];
-    const grid = column.barber && !off ? daySlots(ctx.hours, step, extra) : [];
+    const skip = column.barber && !off ? ctx.skipFor(column.barber.id) : [];
+    const grid = column.barber && !off ? daySlots(ctx.hours, step, extra, skip) : [];
 
     let free = 0;
     let marked = false;
@@ -1251,13 +1280,14 @@ function renderColumn(column, ctx) {
                 ${extraTag}
                 <span class="slot-plus">${icon('plus')}<span>${escapeHtml(t('slots.add'))}</span></span>
             </button>`;
-        if (!row.extra) return slotButton;
-        // A slot added by hand can be taken away again.
+        // Every free slot can be deleted: one added by hand goes away, a regular one is skipped
+        // on this day (and comes back with "Add slot").
+        const removeLabel = t(row.extra ? 'slots.removeExtra' : 'slots.deleteSlot');
         return `
-            <div class="slot-row" ${now}>
+            <div class="slot-row" ${row.extra ? now : ''}>
                 ${slotButton}
-                <button type="button" class="btn-icon btn-icon-sm slot-remove" data-action="remove-extra-slot" data-barber="${barberId}" data-time="${time}"
-                    aria-label="${escapeHtml(t('slots.removeExtra'))}" title="${escapeHtml(t('slots.removeExtra'))}">${icon('x')}</button>
+                <button type="button" class="btn-icon btn-icon-sm slot-remove" data-action="${row.extra ? 'remove-extra-slot' : 'skip-slot'}" data-barber="${barberId}" data-time="${time}"
+                    aria-label="${escapeHtml(removeLabel)}" title="${escapeHtml(removeLabel)}">${icon('x')}</button>
             </div>`;
     }).join('');
 
@@ -1291,7 +1321,7 @@ function renderColumn(column, ctx) {
             </div>
             ${column.barber && !removed && !off ? renderColumnSlot(column, step, editable) : ''}
             ${column.barber && !removed && !off && editable
-                ? renderAddSlot(column.barber, state.addSlot === barberId ? addSlotChoices(ctx.hours, step, grid, minutes => ctx.isPast(minutes, step)) : null)
+                ? renderAddSlot(column.barber, state.addSlot === barberId ? addSlotChoices(ctx.hours, step, grid, minutes => ctx.isPast(minutes, step), skip) : null)
                 : ''}
             <div class="col-body" data-scroll-key="${column.key}">
                 ${offNote}
@@ -4730,6 +4760,7 @@ const actions = {
         return renderPage({ keepScroll: true });
     },
     'remove-extra-slot': element => removeExtraSlot(element.dataset.barber, element.dataset.time),
+    'skip-slot': element => skipSlot(element.dataset.barber, element.dataset.time),
     'toggle-past': () => {
         state.showPast = !state.showPast;
         return renderPage({ keepScroll: true });
@@ -4808,7 +4839,7 @@ const actions = {
 };
 
 const busyActions = new Set([
-    'take-client', 'back-to-waiting', 'undo-pay', 'done-client', 'slot-add', 'slot-edit', 'slot-remove', 'slot-length', 'toggle-work', 'toggle-online', 'remove-extra-slot', 'add-slot-pick',
+    'take-client', 'back-to-waiting', 'undo-pay', 'done-client', 'slot-add', 'slot-edit', 'slot-remove', 'slot-length', 'toggle-work', 'toggle-online', 'remove-extra-slot', 'skip-slot', 'add-slot-pick',
     'edit-finished', 'delete-finished', 'delete-sale', 'sell-done', 'barber-account', 'clear-history', 'remove-photo'
 ]);
 

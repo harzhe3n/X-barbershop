@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_NAME = 'xbarber-app-shell-v20';
+const CACHE_NAME = 'xbarber-app-shell-v21';
 const APP_ENTRY = '/src/index.html';
 const NETWORK_TIMEOUT_MS = 3500;
 const CORE_FILES = [

@@ -393,10 +393,10 @@ function assertWriteAllowed(session, query, params = []) {
   if (session.session.role === 'admin') return;
   if (OWNER_ONLY_TABLES.test(query)) throw httpError(403, 'Only the owner can do this.');
   if (/\bapp_options\b/i.test(query)) {
-    // A barber may only set their own time between clients, added slots, days off and Open / Closed.
+    // A barber may only set their own time between clients, added and deleted slots, days off and Open / Closed.
     const shape = query.replace(/\s+/g, ' ').trim();
-    const match = /^(?:slot\.barber\.(\d+)|extra\.(\d+)\.\d{4}-\d{2}-\d{2}|off\.(\d+)\.\d{4}-\d{2}-\d{2}|online\.(\d+))$/.exec(String(params[0] ?? ''));
-    const barberId = match ? Number(match[1] || match[2] || match[3] || match[4]) : null;
+    const match = /^(?:slot\.barber\.(\d+)|extra\.(\d+)\.\d{4}-\d{2}-\d{2}|off\.(\d+)\.\d{4}-\d{2}-\d{2}|online\.(\d+)|skip\.(\d+)\.\d{4}-\d{2}-\d{2})$/.exec(String(params[0] ?? ''));
+    const barberId = match ? Number(match[1] || match[2] || match[3] || match[4] || match[5]) : null;
     if (!OPTION_WRITES.has(shape) || barberId == null || barberId !== Number(session.session.barberId)) {
       throw httpError(403, 'Only the owner can do this.');
     }
@@ -878,7 +878,7 @@ function daysBetween(from, to) {
 async function siteSnapshot(connection, now) {
   const optionRows = await dbAll(connection,
     `SELECT key, value FROM app_options
-     WHERE key LIKE 'booking.%' OR key LIKE 'slot.barber.%' OR key LIKE 'extra.%' OR key LIKE 'off.%' OR key LIKE 'online.%'
+     WHERE key LIKE 'booking.%' OR key LIKE 'slot.barber.%' OR key LIKE 'extra.%' OR key LIKE 'off.%' OR key LIKE 'online.%' OR key LIKE 'skip.%'
         OR key IN ('site.open', 'shop.instagram', 'shop.whatsapp')`);
   const options = {};
   optionRows.forEach(row => {
@@ -916,6 +916,7 @@ async function siteSnapshot(connection, now) {
     photos: new Map(photos.map(row => [Number(row.barber_id), String(row.updated_at || '')])),
     barberSlots: Slots.parseBarberSlots(optionRows),
     extras: Slots.parseExtraSlots(optionRows),
+    skips: Slots.parseSkippedSlots(optionRows),
     offs: Slots.parseOffDays(optionRows),
     busy,
     shop: {
@@ -961,6 +962,7 @@ function barberDays(snapshot, barberId) {
       hours,
       step,
       extra: snapshot.extras.get(`${barberId}|${date}`) || [],
+      skip: snapshot.skips.get(`${barberId}|${date}`) || [],
       off: !online || snapshot.offs.has(`${barberId}|${date}`),
       clientMinutes: snapshot.busy.get(`${barberId}|${date}`) || [],
       isToday: index === 0,

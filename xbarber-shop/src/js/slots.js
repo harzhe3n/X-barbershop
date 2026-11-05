@@ -116,6 +116,24 @@
         return `off.${Number(barberId)}.${date}`;
     }
 
+    // Regular slots a barber deleted on one day: "skip.<barber id>.<date>" = "HH:MM,HH:MM".
+    function skipKey(barberId, date) {
+        return `skip.${Number(barberId)}.${date}`;
+    }
+
+    // Deleted regular slots: "<barber id>|<date>" -> sorted minutes.
+    function parseSkippedSlots(rows) {
+        const map = new Map();
+        rows.forEach(row => {
+            const match = /^skip\.(\d+)\.(\d{4}-\d{2}-\d{2})$/.exec(String(row.key));
+            if (!match) return;
+            const minutes = [...new Set(String(row.value || '').split(',').map(toMinutes).filter(value => value != null))]
+                .sort((a, b) => a - b);
+            if (minutes.length) map.set(`${Number(match[1])}|${match[2]}`, minutes);
+        });
+        return map;
+    }
+
     // Slots added by hand: "<barber id>|<date>" -> sorted minutes.
     function parseExtraSlots(rows) {
         const map = new Map();
@@ -139,9 +157,12 @@
         return set;
     }
 
-    // The barber's slots for a day: the regular ones plus the ones added by hand.
-    function daySlots(hours, step, extra = []) {
-        return [...new Set([...slotGrid(hours, step), ...extra])].sort((a, b) => a - b);
+    // The barber's slots for a day: the regular ones (minus the ones the barber deleted)
+    // plus the ones added by hand.
+    function daySlots(hours, step, extra = [], skip = []) {
+        const deleted = new Set(skip);
+        const regular = slotGrid(hours, step).filter(minutes => !deleted.has(minutes));
+        return [...new Set([...regular, ...extra])].sort((a, b) => a - b);
     }
 
     // A slot is taken when a client's time is inside it (from its start up to the next slot).
@@ -153,12 +174,12 @@
      * One barber on one day, for the website: which slots are free and which are taken.
      * Slots that are already over (today) are left out of both lists.
      */
-    function barberDay({ hours, step, extra = [], off = false, clientMinutes = [], isToday = false, nowMinutes = 0, closedDay = false }) {
+    function barberDay({ hours, step, extra = [], skip = [], off = false, clientMinutes = [], isToday = false, nowMinutes = 0, closedDay = false }) {
         if (closedDay) return { status: 'closed', free: [], taken: [] };
         if (off) return { status: 'off', free: [], taken: [] };
         const free = [];
         const taken = [];
-        daySlots(hours, step, extra).forEach(start => {
+        daySlots(hours, step, extra, skip).forEach(start => {
             if (isToday && start + step <= nowMinutes) return;
             // Today, a slot that has already started cannot be booked online any more.
             if (isTaken(start, step, clientMinutes)) taken.push(start);
@@ -184,7 +205,9 @@
         barberStep,
         extraKey,
         offKey,
+        skipKey,
         parseExtraSlots,
+        parseSkippedSlots,
         parseOffDays,
         daySlots,
         isTaken,

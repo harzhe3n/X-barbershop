@@ -449,7 +449,10 @@
             'online.goOn': 'Open now',
             'online.goOff': 'Close',
             'online.savedOn': '{name} is open: the website takes bookings.',
-            'online.savedOff': '{name} is closed: the website takes no bookings.'
+            'online.savedOff': '{name} is closed: the website takes no bookings.',
+            'slots.deleteSlot': 'Delete this slot',
+            'slots.slotDeleted': 'Slot {time} deleted. Add slot brings it back.',
+            'slots.removedGroup': 'Deleted slots'
         },
 
         ar: {
@@ -887,7 +890,10 @@
             'online.goOn': 'افتح الآن',
             'online.goOff': 'أغلق',
             'online.savedOn': '{name} مفتوح: الموقع يقبل الحجوزات.',
-            'online.savedOff': '{name} مغلق: الموقع لا يقبل الحجوزات.'
+            'online.savedOff': '{name} مغلق: الموقع لا يقبل الحجوزات.',
+            'slots.deleteSlot': 'حذف هذا الوقت',
+            'slots.slotDeleted': 'تم حذف وقت {time}. يمكن إرجاعه من «إضافة وقت».',
+            'slots.removedGroup': 'أوقات محذوفة'
         },
 
         ckb: {
@@ -1325,7 +1331,10 @@
             'online.goOn': 'ئێستا بیکەرەوە',
             'online.goOff': 'دایبخە',
             'online.savedOn': '{name} کراوەیە: ماڵپەڕەکە نۆرە وەردەگرێت.',
-            'online.savedOff': '{name} داخراوە: ماڵپەڕەکە نۆرە وەرناگرێت.'
+            'online.savedOff': '{name} داخراوە: ماڵپەڕەکە نۆرە وەرناگرێت.',
+            'slots.deleteSlot': 'سڕینەوەی ئەم کاتە',
+            'slots.slotDeleted': 'کاتی {time} سڕایەوە. بە «زیادکردنی کات» دەگەڕێتەوە.',
+            'slots.removedGroup': 'کاتە سڕاوەکان'
         }
     };
 
