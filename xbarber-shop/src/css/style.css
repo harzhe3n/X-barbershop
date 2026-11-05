@@ -3903,6 +3903,96 @@ body[data-signed-in] #offline-status[data-state="error"] {
     align-self: center;
 }
 
+/* Open / Closed for website bookings */
+.online-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 26px;
+    padding: 0 10px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.online-pill svg.icon {
+    width: 13px;
+    height: 13px;
+}
+
+button.online-pill {
+    cursor: pointer;
+}
+
+button.online-pill:hover {
+    border-color: currentColor;
+}
+
+.online-pill.is-on {
+    background: #111;
+    color: #fff;
+}
+
+.online-pill.is-off {
+    border-color: var(--line-2);
+    background: #fff;
+    color: var(--ink-2);
+    text-decoration: line-through;
+}
+
+.my-online {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 14px;
+    padding: 14px 16px;
+    border: 1px solid var(--line-2);
+    border-radius: 16px;
+    background: #fff;
+}
+
+.my-online.is-on {
+    border-color: #b7e0b7;
+    background: var(--done-bg);
+}
+
+.my-online-dot {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    border-radius: 50%;
+    box-shadow: inset 0 0 0 2px var(--ink-2);
+}
+
+.my-online.is-on .my-online-dot {
+    background: var(--done-ink);
+    box-shadow: 0 0 0 5px rgba(46, 125, 50, 0.18);
+}
+
+.my-online-text {
+    display: grid;
+    flex: 1;
+    gap: 2px;
+}
+
+.my-online-text span {
+    color: var(--ink-2);
+    font-size: 13.5px;
+}
+
+@media (max-width: 620px) {
+    .my-online {
+        flex-wrap: wrap;
+    }
+
+    .my-online .btn {
+        width: 100%;
+    }
+}
+
 .work-pill {
     display: inline-flex;
     align-items: center;

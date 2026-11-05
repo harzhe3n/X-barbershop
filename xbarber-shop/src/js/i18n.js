@@ -437,7 +437,19 @@
             'settings.whatsapp': 'WhatsApp number',
             'settings.socialHint': 'Shown as buttons at the bottom of the booking website. Instagram: your page name, like @xbarber. WhatsApp: leave it empty to use the shop phone.',
             'settings.badInstagram': 'Type the Instagram page name, like @xbarber.',
-            'settings.badWhatsapp': 'Type a valid WhatsApp number.'
+            'settings.badWhatsapp': 'Type a valid WhatsApp number.',
+            'online.on': 'Open',
+            'online.off': 'Closed',
+            'online.openTitle': '{name} is closed for website bookings. Tap to open.',
+            'online.closeTitle': '{name} is open for website bookings. Tap to close.',
+            'online.youOn': 'You are open',
+            'online.youOnText': 'Customers can book you on the website.',
+            'online.youOff': 'You are closed',
+            'online.youOffText': 'The website takes no bookings for you until you open.',
+            'online.goOn': 'Open now',
+            'online.goOff': 'Close',
+            'online.savedOn': '{name} is open: the website takes bookings.',
+            'online.savedOff': '{name} is closed: the website takes no bookings.'
         },
 
         ar: {
@@ -863,7 +875,19 @@
             'settings.whatsapp': 'رقم الواتساب',
             'settings.socialHint': 'تظهر كأزرار في أسفل موقع الحجز. إنستغرام: اسم الصفحة مثل ‎@xbarber. واتساب: اتركه فارغاً لاستخدام هاتف المحل.',
             'settings.badInstagram': 'اكتب اسم صفحة إنستغرام مثل ‎@xbarber.',
-            'settings.badWhatsapp': 'اكتب رقم واتساب صحيحاً.'
+            'settings.badWhatsapp': 'اكتب رقم واتساب صحيحاً.',
+            'online.on': 'مفتوح',
+            'online.off': 'مغلق',
+            'online.openTitle': '{name} مغلق لحجوزات الموقع. اضغط للفتح.',
+            'online.closeTitle': '{name} مفتوح لحجوزات الموقع. اضغط للإغلاق.',
+            'online.youOn': 'أنت مفتوح',
+            'online.youOnText': 'يمكن للزبائن الحجز عندك من الموقع.',
+            'online.youOff': 'أنت مغلق',
+            'online.youOffText': 'لا يقبل الموقع حجوزات لك حتى تفتح.',
+            'online.goOn': 'افتح الآن',
+            'online.goOff': 'أغلق',
+            'online.savedOn': '{name} مفتوح: الموقع يقبل الحجوزات.',
+            'online.savedOff': '{name} مغلق: الموقع لا يقبل الحجوزات.'
         },
 
         ckb: {
@@ -1289,7 +1313,19 @@
             'settings.whatsapp': 'ژمارەی واتساپ',
             'settings.socialHint': 'وەک دوگمە لە خوارەوەی ماڵپەڕی نۆرەگرتن دەردەکەون. ئینستاگرام: ناوی پەڕەکەت وەک ‎@xbarber. واتساپ: بەتاڵی بهێڵەوە بۆ بەکارهێنانی مۆبایلی دوکان.',
             'settings.badInstagram': 'ناوی پەڕەی ئینستاگرام بنووسە وەک ‎@xbarber.',
-            'settings.badWhatsapp': 'ژمارەیەکی واتساپی دروست بنووسە.'
+            'settings.badWhatsapp': 'ژمارەیەکی واتساپی دروست بنووسە.',
+            'online.on': 'کراوە',
+            'online.off': 'داخراوە',
+            'online.openTitle': '{name} بۆ نۆرەی ماڵپەڕ داخراوە. دابگرە بۆ کردنەوە.',
+            'online.closeTitle': '{name} بۆ نۆرەی ماڵپەڕ کراوەیە. دابگرە بۆ داخستن.',
+            'online.youOn': 'تۆ کراوەیت',
+            'online.youOnText': 'کڕیاران دەتوانن لە ماڵپەڕەکە نۆرە لات بگرن.',
+            'online.youOff': 'تۆ داخراویت',
+            'online.youOffText': 'ماڵپەڕەکە هیچ نۆرەیەک بۆ تۆ وەرناگرێت تا دەیکەیتەوە.',
+            'online.goOn': 'ئێستا بیکەرەوە',
+            'online.goOff': 'دایبخە',
+            'online.savedOn': '{name} کراوەیە: ماڵپەڕەکە نۆرە وەردەگرێت.',
+            'online.savedOff': '{name} داخراوە: ماڵپەڕەکە نۆرە وەرناگرێت.'
         }
     };
 

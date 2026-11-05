@@ -393,10 +393,10 @@ function assertWriteAllowed(session, query, params = []) {
   if (session.session.role === 'admin') return;
   if (OWNER_ONLY_TABLES.test(query)) throw httpError(403, 'Only the owner can do this.');
   if (/\bapp_options\b/i.test(query)) {
-    // A barber may only set their own time between clients, added slots and days off.
+    // A barber may only set their own time between clients, added slots, days off and Open / Closed.
     const shape = query.replace(/\s+/g, ' ').trim();
-    const match = /^(?:slot\.barber\.(\d+)|extra\.(\d+)\.\d{4}-\d{2}-\d{2}|off\.(\d+)\.\d{4}-\d{2}-\d{2})$/.exec(String(params[0] ?? ''));
-    const barberId = match ? Number(match[1] || match[2] || match[3]) : null;
+    const match = /^(?:slot\.barber\.(\d+)|extra\.(\d+)\.\d{4}-\d{2}-\d{2}|off\.(\d+)\.\d{4}-\d{2}-\d{2}|online\.(\d+))$/.exec(String(params[0] ?? ''));
+    const barberId = match ? Number(match[1] || match[2] || match[3] || match[4]) : null;
     if (!OPTION_WRITES.has(shape) || barberId == null || barberId !== Number(session.session.barberId)) {
       throw httpError(403, 'Only the owner can do this.');
     }
@@ -878,7 +878,7 @@ function daysBetween(from, to) {
 async function siteSnapshot(connection, now) {
   const optionRows = await dbAll(connection,
     `SELECT key, value FROM app_options
-     WHERE key LIKE 'booking.%' OR key LIKE 'slot.barber.%' OR key LIKE 'extra.%' OR key LIKE 'off.%'
+     WHERE key LIKE 'booking.%' OR key LIKE 'slot.barber.%' OR key LIKE 'extra.%' OR key LIKE 'off.%' OR key LIKE 'online.%'
         OR key IN ('site.open', 'shop.instagram', 'shop.whatsapp')`);
   const options = {};
   optionRows.forEach(row => {
@@ -907,7 +907,12 @@ async function siteSnapshot(connection, now) {
     now,
     hours,
     open: String(siteRow?.value ?? '1') !== '0',
-    barbers: barbers.map(barber => ({ id: Number(barber.id), name: String(barber.name || '') })),
+    // A barber who closed themselves in the cashier takes no website bookings.
+    barbers: barbers.map(barber => ({
+      id: Number(barber.id),
+      name: String(barber.name || ''),
+      online: optionValue(`online.${Number(barber.id)}`) !== '0'
+    })),
     photos: new Map(photos.map(row => [Number(row.barber_id), String(row.updated_at || '')])),
     barberSlots: Slots.parseBarberSlots(optionRows),
     extras: Slots.parseExtraSlots(optionRows),
@@ -947,6 +952,7 @@ function whatsappUrl(value) {
 // One barber's days, from today up to the last day customers may book.
 function barberDays(snapshot, barberId) {
   const { now, hours } = snapshot;
+  const online = snapshot.barbers.find(barber => barber.id === barberId)?.online !== false;
   const step = Slots.barberStep(hours, snapshot.barberSlots, barberId);
   const days = [];
   for (let index = 0; index <= hours.days; index += 1) {
@@ -955,7 +961,7 @@ function barberDays(snapshot, barberId) {
       hours,
       step,
       extra: snapshot.extras.get(`${barberId}|${date}`) || [],
-      off: snapshot.offs.has(`${barberId}|${date}`),
+      off: !online || snapshot.offs.has(`${barberId}|${date}`),
       clientMinutes: snapshot.busy.get(`${barberId}|${date}`) || [],
       isToday: index === 0,
       nowMinutes: now.minutes,
@@ -980,6 +986,7 @@ async function handlePublicInfo(req, res) {
       id: barber.id,
       name: barber.name,
       photo: photoUrl(snapshot, barber.id),
+      online: barber.online,
       slot_minutes: Slots.barberStep(snapshot.hours, snapshot.barberSlots, barber.id),
       next: next ? { date: next.date, time: next.free[0] } : null,
       today: days[0].status

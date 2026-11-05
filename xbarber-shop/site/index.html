@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <meta name="theme-color" content="#050505">
+    <meta name="theme-color" content="#ffffff">
     <meta name="description" content="Book your barber online: pick a barber, choose a free time, leave your name and phone number.">
     <title>XBARBER · Book your barber</title>
     <link rel="icon" href="/assets/logo/logo.ico">
     <link rel="apple-touch-icon" href="/assets/logo/apple-touch-icon.png">
-    <link rel="stylesheet" href="/site/site.css?v=2026.11.05.4">
+    <link rel="stylesheet" href="/site/site.css?v=2026.11.05.5">
 </head>
 <body>
     <!-- Loading screen: the two halves of the X come together, then the name appears. -->
@@ -18,7 +18,7 @@
                 <polygon class="mark-left" points="325,288 651,593 388,839 388,676 457,608 325,481"/>
                 <polygon class="mark-right" points="904,385 904,593 797,690 934,822 934,1014 589,683"/>
             </svg>
-            <div class="loader-word" aria-label="XBARBER">
+            <div class="loader-word" aria-label="XBARBER" dir="ltr">
                 <span>X</span><span>B</span><span>A</span><span>R</span><span>B</span><span>E</span><span>R</span>
             </div>
             <div class="loader-line"><span></span></div>
@@ -42,7 +42,7 @@
     <main id="main">
         <!-- The barbers: one big photo in the middle, the next one every 5 seconds. -->
         <section class="hero" aria-labelledby="hero-title">
-            <div class="hero-word" aria-hidden="true" dir="ltr">XBARBER</div>
+            <div class="hero-word" aria-hidden="true" dir="ltr"><div class="hero-word-track"><span>XBARBER</span><span>XBARBER</span><span>XBARBER</span><span>XBARBER</span></div></div>
             <div class="hero-head">
                 <p class="eyebrow" id="hero-eyebrow"></p>
                 <h1 class="display hero-title" id="hero-title">
@@ -107,6 +107,6 @@
     </div>
 
     <noscript><p class="noscript">Please turn on JavaScript to book an appointment.</p></noscript>
-    <script src="/site/site.js?v=2026.11.05.4"></script>
+    <script src="/site/site.js?v=2026.11.05.5"></script>
 </body>
 </html>

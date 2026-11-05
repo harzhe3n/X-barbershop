@@ -757,7 +757,7 @@ async function renderCashier() {
     const options = await loadBookingOptions();
     const hours = shopHours(options);
     const mineOnly = isAdmin() ? '' : ' AND (o.barber_id = ? OR o.barber_id IS NULL)';
-    const [barbers, ticketRows, itemRows, upcomingRows, services, slotRows, offRows, extraRows] = await queryMany([
+    const [barbers, ticketRows, itemRows, upcomingRows, services, slotRows, offRows, extraRows, onlineRows] = await queryMany([
         { query: 'SELECT b.id, b.name, b.is_active, p.thumb_data FROM barbers b LEFT JOIN barber_photos p ON p.barber_id = b.id ORDER BY b.id' },
         {
             query: `SELECT ${TICKET_COLUMNS}
@@ -783,7 +783,8 @@ async function renderCashier() {
         { query: 'SELECT id, name, price FROM services WHERE is_active = 1 ORDER BY name' },
         BARBER_SLOT_QUERY,
         { query: "SELECT key, value FROM app_options WHERE key LIKE ?", params: [`off.%.${date}`] },
-        { query: "SELECT key, value FROM app_options WHERE key LIKE ?", params: [`extra.%.${date}`] }
+        { query: "SELECT key, value FROM app_options WHERE key LIKE ?", params: [`extra.%.${date}`] },
+        { query: "SELECT key, value FROM app_options WHERE key LIKE 'online.%'" }
     ]);
     if (state.addSlot != null && !barbers.some(barber => Number(barber.id) === state.addSlot && Number(barber.is_active))) state.addSlot = null;
 
@@ -862,8 +863,10 @@ async function renderCashier() {
     const barberSlots = parseBarberSlots(slotRows);
     const offDays = parseOffDays(offRows);
     const extraSlots = parseExtraSlots(extraRows);
+    const offline = offlineBarbers(onlineRows);
     const ctx = {
         date,
+        isOnline: barberId => !offline.has(Number(barberId)),
         extraFor: barberId => extraSlots.get(`${Number(barberId)}|${date}`) || [],
         isOff: barberId => offDays.has(`${Number(barberId)}|${date}`),
         today: date === today,
@@ -882,6 +885,7 @@ async function renderCashier() {
     const closedDay = hours.closed.includes(parseDate(date).getDay());
 
     const body = `
+        ${renderMyOnlineCard(activeBarbers, ctx)}
         <div class="day-strip">
             <div class="day-stat"><span class="status-dot status-dot-waiting"></span><span>${escapeHtml(t('status.waiting'))}</span><strong>${waiting}</strong></div>
             <div class="day-stat"><span class="status-dot status-dot-active"></span><span>${escapeHtml(t('status.in-service'))}</span><strong>${active}</strong></div>
@@ -1028,6 +1032,59 @@ async function removeExtraSlot(barberId, time) {
     const saved = await changeExtraSlots(barberId, before => before.filter(value => value !== minutes));
     if (!saved) return;
     toast(t('slots.slotRemoved'));
+    await renderPage({ keepScroll: true });
+}
+
+// Open / Closed: whether the website takes bookings for a barber. Saved as app_options
+// "online.<barber id>" = "0" when closed; nothing (or "1") means open. The barber opens and
+// closes themselves when they start and stop work; the owner can change anyone's.
+function offlineBarbers(rows) {
+    return new Set(rows
+        .filter(row => String(row.value) === '0')
+        .map(row => Number(String(row.key).slice('online.'.length)))
+        .filter(Number.isInteger));
+}
+
+function renderOnlineButton(barber, online, editable) {
+    const label = t(online ? 'online.on' : 'online.off');
+    const className = `online-pill ${online ? 'is-on' : 'is-off'}`;
+    if (!editable) return `<span class="${className}">${icon('globe')}${escapeHtml(label)}</span>`;
+    return `
+        <button type="button" class="${className}" data-action="toggle-online" data-barber="${barber.id}" data-online="${online ? '1' : '0'}"
+            aria-pressed="${online}" title="${escapeHtml(t(online ? 'online.closeTitle' : 'online.openTitle', { name: barber.name }))}">
+            ${icon('globe')}${escapeHtml(label)}
+        </button>`;
+}
+
+// A barber who signs in sees their own status first, with one big button to change it.
+function renderMyOnlineCard(barbers, ctx) {
+    if (isAdmin()) return '';
+    const mine = barbers.find(barber => isMine(barber.id));
+    if (!mine) return '';
+    const online = ctx.isOnline(mine.id);
+    return `
+        <div class="my-online ${online ? 'is-on' : 'is-off'}">
+            <span class="my-online-dot" aria-hidden="true"></span>
+            <div class="my-online-text">
+                <strong>${escapeHtml(t(online ? 'online.youOn' : 'online.youOff'))}</strong>
+                <span>${escapeHtml(t(online ? 'online.youOnText' : 'online.youOffText'))}</span>
+            </div>
+            <button type="button" class="btn ${online ? 'btn-outline' : 'btn-primary'}" data-action="toggle-online" data-barber="${mine.id}" data-online="${online ? '1' : '0'}">
+                ${icon('globe')}<span>${escapeHtml(t(online ? 'online.goOff' : 'online.goOn'))}</span>
+            </button>
+        </div>`;
+}
+
+async function toggleOnline(barberId, wasOnline) {
+    const id = Number(barberId);
+    if (!Number.isInteger(id) || (!isAdmin() && !isMine(id))) {
+        denyNotYours();
+        return;
+    }
+    const barber = await queryOne('SELECT name FROM barbers WHERE id = ?', [id]);
+    if (!barber) return;
+    await runStatements([setOption(`online.${id}`, wasOnline ? '0' : '1')]);
+    toast(t(wasOnline ? 'online.savedOff' : 'online.savedOn', { name: barber.name }));
     await renderPage({ keepScroll: true });
 }
 
@@ -1217,6 +1274,7 @@ function renderColumn(column, ctx) {
                     <div class="col-name">
                         <h3>${escapeHtml(name)}</h3>
                         <div class="col-tags">
+                            ${column.barber && !removed ? renderOnlineButton(column.barber, ctx.isOnline(column.barber.id), editable) : ''}
                             ${column.barber && !removed ? renderWorkButton(column.barber, off, editable, ctx.date) : ''}
                             ${mine ? `<span class="tag tag-mine">${escapeHtml(t('cashier.you'))}</span>` : ''}
                         </div>
@@ -4483,10 +4541,10 @@ function renderHoursCard(options, barbers = [], barberSlots = new Map()) {
             <form class="stack" data-form="hours" autocomplete="off">
                 <div class="grid-2">
                     <label class="field"><span>${escapeHtml(t('booking.open'))}</span>
-                        <input type="time" name="open" value="${escapeHtml(hours.open)}">
+                        <select name="open">${hourChoices(hours.open, false)}</select>
                     </label>
                     <label class="field"><span>${escapeHtml(t('booking.close'))}</span>
-                        <input type="time" name="close" value="${escapeHtml(hours.close)}">
+                        <select name="close">${hourChoices(hours.close, true)}</select>
                     </label>
                 </div>
                 <div class="field">
@@ -4507,6 +4565,20 @@ function renderHoursCard(options, barbers = [], barberSlots = new Map()) {
                 <div><button type="submit" class="btn btn-primary">${icon('check')}<span>${escapeHtml(t('common.save'))}</span></button></div>
             </form>
         </section>`;
+}
+
+// Ready-made opening and closing times every 30 minutes, so nothing has to be typed.
+// Closing times end with midnight (12:00 AM).
+function hourChoices(selected, closing) {
+    const times = [];
+    for (let minutes = closing ? 30 : 0; minutes < 24 * 60; minutes += 30) times.push(fromMinutes(minutes));
+    if (closing) times.push('00:00');
+    const current = String(selected || '').slice(0, 5);
+    if (isValidTime(current) && !times.includes(current)) {
+        times.push(current);
+        times.sort((a, b) => (closing ? closingMinutes(a) - closingMinutes(b) : toMinutes(a) - toMinutes(b)));
+    }
+    return times.map(time => `<option value="${time}" ${time === current ? 'selected' : ''}>${escapeHtml(closing ? closingLabel(time) : I18N.formatTime(time))}</option>`).join('');
 }
 
 async function saveHours(form) {
@@ -4646,6 +4718,7 @@ const actions = {
     'slot-remove': element => removeOpenClient(Number(element.dataset.id)),
     'slot-length': element => saveSlotLength(element.dataset.barber, element.dataset.value),
     'toggle-work': element => toggleWork(element.dataset.barber, element.dataset.off === '1'),
+    'toggle-online': element => toggleOnline(element.dataset.barber, element.dataset.online === '1'),
     'add-slot-open': element => {
         state.addSlot = Number(element.dataset.barber);
         state.addSlotFocus = true;
@@ -4735,7 +4808,7 @@ const actions = {
 };
 
 const busyActions = new Set([
-    'take-client', 'back-to-waiting', 'undo-pay', 'done-client', 'slot-add', 'slot-edit', 'slot-remove', 'slot-length', 'toggle-work', 'remove-extra-slot', 'add-slot-pick',
+    'take-client', 'back-to-waiting', 'undo-pay', 'done-client', 'slot-add', 'slot-edit', 'slot-remove', 'slot-length', 'toggle-work', 'toggle-online', 'remove-extra-slot', 'add-slot-pick',
     'edit-finished', 'delete-finished', 'delete-sale', 'sell-done', 'barber-account', 'clear-history', 'remove-photo'
 ]);
 

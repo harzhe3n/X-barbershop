@@ -7,7 +7,7 @@ The booking website is part of this project. `server.js` serves it at `/` and th
 | File | What it is |
 |---|---|
 | `site/index.html` | The page: loading screen, header, barber slideshow, how it works, footer, booking window |
-| `site/site.css` | Design (black and white), loading animation, slideshow, phone layout |
+| `site/site.css` | Design (white, black type), loading animation, the always-moving XBARBER, slideshow, phone layout |
 | `site/site.js` | Texts in Kurdish (default), Arabic and English, the slideshow and the three booking steps |
 | `src/js/slots.js` | How time slots are made. Used by the cashier and by the server, so both always show the same free times |
 | `server.js` | The public API below, plus the cashier API |
@@ -32,6 +32,7 @@ They are exactly the free slots of the cashier board:
 - Each barber's own time between clients (10, 20, 30 minutes or any number).
 - Slots added by hand with **Add slot** in the cashier.
 - Not on closed weekdays, and not on days a barber marked **Not at work**.
+- Not for a barber who is **Closed** (app_options `online.<id>` = `0`). Each barber opens or closes themselves in the cashier; the owner can change anyone's.
 - A slot is taken when a client's time is inside it. Today, slots that have already started are not offered.
 - "Now" and "today" use the shop's time zone (`XBARBER_TZ`, default `Asia/Baghdad`).
 

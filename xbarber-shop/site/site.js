@@ -97,6 +97,7 @@
             'footer.instagram': 'Instagram',
             'footer.whatsapp': 'WhatsApp',
             'footer.follow': 'Follow us',
+            'barbers.closedNow': 'Closed now · not taking bookings',
             'common.close': 'Close',
             'common.back': 'Back',
             'loading': 'Loading',
@@ -180,6 +181,7 @@
             'footer.instagram': 'إنستغرام',
             'footer.whatsapp': 'واتساب',
             'footer.follow': 'تابعنا',
+            'barbers.closedNow': 'مغلق الآن · لا يقبل الحجوزات',
             'common.close': 'إغلاق',
             'common.back': 'رجوع',
             'loading': 'جارٍ التحميل',
@@ -263,6 +265,7 @@
             'footer.instagram': 'ئینستاگرام',
             'footer.whatsapp': 'واتساپ',
             'footer.follow': 'فۆڵۆومان بکە',
+            'barbers.closedNow': 'ئێستا داخراوە · نۆرە وەرناگرێت',
             'common.close': 'داخستن',
             'common.back': 'گەڕانەوە',
             'loading': 'بار دەبێت',
@@ -460,6 +463,11 @@
         return barberList()[state.slide] || null;
     }
 
+    // Open unless the barber closed themselves in the cashier.
+    function isOpen(barber) {
+        return Boolean(barber) && barber.online !== false;
+    }
+
     // Runs while nothing holds it: not hovered, no booking window open, page visible.
     // People who ask their phone for less motion move between barbers themselves.
     function playing() {
@@ -561,7 +569,9 @@
             return;
         }
         let status;
-        if (barber.next) {
+        if (!isOpen(barber)) {
+            status = `<span class="dot"></span><span>${esc(t('barbers.closedNow'))}</span>`;
+        } else if (barber.next) {
             status = `<span class="dot dot-on"></span><span>${esc(t('barbers.next', { when: '' }))}<strong>${esc(`${relativeDay(barber.next.date)} · ${formatTime(barber.next.time)}`)}</strong></span>`;
         } else if (barber.today === 'off') {
             status = `<span class="dot"></span><span>${esc(t('barbers.offToday'))}</span>`;
@@ -571,7 +581,7 @@
         spotlight.innerHTML = `
             <h2 class="spot-name">${esc(barber.name)}</h2>
             <p class="spot-status">${status}</p>
-            <button type="button" class="btn btn-light" data-book="${barber.id}" ${state.info.open ? '' : 'disabled'}>${esc(t('barbers.bookWith', { name: barber.name }))}</button>`;
+            <button type="button" class="btn btn-light" data-book="${barber.id}" ${state.info.open && isOpen(barber) ? '' : 'disabled'}>${esc(t('barbers.bookWith', { name: barber.name }))}</button>`;
         if (animate) {
             spotlight.classList.remove('spot-in');
             void spotlight.offsetWidth;
@@ -588,7 +598,7 @@
         }
         picker.setAttribute('aria-label', t('carousel.label'));
         picker.innerHTML = `${list.map((barber, index) => `
-            <button type="button" class="pick" data-index="${index}" aria-current="${index === state.slide}">
+            <button type="button" class="pick ${isOpen(barber) ? '' : 'is-closed'}" data-index="${index}" aria-current="${index === state.slide}">
                 <span class="pick-face">${barber.photo ? `<img src="${esc(barber.photo)}" alt="">` : esc(initial(barber.name))}</span>
                 <span>${esc(barber.name)}</span>
                 <span class="pick-progress" aria-hidden="true"></span>
@@ -1017,7 +1027,7 @@
         // "Book now" in the header books with the barber in the middle.
         if (event.target.closest('[data-book-active]')) {
             const barber = activeBarber();
-            if (barber && state.info?.open) openSheet(barber.id);
+            if (isOpen(barber) && state.info?.open) openSheet(barber.id);
             else carousel.scrollIntoView({ behavior: 'smooth', block: 'center' });
             return;
         }
@@ -1038,7 +1048,7 @@
             // The photo in the middle opens the booking; a photo beside it comes to the middle.
             if (index === state.slide) {
                 const barber = activeBarber();
-                if (barber && state.info?.open) openSheet(barber.id);
+                if (isOpen(barber) && state.info?.open) openSheet(barber.id);
             } else {
                 goTo(index);
             }

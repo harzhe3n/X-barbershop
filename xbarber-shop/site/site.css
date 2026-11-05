@@ -1,21 +1,23 @@
-/* XBARBER booking website: black and white. The barbers' photos are the centre of the page. */
+/* XBARBER booking website: white, with black type. The barbers' photos are the centre of the page. */
 
 :root {
-    color-scheme: dark;
-    --bg: #050505;
-    --bg-2: #0c0c0c;
-    --surface: #141414;
-    --surface-2: #1c1c1c;
-    --surface-3: #2a2a2a;
-    --line: rgba(255, 255, 255, 0.1);
-    --line-2: rgba(255, 255, 255, 0.22);
-    --ink: #ffffff;
-    --ink-2: #d4d4d4;
-    --muted: #8c8c8c;
-    --error: #ff8080;
+    color-scheme: light;
+    --bg: #ffffff;
+    --bg-2: #f5f5f5;
+    --surface: #f3f3f3;
+    --surface-2: #e8e8e8;
+    --surface-3: #dcdcdc;
+    --line: rgba(0, 0, 0, 0.1);
+    --line-2: rgba(0, 0, 0, 0.2);
+    --ink: #0a0a0a;
+    --ink-2: #2e2e2e;
+    --muted: #6b6b6b;
+    /* Text on black buttons and on the chosen day / time. */
+    --on-ink: #ffffff;
+    --error: #c62828;
     --radius: 18px;
     --radius-lg: 28px;
-    --shadow: 0 40px 90px rgba(0, 0, 0, 0.75);
+    --shadow: 0 30px 70px rgba(0, 0, 0, 0.2);
     --font: system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
     --font-display: "Didot", "Bodoni 72", "Bodoni MT", "Playfair Display", Georgia, "Times New Roman", serif;
     --font-arabic: "Noto Kufi Arabic", "Noto Sans Arabic", "Geeza Pro", "Segoe UI", Tahoma, sans-serif;
@@ -134,11 +136,11 @@ svg.icon {
 
 .btn-light {
     background: var(--ink);
-    color: #000;
+    color: var(--on-ink);
 }
 
 .btn-light:hover:not(:disabled) {
-    background: #e2e2e2;
+    background: #333333;
 }
 
 .btn-ghost {
@@ -189,7 +191,7 @@ svg.icon {
     display: grid;
     place-items: center;
     background:
-        radial-gradient(55% 45% at 50% 45%, rgba(255, 255, 255, 0.07), transparent 70%),
+        radial-gradient(55% 45% at 50% 45%, rgba(0, 0, 0, 0.04), transparent 70%),
         var(--bg);
     transition: opacity 0.7s var(--ease), visibility 0.7s;
 }
@@ -232,9 +234,9 @@ svg.icon {
 }
 
 @keyframes mark-glow {
-    0% { filter: drop-shadow(0 0 0 rgba(255, 255, 255, 0)); transform: scale(1); }
-    45% { filter: drop-shadow(0 0 22px rgba(255, 255, 255, 0.6)); transform: scale(1.06); }
-    100% { filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.2)); transform: scale(1); }
+    0% { filter: drop-shadow(0 0 0 rgba(0, 0, 0, 0)); transform: scale(1); }
+    45% { filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.25)); transform: scale(1.06); }
+    100% { filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.1)); transform: scale(1); }
 }
 
 .loader-word {
@@ -317,7 +319,7 @@ body.is-ready .loader-inner {
     justify-content: space-between;
     gap: 14px;
     padding: max(14px, env(safe-area-inset-top)) clamp(18px, 5vw, 56px) 14px;
-    background: linear-gradient(180deg, rgba(5, 5, 5, 0.94), rgba(5, 5, 5, 0.7));
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.78));
     -webkit-backdrop-filter: blur(14px);
     backdrop-filter: blur(14px);
     border-bottom: 1px solid var(--line);
@@ -337,6 +339,29 @@ body.is-ready .loader-inner {
 
 .brand-mark polygon {
     fill: var(--ink);
+}
+
+/* The X in the header never stops: its two halves slide apart and back together. */
+.site-header .brand-mark {
+    overflow: visible;
+}
+
+.site-header .brand-mark polygon:first-child {
+    animation: brand-left 3.2s ease-in-out infinite;
+}
+
+.site-header .brand-mark polygon:last-child {
+    animation: brand-right 3.2s ease-in-out infinite;
+}
+
+@keyframes brand-left {
+    0%, 20%, 100% { transform: none; }
+    50%, 62% { transform: translate(-70px, -56px); }
+}
+
+@keyframes brand-right {
+    0%, 20%, 100% { transform: none; }
+    50%, 62% { transform: translate(70px, 56px); }
 }
 
 .brand-word {
@@ -374,7 +399,7 @@ body.is-ready .loader-inner {
 
 .langs button[aria-pressed="true"] {
     background: var(--ink);
-    color: #000;
+    color: var(--on-ink);
 }
 
 /* ---------------- Hero: the barbers ---------------- */
@@ -393,22 +418,40 @@ body.is-ready .loader-inner {
     text-align: center;
 }
 
-/* A huge outlined word behind the photos. */
+/* A huge outlined XBARBER behind the photos that keeps sliding past, without end. */
 .hero-word {
     position: absolute;
     top: 52%;
-    left: 50%;
+    left: 0;
+    width: 100%;
+    overflow: hidden;
     font-family: var(--font-display);
     font-size: 25vw;
     font-weight: 600;
     line-height: 1;
     letter-spacing: -0.02em;
     color: transparent;
-    -webkit-text-stroke: 1px rgba(255, 255, 255, 0.09);
+    -webkit-text-stroke: 1px rgba(0, 0, 0, 0.13);
     white-space: nowrap;
-    transform: translate(-50%, -50%);
+    transform: translateY(-50%);
     pointer-events: none;
     user-select: none;
+}
+
+/* Two equal halves: when the first half has moved out, the second is exactly in its place. */
+.hero-word-track {
+    display: flex;
+    width: max-content;
+    animation: word-slide 36s linear infinite;
+}
+
+.hero-word-track span {
+    padding-right: 0.35em;
+}
+
+@keyframes word-slide {
+    from { transform: translateX(0); }
+    to { transform: translateX(-50%); }
 }
 
 .hero-head {
@@ -485,13 +528,13 @@ body.is-ready .loader-inner {
 .dot-on {
     border-color: var(--ink);
     background: var(--ink);
-    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.55);
+    box-shadow: 0 0 0 0 rgba(0, 0, 0, 0.35);
     animation: dot-pulse 2s ease-out infinite;
 }
 
 @keyframes dot-pulse {
-    70% { box-shadow: 0 0 0 9px rgba(255, 255, 255, 0); }
-    100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); }
+    70% { box-shadow: 0 0 0 9px rgba(0, 0, 0, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); }
 }
 
 .closed-banner {
@@ -535,8 +578,8 @@ body.is-ready .loader-inner {
     border: 1px solid var(--line);
     border-radius: var(--radius-lg);
     background:
-        radial-gradient(80% 60% at 50% 35%, rgba(255, 255, 255, 0.1), transparent 70%),
-        linear-gradient(160deg, #1d1d1d, #0a0a0a);
+        radial-gradient(80% 60% at 50% 35%, rgba(255, 255, 255, 0.7), transparent 70%),
+        linear-gradient(160deg, #f0f0f0, #d9d9d9);
     cursor: pointer;
     transition: transform 0.9s var(--ease), opacity 0.9s var(--ease), filter 0.9s var(--ease), box-shadow 0.9s;
 }
@@ -554,7 +597,7 @@ body.is-ready .loader-inner {
     content: "";
     position: absolute;
     inset: 0;
-    background: linear-gradient(180deg, rgba(0, 0, 0, 0.25) 0%, transparent 25%, transparent 60%, rgba(0, 0, 0, 0.6) 100%);
+    background: linear-gradient(180deg, rgba(0, 0, 0, 0.12) 0%, transparent 25%, transparent 70%, rgba(0, 0, 0, 0.3) 100%);
     pointer-events: none;
 }
 
@@ -566,6 +609,9 @@ body.is-ready .loader-inner {
     font-family: var(--font-display);
     font-size: 15px;
     letter-spacing: 0.2em;
+    /* Readable on a photo and on the plain grey card alike. */
+    color: #ffffff;
+    mix-blend-mode: difference;
 }
 
 .slide-initial {
@@ -573,7 +619,7 @@ body.is-ready .loader-inner {
     inset: 0;
     display: grid;
     place-items: center;
-    color: rgba(255, 255, 255, 0.85);
+    color: rgba(0, 0, 0, 0.72);
     font-family: var(--font-display);
     font-size: calc(var(--card-w) * 0.45);
     font-weight: 600;
@@ -592,8 +638,7 @@ body.is-ready .loader-inner {
 .slide[data-pos="1"],
 .slide[data-pos="-1"] {
     z-index: 2;
-    opacity: 0.5;
-    filter: brightness(0.6);
+    opacity: 0.55;
 }
 
 .slide[data-pos="1"] {
@@ -607,8 +652,7 @@ body.is-ready .loader-inner {
 .slide[data-pos="2"],
 .slide[data-pos="-2"] {
     z-index: 1;
-    opacity: 0.18;
-    filter: brightness(0.5);
+    opacity: 0.22;
 }
 
 .slide[data-pos="2"] {
@@ -643,7 +687,7 @@ body.is-ready .loader-inner {
 }
 
 .slide-empty polygon {
-    fill: rgba(255, 255, 255, 0.2);
+    fill: rgba(0, 0, 0, 0.18);
 }
 
 .slide-loading {
@@ -667,7 +711,7 @@ body.is-ready .loader-inner {
     height: 56px;
     border: 1px solid var(--line-2);
     border-radius: 50%;
-    background: rgba(5, 5, 5, 0.6);
+    background: rgba(255, 255, 255, 0.8);
     -webkit-backdrop-filter: blur(8px);
     backdrop-filter: blur(8px);
     cursor: pointer;
@@ -678,7 +722,7 @@ body.is-ready .loader-inner {
 .arrow:hover {
     border-color: var(--ink);
     background: var(--ink);
-    color: #000;
+    color: var(--on-ink);
 }
 
 .arrow-prev {
@@ -766,7 +810,7 @@ body.is-ready .loader-inner {
     overflow: hidden;
     border: 1px solid var(--line-2);
     border-radius: 999px;
-    background: rgba(5, 5, 5, 0.6);
+    background: rgba(255, 255, 255, 0.8);
     color: var(--ink-2);
     font-size: 14.5px;
     font-weight: 700;
@@ -777,6 +821,15 @@ body.is-ready .loader-inner {
 
 .pick:hover {
     border-color: var(--ink);
+}
+
+/* A barber who is closed for bookings. */
+.pick.is-closed:not([aria-current="true"]) {
+    color: var(--muted);
+}
+
+.pick.is-closed > span:not(.pick-face) {
+    text-decoration: line-through;
 }
 
 .pick-face {
@@ -802,12 +855,12 @@ body.is-ready .loader-inner {
 .pick[aria-current="true"] {
     border-color: var(--ink);
     background: var(--ink);
-    color: #000;
+    color: var(--on-ink);
 }
 
 .pick[aria-current="true"] .pick-face {
-    background: #d9d9d9;
-    color: #000;
+    background: #3a3a3a;
+    color: var(--on-ink);
 }
 
 /* Fills up while the next barber is coming (5 seconds). */
@@ -817,7 +870,7 @@ body.is-ready .loader-inner {
     bottom: 0;
     width: 100%;
     height: 3px;
-    background: #000;
+    background: var(--on-ink);
     transform: scaleX(0);
     transform-origin: left;
 }
@@ -976,7 +1029,7 @@ body.is-ready .picker.reveal { transition-delay: 0.3s; }
 .footer-cols .social-link:focus-visible {
     border-color: var(--ink);
     background: var(--ink);
-    color: #000;
+    color: var(--on-ink);
 }
 
 .footer-cols .social-link:active {
@@ -1015,7 +1068,7 @@ svg.icon-brand {
     align-items: center;
     justify-content: center;
     padding: 24px;
-    background: rgba(0, 0, 0, 0.7);
+    background: rgba(0, 0, 0, 0.4);
     -webkit-backdrop-filter: blur(6px);
     backdrop-filter: blur(6px);
     opacity: 0;
@@ -1223,12 +1276,12 @@ svg.icon-brand {
 .day[aria-pressed="true"] {
     border-color: var(--ink);
     background: var(--ink);
-    color: #000;
+    color: var(--on-ink);
 }
 
 .day[aria-pressed="true"] small,
 .day[aria-pressed="true"] em {
-    color: #3a3a3a;
+    color: #c9c9c9;
 }
 
 .times {
@@ -1256,7 +1309,7 @@ svg.icon-brand {
 .time[aria-pressed="true"] {
     border-color: var(--ink);
     background: var(--ink);
-    color: #000;
+    color: var(--on-ink);
     transform: scale(1.03);
 }
 
@@ -1301,9 +1354,10 @@ svg.icon-brand {
 .notice {
     margin-bottom: 16px;
     padding: 12px 14px;
-    border: 1px solid rgba(255, 128, 128, 0.4);
+    border: 1px solid rgba(198, 40, 40, 0.35);
     border-radius: 14px;
-    color: #ffd6d6;
+    background: #fdeeee;
+    color: #8e1c1c;
     font-size: 14.5px;
     font-weight: 650;
 }
@@ -1396,13 +1450,13 @@ svg.icon-brand {
 }
 
 .field input::placeholder {
-    color: #5f5f5f;
+    color: #9a9a9a;
 }
 
 .field input:focus {
     border-color: var(--ink);
     outline: none;
-    box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.12);
+    box-shadow: 0 0 0 4px rgba(0, 0, 0, 0.08);
 }
 
 .field input[aria-invalid="true"] {
@@ -1445,7 +1499,7 @@ svg.icon-brand {
 }
 
 .done-check circle {
-    fill: rgba(255, 255, 255, 0.06);
+    fill: rgba(0, 0, 0, 0.04);
     stroke: var(--ink);
     stroke-width: 2.5;
     stroke-dasharray: 260;
