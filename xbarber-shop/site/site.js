@@ -692,10 +692,9 @@
         renderSocial(shop);
     }
 
-    // Instagram and WhatsApp buttons. The links are set in the cashier (Settings, Shop).
+    // "See our work" (Instagram) and the WhatsApp button. The links are set in the cashier (Settings, Shop).
     function renderSocial(shop) {
         const links = [
-            { name: 'instagram', url: shop.instagram },
             { name: 'whatsapp', url: shop.whatsapp }
         ].filter(link => /^https:\/\//.test(String(link.url || '')));
         const social = $('#footer-social');
