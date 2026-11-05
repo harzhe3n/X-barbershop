@@ -1,11 +1,32 @@
 'use strict';
 
+/*
+ * XBARBER SHOP server.
+ *
+ * On the shop's VPS it serves, from one database:
+ *   /              the booking website (site/)
+ *   /cashier       the cashier app (src/), for the owner and every barber
+ *   /api/public/*  the website's booking API (no sign-in)
+ *   /api/*         the cashier's API (sign-in required)
+ * On a shop PC it can also run on the local Wi-Fi only (the default). See docs/VPS-SETUP.md.
+ *
+ * Settings (environment variables):
+ *   XBARBER_PORT / PORT     port (default 3000)
+ *   XBARBER_HOST            address to listen on (default 0.0.0.0; use 127.0.0.1 behind nginx)
+ *   XBARBER_DATA_DIR        folder for the database and backups
+ *   XBARBER_PUBLIC=1        accept connections from the internet (not only the local network)
+ *   XBARBER_TRUST_PROXY=1   behind nginx: read the visitor's address and https from its headers
+ *   XBARBER_SECURE_COOKIE=1 sign-in cookie only over https
+ *   XBARBER_TZ              the shop's time zone (default Asia/Baghdad)
+ */
+
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const sqlite3 = require('sqlite3').verbose();
+const Slots = require('./src/js/slots.js');
 
 const ROOT = __dirname;
 const PORT = Number(process.env.XBARBER_PORT || process.env.PORT || 3000);
@@ -16,6 +37,17 @@ const LOGIN_WINDOW_MS = 5 * 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = 8;
 const DEMO_USERNAME = 'admin';
 const DEMO_PASSWORD = 'admin123';
+// The default history password (Xx2727Xx); the owner can change it in Settings. Same as src/js/app.js.
+const DEFAULT_HISTORY_PASSWORD_HASH = 'sha256i$2000$e5c1d0a94b7f3c2a6d18f0b9$a3be0402ed692e89e332b4cbc0f6e386678ea349fb58a7c0881bb1b69dca4965';
+const PUBLIC_MODE = process.env.XBARBER_PUBLIC === '1';
+const TRUST_PROXY = process.env.XBARBER_TRUST_PROXY === '1';
+const SECURE_COOKIE = process.env.XBARBER_SECURE_COOKIE === '1';
+const SHOP_TZ = process.env.XBARBER_TZ || 'Asia/Baghdad';
+const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
+const BOOKING_WINDOW_MS = 60 * 60 * 1000;
+const BOOKING_MAX_PER_WINDOW = 10;
+const BOOKINGS_PER_PHONE = 2;
+const PASSWORD_CHECK_MAX = 10;
 
 const DATA_DIR = process.env.XBARBER_DATA_DIR
   ? path.resolve(process.env.XBARBER_DATA_DIR)
@@ -147,6 +179,12 @@ async function openDatabase() {
         await dbRun(connection, 'INSERT INTO app_migrations (name) VALUES (?)', [migration.name]);
       }
 
+      // Shops that kept the old default closed at 10 PM; the shop is open until midnight.
+      if (!await dbGet(connection, "SELECT name FROM app_migrations WHERE name = 'hours-midnight-v1'")) {
+        await dbRun(connection, "UPDATE app_options SET value = '00:00', updated_at = CURRENT_TIMESTAMP WHERE key = 'booking.close' AND value = '22:00'");
+        await dbRun(connection, "INSERT OR IGNORE INTO app_migrations (name) VALUES ('hours-midnight-v1')");
+      }
+
       db = connection;
       return db;
     } catch (error) {
@@ -206,14 +244,14 @@ function assertQuery(query) {
   return query;
 }
 
-function readJson(req) {
+function readJson(req, limit = MAX_BODY_BYTES) {
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks = [];
 
     req.on('data', chunk => {
       size += chunk.length;
-      if (size > MAX_BODY_BYTES) {
+      if (size > limit) {
         reject(httpError(413, 'Request body is too large.'));
         req.destroy();
         return;
@@ -310,6 +348,20 @@ function verifyPassword(password, stored) {
   return safeEqual(hash, parts[3]);
 }
 
+function hashPassword(password, iterations = 2000) {
+  const salt = crypto.randomBytes(12).toString('hex');
+  let hash = sha256Hex(`${salt}:${password}`);
+  for (let i = 1; i < iterations; i += 1) hash = sha256Hex(hash + salt);
+  return `sha256i$${iterations}$${salt}$${hash}`;
+}
+
+// The owner signs in as "admin". Until the password is changed in Settings it is admin123.
+async function verifyAdmin(password) {
+  const row = await serialize(async () => dbGet(await openDatabase(), "SELECT password_hash FROM admins WHERE username = 'admin'"));
+  const stored = String(row?.password_hash || '');
+  return stored.startsWith('sha256i$') ? verifyPassword(password, stored) : safeEqual(password, DEMO_PASSWORD);
+}
+
 async function findBarberAccount(username) {
   if (!username) return null;
   return serialize(async () => {
@@ -328,15 +380,46 @@ function requireAdmin(session) {
   if (session.session.role !== 'admin') throw httpError(403, 'Only the admin can do this.');
 }
 
-// Barbers sign in on shared devices; they must not change sign-in accounts or product sales.
-function assertWriteAllowed(session, query) {
-  if (session.session.role !== 'admin' && /\b(barber_accounts|product_sales|product_sale_items)\b/i.test(query)) {
-    throw httpError(403, 'Only the admin can do this.');
+// Barbers change their own clients. Sign-ins, photos, product sales, the catalog and shop settings
+// are for the owner only.
+const OWNER_ONLY_TABLES = /\b(admins|barber_accounts|barber_photos|product_sales|product_sale_items|settings|barbers|services|categories)\b/i;
+// The only two ways the cashier writes app_options (see setOption in src/js/app.js).
+const OPTION_WRITES = new Set([
+  'INSERT OR REPLACE INTO app_options (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)',
+  'DELETE FROM app_options WHERE key = ?'
+]);
+
+function assertWriteAllowed(session, query, params = []) {
+  if (session.session.role === 'admin') return;
+  if (OWNER_ONLY_TABLES.test(query)) throw httpError(403, 'Only the owner can do this.');
+  if (/\bapp_options\b/i.test(query)) {
+    // A barber may only set their own time between clients, added slots and days off.
+    const shape = query.replace(/\s+/g, ' ').trim();
+    const match = /^(?:slot\.barber\.(\d+)|extra\.(\d+)\.\d{4}-\d{2}-\d{2}|off\.(\d+)\.\d{4}-\d{2}-\d{2})$/.exec(String(params[0] ?? ''));
+    const barberId = match ? Number(match[1] || match[2] || match[3]) : null;
+    if (!OPTION_WRITES.has(shape) || barberId == null || barberId !== Number(session.session.barberId)) {
+      throw httpError(403, 'Only the owner can do this.');
+    }
+  }
+}
+
+function assertReadAllowed(session, query) {
+  if (session.session.role === 'admin') return;
+  if (/\b(admins|barber_accounts)\b/i.test(query) || /history_password/i.test(query)) {
+    throw httpError(403, 'Only the owner can do this.');
   }
 }
 
 function clientAddress(req) {
+  if (TRUST_PROXY) {
+    const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+    if (forwarded) return forwarded;
+  }
   return req.socket.remoteAddress || 'unknown';
+}
+
+function secureRequest(req) {
+  return SECURE_COOKIE || (TRUST_PROXY && String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https');
 }
 
 function loginBlocked(address) {
@@ -431,7 +514,7 @@ async function handleLogin(req, res) {
 
   let user = null;
   if (safeEqual(username.toLowerCase(), DEMO_USERNAME)) {
-    if (safeEqual(password, DEMO_PASSWORD)) user = { role: 'admin', username: DEMO_USERNAME };
+    if (await verifyAdmin(password)) user = { role: 'admin', username: DEMO_USERNAME };
   } else {
     const account = await findBarberAccount(username);
     if (account && verifyPassword(password, account.password_hash)) {
@@ -448,8 +531,40 @@ async function handleLogin(req, res) {
   const token = crypto.randomBytes(32).toString('hex');
   sessions.set(token, { expiresAt: Date.now() + SESSION_TTL_MS, role: user.role, barberId: user.barberId || null });
   sendJson(res, 200, { ok: true, user }, {
-    'Set-Cookie': `xbarber_session=${token}; HttpOnly; Path=/; SameSite=Strict; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`
+    'Set-Cookie': `xbarber_session=${token}; HttpOnly; Path=/; SameSite=Strict; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}${secureRequest(req) ? '; Secure' : ''}`
   });
+}
+
+// Online the history password is checked here, so its hash never reaches a barber's phone.
+async function handleCheckHistoryPassword(req, res, session) {
+  const now = Date.now();
+  if (!session.session.checks || session.session.checks.resetAt <= now) session.session.checks = { count: 0, resetAt: now + LOGIN_WINDOW_MS };
+  session.session.checks.count += 1;
+  if (session.session.checks.count > PASSWORD_CHECK_MAX) throw httpError(429, 'Too many tries. Please wait a few minutes.');
+  const body = await readJson(req, 4096);
+  const row = await serialize(async () => dbGet(await openDatabase(), "SELECT value FROM app_options WHERE key = 'history_password'"));
+  const ok = verifyPassword(typeof body.password === 'string' ? body.password : '', row?.value || DEFAULT_HISTORY_PASSWORD_HASH);
+  if (ok) session.session.checks = null;
+  sendJson(res, 200, { ok });
+}
+
+// The owner changes their own sign-in password. Other devices signed in as the owner are signed out.
+async function handleAdminPassword(req, res, session) {
+  const body = await readJson(req, 4096);
+  const current = typeof body.current === 'string' ? body.current : '';
+  const next = typeof body.next === 'string' ? body.next : '';
+  if (next.length < 6 || next.length > 100) throw httpError(400, 'Use at least 6 characters.');
+  if (!await verifyAdmin(current)) throw httpError(403, 'The current password is wrong.');
+  const hash = hashPassword(next);
+  await serialize(async () => {
+    const connection = await openDatabase();
+    const result = await dbRun(connection, "UPDATE admins SET password_hash = ? WHERE username = 'admin'", [hash]);
+    if (!result.changes) await dbRun(connection, "INSERT INTO admins (username, password_hash) VALUES ('admin', ?)", [hash]);
+  });
+  sessions.forEach((value, token) => {
+    if (value.role === 'admin' && token !== session.token) sessions.delete(token);
+  });
+  sendJson(res, 200, { ok: true });
 }
 
 async function handleClearHistory(req, res) {
@@ -504,6 +619,100 @@ async function handleBackup(req, res) {
   sendJson(res, 200, { filePath: destination });
 }
 
+// Online: the owner downloads a backup file, and restores one by uploading it.
+async function handleBackupDownload(req, res) {
+  const temporary = path.join(DATA_DIR, `download-${crypto.randomBytes(6).toString('hex')}.db`);
+  try {
+    await serialize(async () => copyDatabase(await openDatabase(), temporary));
+    const bytes = fs.readFileSync(temporary);
+    res.writeHead(200, {
+      'Content-Type': 'application/vnd.sqlite3',
+      'Content-Length': bytes.length,
+      'Content-Disposition': `attachment; filename="xbarber-backup-${timestamp()}.db"`,
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff'
+    });
+    res.end(bytes);
+  } finally {
+    fs.rmSync(temporary, { force: true });
+  }
+}
+
+function readBody(req, limit) {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks = [];
+    req.on('data', chunk => {
+      size += chunk.length;
+      if (size > limit) {
+        reject(httpError(413, 'The file is too large.'));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
+function checkDatabaseFile(file) {
+  return new Promise((resolve, reject) => {
+    const candidate = new sqlite3.Database(file, sqlite3.OPEN_READONLY, openError => {
+      if (openError) return reject(httpError(400, 'That file is not a valid SQLite database.'));
+      candidate.get('PRAGMA integrity_check', (error, row) => {
+        candidate.close(() => {
+          if (error || !row || row.integrity_check !== 'ok') reject(httpError(400, 'The backup failed its integrity check.'));
+          else resolve();
+        });
+      });
+    });
+  });
+}
+
+async function handleRestoreUpload(req, res) {
+  const bytes = await readBody(req, MAX_UPLOAD_BYTES);
+  if (bytes.subarray(0, 16).toString('utf8') !== 'SQLite format 3\u0000') {
+    throw httpError(400, 'Choose a valid XBARBER backup (.db) file.');
+  }
+  const upload = path.join(DATA_DIR, `upload-${crypto.randomBytes(6).toString('hex')}.db`);
+  fs.writeFileSync(upload, bytes);
+  try {
+    await checkDatabaseFile(upload);
+    await serialize(async () => {
+      const current = await openDatabase();
+      // Passwords already changed on this server stay, so a backup from the offline app
+      // never brings back an old or default password on the internet.
+      const ownerRow = await dbGet(current, "SELECT password_hash FROM admins WHERE username = 'admin'");
+      const historyRow = await dbGet(current, "SELECT value FROM app_options WHERE key = 'history_password'");
+      const keepOwner = String(ownerRow?.password_hash || '').startsWith('sha256i$') ? ownerRow.password_hash : null;
+      const keepHistory = String(historyRow?.value || '').startsWith('sha256i$') ? historyRow.value : null;
+      // Keep the current data next to it, just in case.
+      fs.mkdirSync(BACKUP_DIR, { recursive: true });
+      await copyDatabase(current, path.join(BACKUP_DIR, `before-restore-${timestamp()}.db`));
+      await closeDatabase();
+      for (const suffix of ['-wal', '-shm']) {
+        const sidecar = `${DB_PATH}${suffix}`;
+        if (fs.existsSync(sidecar)) fs.unlinkSync(sidecar);
+      }
+      fs.copyFileSync(upload, DB_PATH);
+      const restored = await openDatabase();
+      if (keepOwner) {
+        await dbRun(restored, "INSERT OR IGNORE INTO admins (username, password_hash) VALUES ('admin', ?)", [keepOwner]);
+        await dbRun(restored, "UPDATE admins SET password_hash = ? WHERE username = 'admin'", [keepOwner]);
+      }
+      if (keepHistory) {
+        await dbRun(restored,
+          "INSERT OR REPLACE INTO app_options (key, value, updated_at) VALUES ('history_password', ?, CURRENT_TIMESTAMP)",
+          [keepHistory]);
+      }
+    });
+  } finally {
+    fs.rmSync(upload, { force: true });
+  }
+  sendJson(res, 200, { ok: true });
+}
+
 async function handleRestore(req, res) {
   const body = await readJson(req);
   const source = resolveRestoreSource(body.path);
@@ -536,6 +745,7 @@ async function handleApi(req, res, pathname) {
     if (!/^\s*(SELECT|WITH)\b/i.test(query)) {
       throw httpError(403, 'Only read queries are allowed here.');
     }
+    assertReadAllowed(session, query);
     const rows = await serialize(async () => {
       const connection = await openDatabase();
       return dbAll(connection, query, normalizeParams(body.params));
@@ -549,7 +759,7 @@ async function handleApi(req, res, pathname) {
     if (!/^\s*(INSERT|UPDATE|DELETE)\b/i.test(query)) {
       throw httpError(403, 'Only data-changing queries are allowed here.');
     }
-    assertWriteAllowed(session, query);
+    assertWriteAllowed(session, query, Array.isArray(body.params) ? body.params : []);
     const result = await serialize(async () => {
       const connection = await openDatabase();
       return dbRun(connection, query, normalizeParams(body.params));
@@ -563,7 +773,8 @@ async function handleApi(req, res, pathname) {
     if (!Array.isArray(statements) || !statements.length || statements.length > 100) {
       throw httpError(400, 'A transaction must contain between 1 and 100 statements.');
     }
-    statements.forEach(statement => assertWriteAllowed(session, assertQuery(statement && statement.query)));
+    statements.forEach(statement => assertWriteAllowed(session, assertQuery(statement && statement.query),
+      Array.isArray(statement.params) ? statement.params : []));
 
     const results = await serialize(async () => {
       const connection = await openDatabase();
@@ -600,6 +811,19 @@ async function handleApi(req, res, pathname) {
     return sendJson(res, 200, results);
   }
 
+  if (pathname === '/api/check-history-password') return handleCheckHistoryPassword(req, res, session);
+  if (pathname === '/api/admin-password') {
+    requireAdmin(session);
+    return handleAdminPassword(req, res, session);
+  }
+  if (pathname === '/api/backup-download') {
+    requireAdmin(session);
+    return handleBackupDownload(req, res);
+  }
+  if (pathname === '/api/restore-upload') {
+    requireAdmin(session);
+    return handleRestoreUpload(req, res);
+  }
   if (pathname === '/api/clear-history') {
     requireAdmin(session);
     return handleClearHistory(req, res);
@@ -616,16 +840,315 @@ async function handleApi(req, res, pathname) {
   throw httpError(404, 'API route not found.');
 }
 
+/* ------------------------------------------------------------------ */
+/* Booking website: public pages and API (no sign-in)                  */
+/*                                                                     */
+/*   GET  /api/public/info                 shop, hours, barbers        */
+/*   GET  /api/public/availability?barber= free and taken times        */
+/*   GET  /api/public/photo/<barber id>    barber photo                */
+/*   POST /api/public/book                 name, phone, barber, time   */
+/*                                                                     */
+/* Free times come from src/js/slots.js, the same code the cashier     */
+/* uses, so the website always shows the cashier's slots.              */
+/* ------------------------------------------------------------------ */
+
+// The shop's date and time, in the shop's time zone (the VPS clock may be UTC).
+function shopNow() {
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: SHOP_TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+    }).formatToParts(new Date());
+    const part = type => parts.find(item => item.type === type).value;
+    return { date: `${part('year')}-${part('month')}-${part('day')}`, minutes: Number(part('hour')) * 60 + Number(part('minute')) };
+  } catch (error) {
+    const now = new Date();
+    return { date: `${now.getFullYear()}-${Slots.pad(now.getMonth() + 1)}-${Slots.pad(now.getDate())}`, minutes: now.getHours() * 60 + now.getMinutes() };
+  }
+}
+
+function daysBetween(from, to) {
+  const toUtc = value => {
+    const [year, month, day] = value.split('-').map(Number);
+    return Date.UTC(year, month - 1, day);
+  };
+  return Math.round((toUtc(to) - toUtc(from)) / 86400000);
+}
+
+// Everything the website needs, read in one go.
+async function siteSnapshot(connection, now) {
+  const optionRows = await dbAll(connection,
+    `SELECT key, value FROM app_options
+     WHERE key LIKE 'booking.%' OR key LIKE 'slot.barber.%' OR key LIKE 'extra.%' OR key LIKE 'off.%'
+        OR key IN ('site.open', 'shop.instagram', 'shop.whatsapp')`);
+  const options = {};
+  optionRows.forEach(row => {
+    if (String(row.key).startsWith('booking.')) options[String(row.key).slice('booking.'.length)] = row.value;
+  });
+  const hours = Slots.shopHours(options);
+  const lastDay = Slots.addDays(now.date, hours.days);
+  const barbers = await dbAll(connection, 'SELECT id, name FROM barbers WHERE is_active = 1 ORDER BY id');
+  const photos = await dbAll(connection, 'SELECT barber_id, updated_at FROM barber_photos WHERE image_data IS NOT NULL');
+  const busyRows = await dbAll(connection,
+    `SELECT barber_id, date, time FROM orders
+     WHERE barber_id IS NOT NULL AND date BETWEEN ? AND ? AND time IS NOT NULL AND time <> ''
+       AND COALESCE(status, 'completed') IN ('waiting', 'in-service', 'completed')`,
+    [now.date, lastDay]);
+  const shop = await dbGet(connection, 'SELECT shop_name, phone, address FROM settings ORDER BY id DESC LIMIT 1') || {};
+  const busy = new Map();
+  busyRows.forEach(row => {
+    const key = `${row.barber_id}|${row.date}`;
+    const list = busy.get(key) || [];
+    list.push(Slots.toMinutes(row.time));
+    busy.set(key, list);
+  });
+  const optionValue = key => optionRows.find(row => row.key === key)?.value;
+  const siteRow = optionRows.find(row => row.key === 'site.open');
+  return {
+    now,
+    hours,
+    open: String(siteRow?.value ?? '1') !== '0',
+    barbers: barbers.map(barber => ({ id: Number(barber.id), name: String(barber.name || '') })),
+    photos: new Map(photos.map(row => [Number(row.barber_id), String(row.updated_at || '')])),
+    barberSlots: Slots.parseBarberSlots(optionRows),
+    extras: Slots.parseExtraSlots(optionRows),
+    offs: Slots.parseOffDays(optionRows),
+    busy,
+    shop: {
+      name: String(shop.shop_name || 'XBARBER SHOP'),
+      phone: shop.phone ? String(shop.phone) : null,
+      address: shop.address ? String(shop.address) : null,
+      instagram: instagramUrl(optionValue('shop.instagram')),
+      // WhatsApp: its own number, or the shop phone when none was typed.
+      whatsapp: whatsappUrl(optionValue('shop.whatsapp') || shop.phone)
+    }
+  };
+}
+
+// Instagram from the cashier: "@name", "name" or a link to the profile.
+function instagramUrl(value) {
+  const text = String(value || '').trim();
+  const match = /^(?:https?:\/\/)?(?:www\.)?(?:instagram\.com|instagr\.am)\/([A-Za-z0-9._]{1,30})\/?(?:[?#].*)?$/i.exec(text)
+    || /^@?([A-Za-z0-9._]{1,30})$/.exec(text);
+  return match ? `https://www.instagram.com/${match[1]}/` : null;
+}
+
+// WhatsApp from the cashier: a phone number. "+964..." or "00964..." is used as it is;
+// a number that starts with a single 0 (0750 123 4567) is an Iraqi number.
+function whatsappUrl(value) {
+  const text = String(value || '').trim();
+  let digits = text.replace(/\D+/g, '');
+  if (!text.startsWith('+')) {
+    if (digits.startsWith('00')) digits = digits.slice(2);
+    else if (digits.startsWith('0')) digits = `964${digits.slice(1)}`;
+  }
+  return digits.length >= 8 && digits.length <= 15 ? `https://wa.me/${digits}` : null;
+}
+
+// One barber's days, from today up to the last day customers may book.
+function barberDays(snapshot, barberId) {
+  const { now, hours } = snapshot;
+  const step = Slots.barberStep(hours, snapshot.barberSlots, barberId);
+  const days = [];
+  for (let index = 0; index <= hours.days; index += 1) {
+    const date = Slots.addDays(now.date, index);
+    const day = Slots.barberDay({
+      hours,
+      step,
+      extra: snapshot.extras.get(`${barberId}|${date}`) || [],
+      off: snapshot.offs.has(`${barberId}|${date}`),
+      clientMinutes: snapshot.busy.get(`${barberId}|${date}`) || [],
+      isToday: index === 0,
+      nowMinutes: now.minutes,
+      closedDay: hours.closed.includes(Slots.weekday(date))
+    });
+    days.push({ date, status: day.status, free: day.free.map(Slots.fromMinutes), taken: day.taken.map(Slots.fromMinutes) });
+  }
+  return days;
+}
+
+function photoUrl(snapshot, barberId) {
+  const stamp = snapshot.photos.get(barberId);
+  return stamp == null ? null : `/api/public/photo/${barberId}?v=${encodeURIComponent(stamp)}`;
+}
+
+async function handlePublicInfo(req, res) {
+  const snapshot = await serialize(async () => siteSnapshot(await openDatabase(), shopNow()));
+  const barbers = snapshot.barbers.map(barber => {
+    const days = barberDays(snapshot, barber.id);
+    const next = days.find(day => day.free.length);
+    return {
+      id: barber.id,
+      name: barber.name,
+      photo: photoUrl(snapshot, barber.id),
+      slot_minutes: Slots.barberStep(snapshot.hours, snapshot.barberSlots, barber.id),
+      next: next ? { date: next.date, time: next.free[0] } : null,
+      today: days[0].status
+    };
+  });
+  sendJson(res, 200, {
+    shop: snapshot.shop,
+    open: snapshot.open,
+    today: snapshot.now.date,
+    hours: {
+      open: snapshot.hours.open,
+      close: snapshot.hours.close,
+      closed_weekdays: snapshot.hours.closed,
+      days_ahead: snapshot.hours.days
+    },
+    barbers
+  });
+}
+
+async function handlePublicAvailability(req, res, url) {
+  const barberId = Number(url.searchParams.get('barber'));
+  if (!Number.isInteger(barberId) || barberId < 1) throw httpError(400, 'barber');
+  const snapshot = await serialize(async () => siteSnapshot(await openDatabase(), shopNow()));
+  const barber = snapshot.barbers.find(item => item.id === barberId);
+  if (!barber) throw httpError(404, 'barber');
+  sendJson(res, 200, {
+    open: snapshot.open,
+    today: snapshot.now.date,
+    barber: { id: barber.id, name: barber.name, photo: photoUrl(snapshot, barber.id) },
+    days: barberDays(snapshot, barber.id)
+  });
+}
+
+async function handlePublicPhoto(req, res, pathname) {
+  const barberId = Number(pathname.slice('/api/public/photo/'.length));
+  if (!Number.isInteger(barberId) || barberId < 1) throw httpError(404, 'Not found');
+  const row = await serialize(async () => dbGet(await openDatabase(),
+    `SELECT p.image_data FROM barber_photos p JOIN barbers b ON b.id = p.barber_id
+     WHERE p.barber_id = ? AND b.is_active = 1`, [barberId]));
+  const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([a-z0-9+/=\s]+)$/i.exec(String(row?.image_data || ''));
+  if (!match) throw httpError(404, 'Not found');
+  const bytes = Buffer.from(match[2].replace(/\s+/g, ''), 'base64');
+  res.writeHead(200, {
+    'Content-Type': match[1].toLowerCase(),
+    'Content-Length': bytes.length,
+    'Cache-Control': 'public, max-age=86400',
+    'X-Content-Type-Options': 'nosniff'
+  });
+  res.end(req.method === 'HEAD' ? undefined : bytes);
+}
+
+const bookingAttempts = new Map();
+
+function bookingBlocked(address) {
+  const now = Date.now();
+  const entry = bookingAttempts.get(address);
+  if (!entry || entry.resetAt <= now) {
+    bookingAttempts.set(address, { count: 1, resetAt: now + BOOKING_WINDOW_MS });
+    return false;
+  }
+  entry.count += 1;
+  return entry.count > BOOKING_MAX_PER_WINDOW;
+}
+
+function cleanName(value) {
+  return String(value || '').replace(/[\u0000-\u001f\u007f<>]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+function phoneDigits(value) {
+  return String(value || '').replace(/\D+/g, '');
+}
+
+// A booking from the website becomes a waiting client in the chosen barber's slot.
+async function handlePublicBook(req, res) {
+  if (!sameOrigin(req)) throw httpError(403, 'Request blocked.');
+  if (bookingBlocked(clientAddress(req))) throw httpError(429, 'busy');
+  const body = await readJson(req, 4096);
+  const barberId = Number(body.barber_id);
+  const date = String(body.date || '');
+  const time = String(body.time || '').slice(0, 5);
+  const name = cleanName(body.name).slice(0, 60);
+  const phone = String(body.phone || '').replace(/[^\d+\s-]/g, '').trim().slice(0, 30);
+  if (!Number.isInteger(barberId) || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) throw httpError(400, 'slot');
+  if (name.length < 2) throw httpError(400, 'name');
+  const digits = phoneDigits(phone);
+  if (digits.length < 7 || digits.length > 15) throw httpError(400, 'phone');
+
+  const booking = await serialize(async () => {
+    const connection = await openDatabase();
+    await dbRun(connection, 'BEGIN IMMEDIATE');
+    try {
+      const snapshot = await siteSnapshot(connection, shopNow());
+      if (!snapshot.open) throw httpError(403, 'closed');
+      const barber = snapshot.barbers.find(item => item.id === barberId);
+      if (!barber) throw httpError(409, 'taken');
+      const index = daysBetween(snapshot.now.date, date);
+      if (index < 0 || index > snapshot.hours.days) throw httpError(409, 'taken');
+      const day = barberDays(snapshot, barberId)[index];
+      if (!day || !day.free.includes(time)) throw httpError(409, 'taken');
+
+      // At most two upcoming online bookings for one phone number.
+      const upcoming = await dbAll(connection,
+        `SELECT ob.phone FROM online_bookings ob JOIN orders o ON o.id = ob.order_id
+         WHERE o.status = 'waiting' AND o.date >= ?`, [snapshot.now.date]);
+      if (upcoming.filter(row => phoneDigits(row.phone) === digits).length >= BOOKINGS_PER_PHONE) throw httpError(429, 'limit');
+
+      const customers = await dbAll(connection, 'SELECT id, name, phone FROM customers WHERE is_active = 1 AND phone IS NOT NULL');
+      const known = customers.find(customer => phoneDigits(customer.phone) === digits);
+      let customerId;
+      if (known) {
+        customerId = Number(known.id);
+        if (!String(known.name || '').trim()) {
+          await dbRun(connection, 'UPDATE customers SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [name, customerId]);
+        }
+      } else {
+        customerId = (await dbRun(connection,
+          'INSERT INTO customers (name, phone, total_visits, total_spent) VALUES (?, ?, 0, 0)', [name, phone])).lastID;
+      }
+      const order = await dbRun(connection,
+        "INSERT INTO orders (customer_id, date, time, total, discount, status, payment_method, barber_id) VALUES (?, ?, ?, 0, 0, 'waiting', NULL, ?)",
+        [customerId, date, time, barberId]);
+      const bookingId = `web-${Date.now().toString(36)}-${crypto.randomBytes(3).toString('hex')}`;
+      await dbRun(connection,
+        `INSERT INTO online_bookings (booking_id, order_id, barber_id, customer_name, phone, date, time, status, reported_status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'received', 'received')`,
+        [bookingId, order.lastID, barberId, name, phone, date, time]);
+      await dbRun(connection, 'COMMIT');
+      return { id: bookingId, barber: barber.name, date, time };
+    } catch (error) {
+      try {
+        await dbRun(connection, 'ROLLBACK');
+      } catch (rollbackError) {
+        console.error('Could not roll back the booking:', rollbackError.message);
+      }
+      throw error;
+    }
+  });
+  sendJson(res, 200, { ok: true, booking });
+}
+
+async function handlePublicApi(req, res, url) {
+  const pathname = url.pathname;
+  if (pathname === '/api/public/book') {
+    if (req.method !== 'POST') throw httpError(405, 'Method not allowed.');
+    return handlePublicBook(req, res);
+  }
+  if (req.method !== 'GET' && req.method !== 'HEAD') throw httpError(405, 'Method not allowed.');
+  if (pathname === '/api/public/info') return handlePublicInfo(req, res);
+  if (pathname === '/api/public/availability') return handlePublicAvailability(req, res, url);
+  if (pathname.startsWith('/api/public/photo/')) return handlePublicPhoto(req, res, pathname);
+  throw httpError(404, 'API route not found.');
+}
+
 function serveAppMode(req, res) {
   if (req.method !== 'GET') throw httpError(405, 'Method not allowed.');
   sendJson(res, 200, { mode: 'server' });
 }
 
+// The website's pages may only load files from this server.
+const SITE_POLICY = "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; "
+  + "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
+
 function serveStatic(req, res, pathname) {
-  if (pathname === '/') {
+  if (pathname === '/cashier' || pathname === '/cashier/') {
     res.writeHead(302, { Location: '/src/index.html', 'Cache-Control': 'no-store' });
     return res.end();
   }
+  // The booking website is the home page.
+  if (pathname === '/' || pathname === '/index.html') pathname = '/site/index.html';
 
   let decoded;
   try {
@@ -636,7 +1159,7 @@ function serveStatic(req, res, pathname) {
   }
 
   const absolute = path.resolve(ROOT, decoded.replace(/^\/+/, ''));
-  const allowedRoots = ['src', 'assets', 'database', 'vendor'].map(name => path.join(ROOT, name));
+  const allowedRoots = ['site', 'src', 'assets', 'database', 'vendor'].map(name => path.join(ROOT, name));
   const allowedRootFiles = ['manifest.json', 'sw.js', 'precache-manifest.json', 'app-mode.json'].map(name => path.join(ROOT, name));
   const allowed = allowedRoots.some(root => absolute === root || absolute.startsWith(`${root}${path.sep}`))
     || allowedRootFiles.includes(absolute);
@@ -654,11 +1177,12 @@ function serveStatic(req, res, pathname) {
     const headers = {
       'Content-Type': MIME_TYPES[path.extname(absolute).toLowerCase()] || 'application/octet-stream',
       'Content-Length': stats.size,
-      'Cache-Control': 'no-store',
+      'Cache-Control': 'no-cache',
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'no-referrer',
       'X-Frame-Options': 'SAMEORIGIN'
     };
+    if (absolute.startsWith(path.join(ROOT, 'site') + path.sep)) headers['Content-Security-Policy'] = SITE_POLICY;
 
     res.writeHead(200, headers);
     if (req.method === 'HEAD') return res.end();
@@ -673,7 +1197,9 @@ const server = http.createServer(async (req, res) => {
   let pathname = '/';
 
   try {
-    if (!isPrivateAddress(req.socket.remoteAddress)) {
+    // Without XBARBER_PUBLIC=1 only the local network may connect. Behind nginx every request
+    // comes from 127.0.0.1, so the website still reaches visitors through nginx.
+    if (!PUBLIC_MODE && !isPrivateAddress(req.socket.remoteAddress)) {
       throw httpError(403, 'This server only accepts connections from the local network.');
     }
 
@@ -683,6 +1209,8 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/app-mode.json') {
       if (req.method !== 'GET') throw httpError(405, 'Method not allowed.');
       serveAppMode(req, res);
+    } else if (pathname.startsWith('/api/public/')) {
+      await handlePublicApi(req, res, url);
     } else if (pathname.startsWith('/api/')) {
       if (req.method !== 'POST') throw httpError(405, 'Method not allowed.');
       await handleApi(req, res, pathname);
@@ -695,7 +1223,7 @@ const server = http.createServer(async (req, res) => {
     if (statusCode >= 500) console.error(`[${new Date().toISOString()}] ${req.method} ${pathname}:`, error);
     if (!res.headersSent) {
       if (pathname.startsWith('/api/')) {
-        sendJson(res, statusCode, { error: statusCode >= 500 ? 'The local server could not complete that request.' : error.message });
+        sendJson(res, statusCode, { error: statusCode >= 500 ? 'The server could not complete that request.' : error.message });
       } else {
         res.writeHead(statusCode, { 'Content-Type': 'text/plain; charset=utf-8' });
         res.end(statusCode >= 500 ? 'Server error' : error.message);
@@ -735,18 +1263,23 @@ server.on('error', error => {
 server.listen(PORT, HOST, () => {
   const addresses = lanAddresses();
   console.log('');
-  console.log('XBARBER SHOP - local web server');
+  console.log('XBARBER SHOP server');
   console.log(`Database:  ${DB_PATH}`);
-  console.log(`On this PC: http://localhost:${PORT}`);
-  if (addresses.length) {
-    console.log('On iPad (same Wi-Fi):');
-    addresses.forEach(address => console.log(`  http://${address}:${PORT}`));
-  } else {
-    console.log('No LAN address was found. Connect this PC to Wi-Fi and restart the server.');
+  console.log(`Website:   http://localhost:${PORT}/`);
+  console.log(`Cashier:   http://localhost:${PORT}/cashier`);
+  console.log(`Time zone: ${SHOP_TZ}${PUBLIC_MODE ? ' · open to the internet' : ' · local network only'}`);
+  console.log('Owner sign-in: admin (password admin123 until it is changed in Settings)');
+  // Hints for running on the shop PC; on the VPS nginx sits in front (docs/VPS-SETUP.md).
+  if (process.platform === 'win32') {
+    if (addresses.length) {
+      console.log('On iPad (same Wi-Fi):');
+      addresses.forEach(address => console.log(`  http://${address}:${PORT}/cashier`));
+    } else {
+      console.log('No LAN address was found. Connect this PC to Wi-Fi and restart the server.');
+    }
+    console.log('iPad cannot connect? Allow Node.js on Private networks in Windows Firewall.');
+    console.log('Keep this window open. Press Ctrl+C to stop.');
   }
-  console.log('Login: admin / admin123 (barber sign-ins are created on the Barbers page)');
-  console.log('iPad cannot connect? Allow Node.js on Private networks in Windows Firewall.');
-  console.log('Keep this window open. Press Ctrl+C to stop.');
   console.log('');
 });
 

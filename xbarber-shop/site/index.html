@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="ckb" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#050505">
+    <meta name="description" content="Book your barber online: pick a barber, choose a free time, leave your name and phone number.">
+    <title>XBARBER · Book your barber</title>
+    <link rel="icon" href="/assets/logo/logo.ico">
+    <link rel="apple-touch-icon" href="/assets/logo/apple-touch-icon.png">
+    <link rel="stylesheet" href="/site/site.css?v=2026.11.05.4">
+</head>
+<body>
+    <!-- Loading screen: the two halves of the X come together, then the name appears. -->
+    <div class="loader" id="loader" role="status" aria-live="polite">
+        <div class="loader-inner">
+            <svg class="loader-mark" viewBox="300 270 660 760" aria-hidden="true">
+                <polygon class="mark-left" points="325,288 651,593 388,839 388,676 457,608 325,481"/>
+                <polygon class="mark-right" points="904,385 904,593 797,690 934,822 934,1014 589,683"/>
+            </svg>
+            <div class="loader-word" aria-label="XBARBER">
+                <span>X</span><span>B</span><span>A</span><span>R</span><span>B</span><span>E</span><span>R</span>
+            </div>
+            <div class="loader-line"><span></span></div>
+        </div>
+    </div>
+
+    <header class="site-header" id="top">
+        <a class="brand" href="#top" aria-label="XBARBER">
+            <svg class="brand-mark" viewBox="300 270 660 760" aria-hidden="true">
+                <polygon points="325,288 651,593 388,839 388,676 457,608 325,481"/>
+                <polygon points="904,385 904,593 797,690 934,822 934,1014 589,683"/>
+            </svg>
+            <span class="brand-word">XBARBER</span>
+        </a>
+        <div class="header-end">
+            <div class="langs" id="langs" role="group"></div>
+            <button type="button" class="btn btn-light btn-small header-book" data-book-active data-t="nav.book">Book now</button>
+        </div>
+    </header>
+
+    <main id="main">
+        <!-- The barbers: one big photo in the middle, the next one every 5 seconds. -->
+        <section class="hero" aria-labelledby="hero-title">
+            <div class="hero-word" aria-hidden="true" dir="ltr">XBARBER</div>
+            <div class="hero-head">
+                <p class="eyebrow" id="hero-eyebrow"></p>
+                <h1 class="display hero-title" id="hero-title">
+                    <span data-t="hero.title1">Sharp cuts.</span>
+                    <span class="hero-accent" data-t="hero.title2">Booked in seconds.</span>
+                </h1>
+                <p class="hero-hours" id="hero-hours"></p>
+            </div>
+
+            <div class="closed-banner" id="closed-banner" hidden></div>
+
+            <div class="carousel" id="carousel" role="region" aria-roledescription="carousel">
+                <div class="stage" id="stage"></div>
+                <button type="button" class="arrow arrow-prev" data-slide="prev" hidden></button>
+                <button type="button" class="arrow arrow-next" data-slide="next" hidden></button>
+            </div>
+
+            <div class="spotlight" id="spotlight"></div>
+            <div class="picker" id="picker" role="group"></div>
+        </section>
+
+        <section class="section steps" aria-labelledby="steps-title">
+            <h2 class="display section-title" id="steps-title" data-t="steps.title">How it works</h2>
+            <ol class="step-list">
+                <li><span class="step-num">01</span><strong data-t="steps.1"></strong><span data-t="steps.1text"></span></li>
+                <li><span class="step-num">02</span><strong data-t="steps.2"></strong><span data-t="steps.2text"></span></li>
+                <li><span class="step-num">03</span><strong data-t="steps.3"></strong><span data-t="steps.3text"></span></li>
+            </ol>
+        </section>
+    </main>
+
+    <footer class="site-footer">
+        <div class="footer-brand">
+            <svg class="brand-mark" viewBox="300 270 660 760" aria-hidden="true">
+                <polygon points="325,288 651,593 388,839 388,676 457,608 325,481"/>
+                <polygon points="904,385 904,593 797,690 934,822 934,1014 589,683"/>
+            </svg>
+            <span class="brand-word" id="footer-name">XBARBER</span>
+        </div>
+        <div class="footer-cols">
+            <div>
+                <h3 data-t="footer.hours">Opening hours</h3>
+                <p id="footer-hours"></p>
+                <p id="footer-closed"></p>
+            </div>
+            <div>
+                <h3 data-t="footer.contact">Contact</h3>
+                <p id="footer-address"></p>
+                <p><a id="footer-phone" href="#" hidden dir="ltr"></a></p>
+                <div class="socials" id="footer-social" role="group" hidden></div>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <span>© <span id="footer-year"></span> XBARBER</span>
+            <a href="/cashier" data-t="footer.staff">Staff sign-in</a>
+        </div>
+    </footer>
+
+    <!-- Booking: 1 time, 2 name and phone, 3 done -->
+    <div class="sheet-backdrop" id="sheet" hidden>
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" tabindex="-1"></div>
+    </div>
+
+    <noscript><p class="noscript">Please turn on JavaScript to book an appointment.</p></noscript>
+    <script src="/site/site.js?v=2026.11.05.4"></script>
+</body>
+</html>

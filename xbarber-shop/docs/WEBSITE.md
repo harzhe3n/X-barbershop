@@ -1,0 +1,64 @@
+# Booking website
+
+The booking website is part of this project. `server.js` serves it at `/` and the cashier at `/cashier` of **the same address**, from the same SQLite database (one domain for both; **Staff sign-in** at the bottom of the website opens the cashier). There is no sync between them: the website reads the cashier's data directly. Setting it up on a VPS: [VPS-SETUP.md](VPS-SETUP.md).
+
+## Files
+
+| File | What it is |
+|---|---|
+| `site/index.html` | The page: loading screen, header, barber slideshow, how it works, footer, booking window |
+| `site/site.css` | Design (black and white), loading animation, slideshow, phone layout |
+| `site/site.js` | Texts in Kurdish (default), Arabic and English, the slideshow and the three booking steps |
+| `src/js/slots.js` | How time slots are made. Used by the cashier and by the server, so both always show the same free times |
+| `server.js` | The public API below, plus the cashier API |
+
+## What the customer does
+
+1. **Loading screen**: the two halves of the X logo slide together, then "XBARBER" appears letter by letter.
+2. **Barbers**: one big black-and-white photo in the middle (set in the cashier on the Barbers page), with the barbers before and after it at the sides. The next barber comes every 5 seconds; arrows, swiping, or the button with each barber's name show one straight away. It waits while the mouse is on it or the booking window is open. Under the photo: the name, the next free time and **Book with ...** (tapping the big photo also opens booking).
+3. **Pick a time**: days from today up to "Book up to" (Settings → Booking website). Free times can be tapped; taken times are shown crossed out. Closed days and days the barber is "Not at work" cannot be picked.
+4. **Your details**: name and phone number only. No sign-up.
+5. **Done**: the day and time, and the shop's phone number to change or cancel.
+
+The booking becomes a waiting client in that barber's slot, marked **Online**, and the cashier shows a message. Barbers can edit or remove their own online clients; the owner can change all of them. Removing the client frees the time on the website again.
+
+The page is in Kurdish until the visitor picks another language (remembered on their phone). The footer shows the opening hours, address, phone, and **Instagram** and **WhatsApp** buttons. Those are set in the cashier, **Settings → Shop**. Instagram takes the page name (`@xbarber`) or a link. WhatsApp takes a phone number, where a number starting with 0 is treated as Iraqi (+964). Leave WhatsApp empty to use the shop phone; a button whose link is not set is hidden.
+
+## Free times
+
+They are exactly the free slots of the cashier board:
+
+- Opening hours: Settings → Working hours (10:00 AM to midnight by default; closing at 00:00 means midnight).
+- Each barber's own time between clients (10, 20, 30 minutes or any number).
+- Slots added by hand with **Add slot** in the cashier.
+- Not on closed weekdays, and not on days a barber marked **Not at work**.
+- A slot is taken when a client's time is inside it. Today, slots that have already started are not offered.
+- "Now" and "today" use the shop's time zone (`XBARBER_TZ`, default `Asia/Baghdad`).
+
+## Public API (no sign-in)
+
+| Request | Answer |
+|---|---|
+| `GET /api/public/info` | Shop name, phone, address, Instagram and WhatsApp links, whether booking is open, today's date, opening hours, and the barbers (id, name, photo address, time between clients, next free time, today's status) |
+| `GET /api/public/availability?barber=<id>` | For each day from today: `status` (`open`, `closed`, `off`), `free` times and `taken` times (`HH:MM`) |
+| `GET /api/public/photo/<id>` | The barber's photo |
+| `POST /api/public/book` | Body `{ barber_id, date, time, name, phone }`. Answer `{ ok: true, booking: { id, barber, date, time } }` |
+
+`POST /api/public/book` errors (`{ "error": "<code>" }`):
+
+| Status | Code | Meaning |
+|---|---|---|
+| 400 | `name`, `phone`, `slot` | Name shorter than 2 letters, phone not 7 to 15 digits, or a bad date or time |
+| 403 | `closed` | Online booking is turned off (Settings → Booking website) |
+| 409 | `taken` | The time is no longer free (someone else was faster, or it was removed) |
+| 429 | `limit` | This phone number already has 2 upcoming online bookings |
+| 429 | `busy` | More than 10 bookings from one address in an hour |
+
+The booking is checked and saved in one database transaction, so two customers can never book the same time.
+
+## Security
+
+- The website pages may only load files from the same server (Content-Security-Policy).
+- Customers never see other customers' names or numbers; the API only gives free and taken times.
+- The cashier API needs a sign-in. A barber's account can change only that barber's clients, time between clients, added slots and days off. Sign-ins, photos, product sales, the catalog, shop settings and backups are for the owner only. The history password is checked by the server, so its hash never reaches a barber's phone.
+- The owner signs in as `admin`; the password is changed in Settings → Owner sign-in (default `admin123`).

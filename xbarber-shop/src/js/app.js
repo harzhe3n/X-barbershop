@@ -20,8 +20,9 @@
  *   barber (barber_accounts)  -> Cashier and History; changes only their own clients
  * Finished (paid) clients can only be changed after entering the history edit password.
  *
- * Online booking: when it is turned on in Settings, the app syncs with the booking website
- * (xoshawi.com). See docs/ONLINE-BOOKING.md for the API the website provides.
+ * Online: on the shop's server (server.js on a VPS) every device and the booking website share
+ * one database. Bookings made on the website appear by themselves. See docs/WEBSITE.md.
+ * Time slots are worked out in src/js/slots.js, shared with the website.
  */
 
 const api = window.electronAPI || window.webApi;
@@ -31,6 +32,7 @@ const I18N = window.I18N;
 const t = I18N.t;
 
 const XAuth = window.XAuth;
+const XSlots = window.XSlots;
 
 const OPEN_STATUSES = ['waiting', 'in-service'];
 const ADMIN_PAGES = ['cashier', 'sell', 'dashboard', 'history', 'catalog', 'barbers', 'settings'];
@@ -50,10 +52,12 @@ const PAGE_ICONS = {
     settings: 'sliders'
 };
 const MAX_TRANSACTION_STATEMENTS = 100;
-const REFRESH_INTERVAL_MS = 60000;
+const REFRESH_INTERVAL_MS = 30000;
 
 const state = {
     signedIn: false,
+    // true when the cashier runs online on the shop's server (shared by all devices and the website)
+    serverMode: false,
     user: null,
     editUnlockedUntil: 0,
     booking: null,
@@ -501,23 +505,26 @@ function applyLanguage() {
 
 const ADMIN_USER = { role: 'admin', username: ADMIN_USERNAME };
 
+// The owner signs in as "admin". The password is saved (hashed) in the admins table and can be
+// changed in Settings; until it is changed it is admin123.
+async function verifyLocalAdmin(password) {
+    const row = await queryOne("SELECT password_hash FROM admins WHERE username = 'admin'");
+    const stored = String(row?.password_hash || '');
+    return stored.startsWith('sha256i$') ? XAuth.verifyPassword(password, stored) : password === ADMIN_PASSWORD;
+}
+
 // Returns the signed-in user, or null for a wrong username or password.
 async function authenticate(username, password) {
     const isAdminName = username.toLowerCase() === ADMIN_USERNAME;
-    const serverMode = Boolean(window.webApi) && typeof api.isLocalDatabase === 'function' && !(await api.isLocalDatabase());
-    if (typeof api.login === 'function') {
+    if (state.serverMode) {
+        // The server checks the owner and barber accounts.
         const result = await api.login(username, password);
-        if (result && typeof result === 'object') {
-            return result.role === 'barber'
-                ? { role: 'barber', username: result.username, barberId: Number(result.barberId), name: result.name }
-                : ADMIN_USER;
-        }
-        if (result === true) return ADMIN_USER;
-        if (serverMode) return null;
-    } else if (isAdminName) {
-        return password === ADMIN_PASSWORD ? ADMIN_USER : null;
+        if (!result || typeof result !== 'object') return null;
+        return result.role === 'barber'
+            ? { role: 'barber', username: result.username, barberId: Number(result.barberId), name: result.name }
+            : ADMIN_USER;
     }
-    if (isAdminName) return null;
+    if (isAdminName) return await verifyLocalAdmin(password) ? ADMIN_USER : null;
 
     // Offline and desktop modes: barber accounts are in the local database.
     const account = await queryOne(
@@ -538,6 +545,7 @@ async function handleLogin(event) {
     button.disabled = true;
     let user;
     try {
+        state.serverMode = Boolean(window.webApi) && typeof api.isLocalDatabase === 'function' && !(await api.isLocalDatabase());
         user = await authenticate(username, password);
         if (!user) {
             toast(t('login.invalid'), 'error');
@@ -562,8 +570,9 @@ async function handleLogin(event) {
     document.getElementById('password').value = '';
     await loadShopName();
     await migrateLegacyAppointments();
+    await migrateHoursToMidnight();
     await go(state.page);
-    startBookingSync();
+    startBookingWatch();
 }
 
 function signOut() {
@@ -572,7 +581,7 @@ function signOut() {
     state.editUnlockedUntil = 0;
     state.slotForm = null;
     state.cart.clear();
-    stopBookingSync();
+    stopBookingWatch();
     delete document.body.dataset.signedIn;
     delete document.body.dataset.role;
     closeAllModals();
@@ -720,104 +729,23 @@ function ticketMoney(ticket) {
 
 const SLOT_PRESETS = [10, 20, 30];
 
-function toMinutes(time) {
-    const match = /^(\d{1,2}):(\d{2})/.exec(String(time || ''));
-    return match ? Number(match[1]) * 60 + Number(match[2]) : null;
-}
-
-function fromMinutes(minutes) {
-    return `${pad(Math.floor(minutes / 60) % 24)}:${pad(minutes % 60)}`;
-}
+const {
+    toMinutes, fromMinutes, closingMinutes, slotGrid, parseBarberSlots, barberStep,
+    offKey, extraKey, parseExtraSlots, daySlots, parseOffDays, clampInt, parseWeekdays
+} = XSlots;
 
 function nowMinutes() {
     const now = new Date();
     return now.getHours() * 60 + now.getMinutes();
 }
 
-// Closing at 00:00 means midnight.
-function closingMinutes(time) {
-    const minutes = toMinutes(time);
-    return minutes === 0 ? 24 * 60 : minutes;
+// Opening hours and the shop's default time between clients.
+function shopHours(options = state.booking || {}) {
+    return XSlots.shopHours(options);
 }
 
-// Opening hours and the time between clients. The cashier and the website use the same values.
-function shopHours(options = state.booking || BOOKING_DEFAULTS) {
-    let open = isValidTime(options.open) ? String(options.open).slice(0, 5) : BOOKING_DEFAULTS.open;
-    let close = isValidTime(options.close) ? String(options.close).slice(0, 5) : BOOKING_DEFAULTS.close;
-    if (closingMinutes(close) <= toMinutes(open)) {
-        open = BOOKING_DEFAULTS.open;
-        close = BOOKING_DEFAULTS.close;
-    }
-    return {
-        open,
-        close,
-        slot: clampInt(options.slot, 5, 240, 30),
-        closed: parseWeekdays(options.closed)
-    };
-}
-
-// Start times (in minutes) of every slot from opening to closing. The last slot ends by closing time.
-function slotGrid(hours, step = hours.slot) {
-    const start = toMinutes(hours.open);
-    const end = closingMinutes(hours.close);
-    const list = [];
-    for (let minutes = start; minutes + step <= end && list.length < 300; minutes += step) list.push(minutes);
-    return list;
-}
-
-// Each barber chooses their own time between clients. It is saved as app_options "slot.barber.<id>".
+// Each barber chooses their own time between clients ("slot.barber.<id>").
 const BARBER_SLOT_QUERY = { query: "SELECT key, value FROM app_options WHERE key LIKE 'slot.barber.%'" };
-
-function parseBarberSlots(rows) {
-    const map = new Map();
-    rows.forEach(row => {
-        const id = Number(String(row.key).slice('slot.barber.'.length));
-        const minutes = clampInt(row.value, 5, 240, null);
-        if (Number.isInteger(id) && minutes != null) map.set(id, minutes);
-    });
-    return map;
-}
-
-// A barber who has not chosen yet uses the shop's default from Settings.
-function barberStep(hours, barberSlots, barberId) {
-    return barberSlots.get(Number(barberId)) ?? hours.slot;
-}
-
-// Days a barber is not at work, saved as app_options "off.<barber id>.<YYYY-MM-DD>" = 1.
-// Without that row the barber is at work.
-function offKey(barberId, date) {
-    return `off.${Number(barberId)}.${date}`;
-}
-
-// Slots a barber added by hand ("Add slot"), saved as app_options "extra.<barber id>.<YYYY-MM-DD>" = "HH:MM,HH:MM".
-function extraKey(barberId, date) {
-    return `extra.${Number(barberId)}.${date}`;
-}
-
-function parseExtraSlots(rows) {
-    const map = new Map();
-    rows.forEach(row => {
-        const match = /^extra\.(\d+)\.(\d{4}-\d{2}-\d{2})$/.exec(String(row.key));
-        if (!match) return;
-        const minutes = [...new Set(String(row.value || '').split(',').map(toMinutes).filter(value => value != null))].sort((a, b) => a - b);
-        if (minutes.length) map.set(`${Number(match[1])}|${match[2]}`, minutes);
-    });
-    return map;
-}
-
-// The barber's slots for a day: the regular ones plus the ones added by hand.
-function daySlots(hours, step, extra = []) {
-    return [...new Set([...slotGrid(hours, step), ...extra])].sort((a, b) => a - b);
-}
-
-function parseOffDays(rows) {
-    const set = new Set();
-    rows.forEach(row => {
-        const match = /^off\.(\d+)\.(\d{4}-\d{2}-\d{2})$/.exec(String(row.key));
-        if (match && row.value === '1') set.add(`${Number(match[1])}|${match[2]}`);
-    });
-    return set;
-}
 
 /* ------------------------------------------------------------------ */
 /* Cashier board                                                       */
@@ -830,7 +758,7 @@ async function renderCashier() {
     const hours = shopHours(options);
     const mineOnly = isAdmin() ? '' : ' AND (o.barber_id = ? OR o.barber_id IS NULL)';
     const [barbers, ticketRows, itemRows, upcomingRows, services, slotRows, offRows, extraRows] = await queryMany([
-        { query: 'SELECT id, name, is_active FROM barbers ORDER BY id' },
+        { query: 'SELECT b.id, b.name, b.is_active, p.thumb_data FROM barbers b LEFT JOIN barber_photos p ON p.barber_id = b.id ORDER BY b.id' },
         {
             query: `SELECT ${TICKET_COLUMNS}
                     FROM orders o LEFT JOIN customers c ON c.id = o.customer_id
@@ -976,7 +904,7 @@ async function renderCashier() {
 
 // Working hours above the board, and the button that shows free times that are already over.
 function renderSlotBar(hours, pastFree) {
-    const hoursText = t('slots.hours', { open: I18N.formatTime(hours.open), close: I18N.formatTime(hours.close) });
+    const hoursText = t('slots.hours', { open: I18N.formatTime(hours.open), close: closingLabel(hours.close) });
     const pastToggle = pastFree || state.showPast ? `
         <button type="button" class="btn btn-ghost btn-sm slot-past-toggle" data-action="toggle-past" aria-pressed="${state.showPast}">
             ${icon('clock')}
@@ -993,8 +921,8 @@ function renderSlotBar(hours, pastFree) {
         </div>`;
 }
 
-// Ready-made start times for "Add slot", so nothing has to be typed: the barber's own steps after
-// closing and before opening, plus every 5 minutes of the day in "Other time". Slots that already
+// Ready-made start times for "Add slot", so nothing has to be typed: halfway between the barber's
+// slots, the barber's own steps after closing and before opening, plus every 5 minutes in "Other time". Slots that already
 // exist, and on today times that are already over, are left out.
 function addSlotChoices(hours, step, existing, isPast) {
     const open = toMinutes(hours.open);
@@ -1009,11 +937,19 @@ function addSlotChoices(hours, step, existing, isPast) {
     for (let minutes = open - step; minutes >= Math.max(open - 180, 0) && before.length < 12; minutes -= step) {
         if (usable(minutes)) before.unshift(minutes);
     }
+    // Halfway between two regular slots (rounded to 5 minutes), the next ones that are still to come.
+    const between = [];
+    const half = Math.max(5, Math.round(step / 2 / 5) * 5);
+    if (half < step) {
+        for (let minutes = open + half; minutes < close && between.length < 8; minutes += step) {
+            if (usable(minutes)) between.push(minutes);
+        }
+    }
     const other = [];
     for (let minutes = 0; minutes < 24 * 60; minutes += 5) {
         if (usable(minutes)) other.push(minutes);
     }
-    return { after, before, other };
+    return { between, after, before, other };
 }
 
 // "Add slot": tap a start time; the new slot opens straight away, ready for the name, phone and service.
@@ -1035,6 +971,7 @@ function renderAddSlot(barber, choices) {
                 <strong>${icon('clock')}<span>${escapeHtml(t('slots.pickStart'))}</span></strong>
                 <button type="button" class="btn-icon btn-icon-sm" data-action="add-slot-cancel" aria-label="${escapeHtml(t('common.cancel'))}">${icon('x')}</button>
             </div>
+            ${choices.between.length ? `<span class="add-slot-group">${escapeHtml(t('slots.between'))}</span>${chips(choices.between)}` : ''}
             ${choices.after.length ? `<span class="add-slot-group">${escapeHtml(t('slots.afterClosing'))}</span>${chips(choices.after)}` : ''}
             ${choices.before.length ? `<span class="add-slot-group">${escapeHtml(t('slots.beforeOpening'))}</span>${chips(choices.before)}` : ''}
             ${choices.other.length ? `
@@ -1084,7 +1021,6 @@ async function addExtraSlot(barberId, time) {
     state.addSlot = null;
     toast(t('slots.slotAdded', { time: I18N.formatTime(fromMinutes(minutes)) }));
     await openSlotForm(barberId, fromMinutes(minutes));
-    if (state.booking?.enabled === '1') syncOnlineBookings();
 }
 
 async function removeExtraSlot(barberId, time) {
@@ -1093,7 +1029,6 @@ async function removeExtraSlot(barberId, time) {
     if (!saved) return;
     toast(t('slots.slotRemoved'));
     await renderPage({ keepScroll: true });
-    if (state.booking?.enabled === '1') syncOnlineBookings();
 }
 
 // "At work" / "Not at work" for the day on the board. The barber changes their own, the admin anyone's.
@@ -1124,8 +1059,6 @@ async function toggleWork(barberId, wasOff) {
     if (state.slotForm && state.slotForm.barberId === id && !state.slotForm.ticketId) state.slotForm = null;
     toast(t(wasOff ? 'work.savedOn' : 'work.savedOff', { name: barber.name, date: I18N.formatDate(date, { weekday: true }) }));
     await renderPage({ keepScroll: true });
-    // The website stops (or starts again) offering this barber's times.
-    if (state.booking?.enabled === '1') syncOnlineBookings();
 }
 
 // The time between clients of one barber, at the top of their column.
@@ -1280,7 +1213,7 @@ function renderColumn(column, ctx) {
         <section class="col ${column.barber ? '' : 'col-unassigned'} ${mine ? 'col-mine' : ''} ${editable ? '' : 'col-readonly'} ${off ? 'col-off' : ''}" data-col="${column.key}">
             <header class="col-head">
                 <div class="col-id">
-                    <span class="avatar ${column.barber ? '' : 'avatar-muted'}">${column.barber ? escapeHtml(initials(name)) : icon('users')}</span>
+                    ${column.barber ? barberAvatar(column.barber) : `<span class="avatar avatar-muted">${icon('users')}</span>`}
                     <div class="col-name">
                         <h3>${escapeHtml(name)}</h3>
                         <div class="col-tags">
@@ -1307,6 +1240,14 @@ function renderColumn(column, ctx) {
                 ${rowsHtml || (emptyText ? `<p class="col-empty">${escapeHtml(emptyText)}</p>` : '')}
             </div>
         </section>`;
+}
+
+// The barber's photo (small copy), or the first letter of their name.
+function barberAvatar(barber, size = '') {
+    const photo = safeImage(barber.thumb_data);
+    return photo
+        ? `<span class="avatar avatar-photo ${size}"><img src="${escapeHtml(photo)}" alt=""></span>`
+        : `<span class="avatar ${size}">${escapeHtml(initials(barber.name))}</span>`;
 }
 
 function statusBadge(ticket) {
@@ -1783,8 +1724,6 @@ async function saveSlotLength(barberId, value) {
     await runStatements([setOption(`slot.barber.${id}`, String(minutes))]);
     toast(t('slots.savedFor', { name: barber.name, n: minutes }));
     await renderPage({ keepScroll: true });
-    // The website gets the new free times right away.
-    if (state.booking?.enabled === '1') syncOnlineBookings();
 }
 
 async function getActiveBarbers() {
@@ -1923,6 +1862,12 @@ async function undoPayment(id) {
 /* Password for changing finished clients                              */
 /* ------------------------------------------------------------------ */
 
+// Online, the server checks the password, so barbers never see its hash.
+async function checkHistoryPassword(password) {
+    if (state.serverMode) return api.checkHistoryPassword(password);
+    return XAuth.verifyPassword(password, await getHistoryPasswordHash());
+}
+
 async function getHistoryPasswordHash() {
     const row = await queryOne("SELECT value FROM app_options WHERE key = 'history_password'");
     return row?.value || DEFAULT_HISTORY_PASSWORD_HASH;
@@ -1954,7 +1899,6 @@ async function requireEditPassword({ always = false, text = t('lock.text'), okLa
         unlockEditing();
         return true;
     }
-    const stored = await getHistoryPasswordHash();
     return new Promise(resolve => {
         let unlocked = false;
         const entry = openModal({
@@ -1977,8 +1921,20 @@ async function requireEditPassword({ always = false, text = t('lock.text'), okLa
         });
         const input = entry.modal.querySelector('[data-lock-input]');
         const error = entry.modal.querySelector('[data-lock-error]');
-        const check = () => {
-            if (XAuth.verifyPassword(input.value, stored)) {
+        const okButton = entry.modal.querySelector('[data-lock-ok]');
+        const check = async () => {
+            if (okButton.disabled) return;
+            okButton.disabled = true;
+            let correct = false;
+            try {
+                correct = await checkHistoryPassword(input.value);
+            } catch (checkError) {
+                okButton.disabled = false;
+                handleError(checkError);
+                return;
+            }
+            okButton.disabled = false;
+            if (correct) {
                 unlocked = true;
                 unlockEditing();
                 entry.close();
@@ -2071,7 +2027,7 @@ async function saveHistoryPassword(form) {
     const current = form.elements.current.value;
     const next = form.elements.next.value;
     const repeat = form.elements.repeat.value;
-    if (!XAuth.verifyPassword(current, await getHistoryPasswordHash())) {
+    if (!await checkHistoryPassword(current)) {
         toast(t('lock.wrongCurrent'), 'error');
         form.elements.current.focus();
         return;
@@ -2090,6 +2046,47 @@ async function saveHistoryPassword(form) {
     lockEditing();
     form.reset();
     toast(t('lock.changed'));
+}
+
+// The owner's sign-in password (username stays "admin").
+async function saveAdminPassword(form) {
+    const current = form.elements.current.value;
+    const next = form.elements.next.value;
+    if (next.length < 6) {
+        toast(t('owner.tooShort'), 'error');
+        form.elements.next.focus();
+        return;
+    }
+    if (next !== form.elements.repeat.value) {
+        toast(t('lock.mismatch'), 'error');
+        form.elements.repeat.focus();
+        return;
+    }
+    if (state.serverMode) {
+        try {
+            await api.changeAdminPassword(current, next);
+        } catch (error) {
+            if (error.status === 403) {
+                toast(t('owner.wrongCurrent'), 'error');
+                form.elements.current.focus();
+                return;
+            }
+            throw error;
+        }
+    } else {
+        if (!await verifyLocalAdmin(current)) {
+            toast(t('owner.wrongCurrent'), 'error');
+            form.elements.current.focus();
+            return;
+        }
+        const hash = XAuth.hashPassword(next);
+        await runStatements([
+            { query: "UPDATE admins SET password_hash = ? WHERE username = 'admin'", params: [hash] },
+            { query: "INSERT OR IGNORE INTO admins (username, password_hash) VALUES ('admin', ?)", params: [hash] }
+        ]);
+    }
+    form.reset();
+    toast(t('owner.changed'));
 }
 
 /* ------------------------------------------------------------------ */
@@ -3856,7 +3853,7 @@ async function openCategoriesModal() {
 async function renderBarbers() {
     const today = todayString();
     const [barbers, stats, accounts] = await queryMany([
-        { query: 'SELECT id, name FROM barbers WHERE is_active = 1 ORDER BY id' },
+        { query: 'SELECT b.id, b.name, p.thumb_data FROM barbers b LEFT JOIN barber_photos p ON p.barber_id = b.id WHERE b.is_active = 1 ORDER BY b.id' },
         {
             query: `SELECT barber_id,
                         SUM(CASE WHEN COALESCE(status, 'completed') = 'completed' THEN 1 ELSE 0 END) AS done,
@@ -3889,10 +3886,17 @@ async function renderBarbers() {
                     return `
                         <article class="barber-card">
                             <div class="barber-card-head">
-                                <span class="avatar avatar-lg">${escapeHtml(initials(barber.name))}</span>
-                                <div>
+                                ${barberAvatar(barber, 'avatar-xl')}
+                                <div class="barber-card-name">
                                     <h3>${escapeHtml(barber.name)}</h3>
                                     <span class="muted">${escapeHtml(t('barbers.column', { n: index + 1 }))}</span>
+                                    <div class="barber-photo-actions">
+                                        <label class="btn btn-outline btn-sm photo-pick">
+                                            ${icon('image')}<span>${escapeHtml(t(barber.thumb_data ? 'photo.change' : 'photo.add'))}</span>
+                                            <input type="file" accept="image/*" data-barber-photo="${barber.id}" hidden>
+                                        </label>
+                                        ${barber.thumb_data ? `<button type="button" class="btn btn-ghost-danger btn-sm" data-action="remove-photo" data-id="${barber.id}" data-name="${escapeHtml(barber.name)}">${icon('trash')}<span>${escapeHtml(t('photo.remove'))}</span></button>` : ''}
+                                    </div>
                                 </div>
                             </div>
                             <div class="barber-card-stats">
@@ -3917,6 +3921,27 @@ async function renderBarbers() {
             </div>` : `<p class="card-empty">${escapeHtml(t('barbers.empty'))}</p>`}`;
 
     return { actions: '', body };
+}
+
+// The barber's photo for the website (large) and the cashier (small).
+async function saveBarberPhoto(barberId, file) {
+    if (!isAdmin() || !file) return;
+    const [image, thumb] = await Promise.all([readImageFile(file, 900), readImageFile(file, 160)]);
+    if (!image || !thumb) return;
+    await runStatements([{
+        query: 'INSERT OR REPLACE INTO barber_photos (barber_id, image_data, thumb_data, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
+        params: [Number(barberId), image, thumb]
+    }]);
+    toast(t('photo.saved'));
+    await renderPage({ keepScroll: true });
+}
+
+async function removeBarberPhoto(barberId, name) {
+    if (!isAdmin()) return;
+    if (!await confirmDialog(t('photo.confirmRemove', { name }), { okLabel: t('photo.remove'), danger: true })) return;
+    await runStatements([{ query: 'DELETE FROM barber_photos WHERE barber_id = ?', params: [Number(barberId)] }]);
+    toast(t('photo.removed'));
+    await renderPage({ keepScroll: true });
 }
 
 async function addBarber(name) {
@@ -4057,11 +4082,19 @@ async function renderSettings() {
     const isLocal = typeof api.isLocalDatabase === 'function' ? await api.isLocalDatabase() : false;
     const current = I18N.getLanguage();
     const booking = await loadBookingOptions();
-    const bookingCount = await queryOne("SELECT COUNT(*) AS count FROM online_bookings WHERE order_id IS NOT NULL");
-    const [settingsBarbers, settingsSlotRows] = await queryMany([
+    const [settingsBarbers, settingsSlotRows, siteRows, upcomingRows, socialRows] = await queryMany([
         { query: 'SELECT id, name FROM barbers WHERE is_active = 1 ORDER BY id' },
-        BARBER_SLOT_QUERY
+        BARBER_SLOT_QUERY,
+        { query: 'SELECT value FROM app_options WHERE key = ?', params: [SITE_OPEN_KEY] },
+        {
+            query: `SELECT COUNT(*) AS count FROM online_bookings ob JOIN orders o ON o.id = ob.order_id
+                    WHERE o.status = 'waiting' AND o.date >= ?`,
+            params: [todayString()]
+        },
+        { query: 'SELECT key, value FROM app_options WHERE key IN (?, ?)', params: [INSTAGRAM_KEY, WHATSAPP_KEY] }
     ]);
+    const siteOpen = String(siteRows[0]?.value ?? '1') !== '0';
+    const social = Object.fromEntries(socialRows.map(row => [row.key, row.value == null ? '' : String(row.value)]));
 
     const body = `
         <div class="settings-grid">
@@ -4090,11 +4123,20 @@ async function renderSettings() {
                             <input type="text" name="address" maxlength="160" value="${escapeHtml(settings.address || '')}">
                         </label>
                     </div>
+                    <div class="grid-2">
+                        <label class="field"><span>${escapeHtml(t('settings.instagram'))} <em>${escapeHtml(t('common.optional'))}</em></span>
+                            <input type="text" name="instagram" maxlength="120" dir="ltr" autocomplete="off" spellcheck="false" placeholder="@xbarber" value="${escapeHtml(social[INSTAGRAM_KEY] || '')}">
+                        </label>
+                        <label class="field"><span>${escapeHtml(t('settings.whatsapp'))} <em>${escapeHtml(t('common.optional'))}</em></span>
+                            <input type="tel" name="whatsapp" maxlength="30" dir="ltr" autocomplete="off" placeholder="0750 123 4567" value="${escapeHtml(social[WHATSAPP_KEY] || '')}">
+                        </label>
+                    </div>
+                    <p class="field-hint">${escapeHtml(t('settings.socialHint'))}</p>
                     <div><button type="submit" class="btn btn-primary">${icon('check')}<span>${escapeHtml(t('common.save'))}</span></button></div>
                 </form>
             </section>
             ${renderHoursCard(booking, settingsBarbers, parseBarberSlots(settingsSlotRows))}
-            ${renderBookingCard(booking, Number(bookingCount?.count || 0))}
+            ${renderSiteCard(booking, siteOpen, Number(upcomingRows[0]?.count || 0))}
             <section class="card">
                 <h3 class="card-title">${icon('lock')}${escapeHtml(t('lock.settingsTitle'))}</h3>
                 <p class="card-text">${escapeHtml(t('lock.settingsText'))}</p>
@@ -4114,8 +4156,27 @@ async function renderSettings() {
                 </form>
             </section>
             <section class="card">
+                <h3 class="card-title">${icon('key')}${escapeHtml(t('owner.title'))}</h3>
+                <p class="card-text">${escapeHtml(t('owner.text'))}</p>
+                <form class="stack" data-form="admin-password" autocomplete="off">
+                    <input type="text" name="username" value="admin" autocomplete="username" hidden>
+                    <label class="field"><span>${escapeHtml(t('owner.current'))}</span>
+                        <input type="password" name="current" maxlength="100" autocomplete="current-password" required>
+                    </label>
+                    <div class="grid-2">
+                        <label class="field"><span>${escapeHtml(t('lock.new'))}</span>
+                            <input type="password" name="next" maxlength="100" autocomplete="new-password" required>
+                        </label>
+                        <label class="field"><span>${escapeHtml(t('lock.repeat'))}</span>
+                            <input type="password" name="repeat" maxlength="100" autocomplete="new-password" required>
+                        </label>
+                    </div>
+                    <div><button type="submit" class="btn btn-primary">${icon('check')}<span>${escapeHtml(t('lock.change'))}</span></button></div>
+                </form>
+            </section>
+            <section class="card">
                 <h3 class="card-title">${icon('database')}${escapeHtml(t('settings.data'))}</h3>
-                <p class="card-text">${escapeHtml(t(isLocal ? 'settings.dataLocal' : 'settings.dataShared'))}</p>
+                <p class="card-text">${escapeHtml(t(state.serverMode ? 'settings.dataServer' : isLocal ? 'settings.dataLocal' : 'settings.dataShared'))}</p>
                 <div class="button-row">
                     <button type="button" class="btn btn-outline" data-action="backup">${icon('download')}<span>${escapeHtml(t('settings.backup'))}</span></button>
                     <button type="button" class="btn btn-outline" data-action="restore">${icon('upload')}<span>${escapeHtml(t('settings.restore'))}</span></button>
@@ -4139,14 +4200,45 @@ function settingsAfterRender() {
     dom.page.querySelector('.hours-card')?.scrollIntoView({ block: 'start' });
 }
 
+// Instagram and WhatsApp for the website footer (Settings, Shop).
+const INSTAGRAM_KEY = 'shop.instagram';
+const WHATSAPP_KEY = 'shop.whatsapp';
+
+// "@name", "name" or a link to the profile; the server turns it into the link.
+function instagramName(value) {
+    const text = String(value || '').trim();
+    const match = /^(?:https?:\/\/)?(?:www\.)?(?:instagram\.com|instagr\.am)\/([A-Za-z0-9._]{1,30})\/?(?:[?#].*)?$/i.exec(text)
+        || /^@?([A-Za-z0-9._]{1,30})$/.exec(text);
+    return match ? match[1] : '';
+}
+
 async function saveShop(form) {
     const shopName = form.elements.shop_name.value.trim() || 'XBARBER SHOP';
     const phone = form.elements.phone.value.trim();
     const address = form.elements.address.value.trim();
-    await api.dbRun(
-        "INSERT INTO settings (shop_name, phone, address, currency) VALUES (?, ?, ?, 'IQD')",
-        [shopName, phone || null, address || null]
-    );
+    const instagramText = form.elements.instagram.value.trim();
+    const instagram = instagramName(instagramText);
+    if (instagramText && !instagram) {
+        toast(t('settings.badInstagram'), 'error');
+        form.elements.instagram.focus();
+        return;
+    }
+    const whatsapp = form.elements.whatsapp.value.trim();
+    const whatsappDigits = whatsapp.replace(/\D+/g, '');
+    if (whatsapp && (whatsappDigits.length < 7 || whatsappDigits.length > 15)) {
+        toast(t('settings.badWhatsapp'), 'error');
+        form.elements.whatsapp.focus();
+        return;
+    }
+    await runStatements([
+        {
+            query: "INSERT INTO settings (shop_name, phone, address, currency) VALUES (?, ?, ?, 'IQD')",
+            params: [shopName, phone || null, address || null]
+        },
+        setOption(INSTAGRAM_KEY, instagram ? `@${instagram}` : ''),
+        setOption(WHATSAPP_KEY, whatsapp)
+    ]);
+    form.elements.instagram.value = instagram ? `@${instagram}` : '';
     state.shopName = shopName;
     applyStaticText();
     renderNav();
@@ -4154,10 +4246,10 @@ async function saveShop(form) {
 }
 
 async function backupDatabase() {
+    // The browser app (offline or online) downloads the backup file.
     if (window.webApi) {
-        const isLocal = await api.isLocalDatabase();
         const result = await api.backupDatabase();
-        toast(isLocal ? t('settings.backupDownloaded', { file: result }) : t('settings.backupSaved', { file: result }));
+        toast(t('settings.backupDownloaded', { file: result }));
         return;
     }
     const path = await promptDialog({ title: t('settings.backup'), label: t('settings.backupPath'), placeholder: 'C:\\backup\\xbarber.db', okLabel: t('settings.backup'), maxLength: 400 });
@@ -4168,7 +4260,7 @@ async function backupDatabase() {
 
 async function restoreDatabase() {
     if (!await confirmDialog(t('confirm.restore'), { okLabel: t('settings.restore'), danger: true })) return;
-    if (window.webApi && await api.isLocalDatabase()) {
+    if (window.webApi) {
         const result = await api.restoreDatabase();
         if (result?.canceled) return;
     } else {
@@ -4200,53 +4292,27 @@ async function clearHistory() {
 }
 
 /* ------------------------------------------------------------------ */
-/* Online booking (xoshawi.com)                                        */
+/* Booking website                                                     */
 /*                                                                     */
-/* Every minute while online, the app sends the website its barbers,   */
-/* opening hours and taken times, plus status changes of earlier       */
-/* bookings. The website answers with new or changed bookings, which   */
-/* become waiting clients in the chosen barber's column at the chosen  */
-/* time. Full API: docs/ONLINE-BOOKING.md                              */
+/* When the cashier runs online (server.js on the shop's VPS), the     */
+/* booking website on the same server reads the same database. Free    */
+/* times come straight from the cashier, and a booking becomes a       */
+/* waiting client in the chosen barber's slot. See docs/WEBSITE.md.    */
 /* ------------------------------------------------------------------ */
 
-const BOOKING_DOMAIN = 'xoshawi.com';
+// Settings saved as app_options "booking.<name>". How slots are made: src/js/slots.js.
 const BOOKING_DEFAULTS = {
-    enabled: '0',
-    url: `https://${BOOKING_DOMAIN}`,
-    key: '',
-    open: '10:00',
-    close: '22:00',
-    slot: '30',
-    days: '14',
-    closed: '',
-    cursor: '',
-    last_sync: '',
-    last_error: '',
-    last_error_at: ''
+    open: XSlots.DEFAULTS.open,
+    close: XSlots.DEFAULTS.close,
+    slot: String(XSlots.DEFAULTS.slot),
+    days: String(XSlots.DEFAULTS.days),
+    closed: ''
 };
-const BOOKING_SYNC_MS = 60000;
-const BOOKING_TIMEOUT_MS = 15000;
-const BOOKING_MAX_ROUNDS = 5;
-const BOOKING_MAX_PER_REPLY = 200;
-let bookingTimer = null;
-let bookingSyncRunning = false;
-
-function clampInt(value, min, max, fallback) {
-    const number = Math.round(Number(value));
-    return Number.isFinite(number) && number >= min && number <= max ? number : fallback;
-}
-
-function parseWeekdays(value) {
-    return [...new Set(String(value || '').split(',').filter(Boolean).map(Number))]
-        .filter(day => Number.isInteger(day) && day >= 0 && day <= 6)
-        .sort();
-}
-
-function formatStamp(iso) {
-    const date = new Date(iso);
-    if (Number.isNaN(date.getTime())) return '';
-    return `${I18N.formatDateShort(toDateString(date))} ${I18N.formatTime(`${pad(date.getHours())}:${pad(date.getMinutes())}`)}`;
-}
+// "0" closes online booking for a while; anything else (or nothing) keeps it open.
+const SITE_OPEN_KEY = 'site.open';
+const BOOKING_WATCH_MS = 20000;
+let bookingWatchTimer = null;
+let bookingWatchLast = null;
 
 async function loadBookingOptions() {
     const rows = await api.dbQuery("SELECT key, value FROM app_options WHERE key LIKE 'booking.%'");
@@ -4263,468 +4329,41 @@ function bookingOptionStatements(values) {
     return Object.entries(values).map(([key, value]) => setOption(`booking.${key}`, value));
 }
 
-// Shop data is only sent to the shop's own website (or to this app's own address, for testing).
-function bookingEndpoint(url) {
-    let parsed;
-    try {
-        parsed = new URL(String(url || '').trim());
-    } catch (error) {
-        return null;
+// "12:00 AM" as a closing time reads as "Midnight".
+function closingLabel(time) {
+    return String(time).slice(0, 5) === '00:00' ? t('slots.midnight') : I18N.formatTime(time);
+}
+
+function websiteAddress() {
+    return `${window.location.origin}/`;
+}
+
+// Settings card for the booking website. It only works when the cashier runs online on the server.
+function renderSiteCard(options, siteOpen, upcoming) {
+    if (!state.serverMode) {
+        return `
+            <section class="card card-wide site-card">
+                <h3 class="card-title">${icon('globe')}${escapeHtml(t('site.title'))}</h3>
+                <p class="card-text">${escapeHtml(t('site.localText'))}</p>
+            </section>`;
     }
-    const host = parsed.hostname.toLowerCase();
-    const shopSite = parsed.protocol === 'https:' && (host === BOOKING_DOMAIN || host.endsWith(`.${BOOKING_DOMAIN}`));
-    if (!shopSite && parsed.origin !== window.location.origin) return null;
-    return `${parsed.origin}${parsed.pathname.replace(/\/+$/, '')}/api/cashier/sync`;
-}
-
-// The status the website is told about: received, in-service, completed or cancelled.
-function bookingLocalStatus(row) {
-    if (row.order_exists == null) return row.status === 'completed' ? 'completed' : 'cancelled';
-    if (row.order_status === 'waiting') return 'received';
-    if (row.order_status === 'in-service') return 'in-service';
-    if (row.order_status === 'completed') return 'completed';
-    return 'cancelled';
-}
-
-async function buildBookingPayload(options) {
-    const today = todayString();
-    const daysAhead = clampInt(options.days, 1, 60, 14);
-    const [barbers, busyRows, bookingRows, shopRows, slotRows, offRows, extraRows] = await queryMany([
-        { query: 'SELECT id, name FROM barbers WHERE is_active = 1 ORDER BY id' },
-        {
-            query: `SELECT barber_id, date, time FROM orders
-                    WHERE barber_id IS NOT NULL AND date BETWEEN ? AND ? AND time IS NOT NULL AND time <> ''
-                      AND COALESCE(status, 'completed') IN ('waiting', 'in-service', 'completed')
-                    ORDER BY date, time LIMIT 5000`,
-            params: [today, addDays(today, daysAhead)]
-        },
-        {
-            query: `SELECT ob.booking_id, ob.order_id, ob.status, ob.reported_status,
-                           o.id AS order_exists, COALESCE(o.status, 'completed') AS order_status
-                    FROM online_bookings ob LEFT JOIN orders o ON o.id = ob.order_id
-                    WHERE ob.reported_status IS NULL OR ob.reported_status <> ob.status OR ob.date >= ?
-                    LIMIT 2000`,
-            params: [addDays(today, -60)]
-        },
-        { query: 'SELECT shop_name, phone, address FROM settings ORDER BY id DESC LIMIT 1' },
-        BARBER_SLOT_QUERY,
-        { query: "SELECT key, value FROM app_options WHERE key LIKE 'off.%'" },
-        { query: "SELECT key, value FROM app_options WHERE key LIKE 'extra.%'" }
-    ]);
-    const extraSlots = parseExtraSlots(extraRows);
-    const barberSlots = parseBarberSlots(slotRows);
-    const offDays = parseOffDays(offRows);
-    const lastDay = addDays(today, daysAhead);
-    const daysOff = barberId => [...offDays]
-        .map(item => item.split('|'))
-        .filter(([id, date]) => Number(id) === Number(barberId) && date >= today && date <= lastDay)
-        .map(([, date]) => date)
-        .sort();
-
-    const updates = [];
-    bookingRows.forEach(row => {
-        const status = bookingLocalStatus(row);
-        if (status !== row.reported_status) {
-            updates.push({ booking_id: String(row.booking_id), status, order_id: row.order_exists == null ? null : Number(row.order_id) });
-        }
-    });
-    const shop = shopRows[0] || {};
-    const hours = shopHours(options);
-    let timezone = 'Asia/Baghdad';
-    try {
-        timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || timezone;
-    } catch (error) {
-        // Keep the default.
-    }
-
-    return {
-        updates,
-        payload: {
-            version: 1,
-            sent_at: new Date().toISOString(),
-            cursor: options.cursor || null,
-            shop: {
-                name: String(shop.shop_name || state.shopName),
-                phone: shop.phone || null,
-                address: shop.address || null,
-                timezone,
-                currency: 'IQD'
-            },
-            hours: {
-                open: hours.open,
-                close: hours.close,
-                slot_minutes: hours.slot,
-                days_ahead: daysAhead,
-                closed_weekdays: hours.closed
-            },
-            barbers: barbers.map(barber => ({
-                id: Number(barber.id),
-                name: barber.name,
-                slot_minutes: barberStep(hours, barberSlots, barber.id),
-                days_off: daysOff(barber.id)
-            })),
-            busy: busyRows.map(row => ({ barber_id: Number(row.barber_id), date: row.date, time: String(row.time).slice(0, 5) })),
-            slots: freeSlots(hours, barberSlots, offDays, extraSlots, barbers, busyRows, today, daysAhead),
-            updates
-        }
-    };
-}
-
-// The same free times the cashier shows: every slot of every open day that has no client yet,
-// using each barber's own time between clients plus the slots added by hand. Days a barber is not at work, and for today
-// slots that have already started, are left out.
-function freeSlots(hours, barberSlots, offDays, extraSlots, barbers, busyRows, today, daysAhead) {
-    const taken = new Map();
-    busyRows.forEach(row => {
-        const key = `${row.barber_id}|${row.date}`;
-        const list = taken.get(key) || [];
-        list.push(toMinutes(row.time));
-        taken.set(key, list);
-    });
-    const now = nowMinutes();
-    const slots = [];
-    for (let day = 0; day <= daysAhead; day += 1) {
-        const date = addDays(today, day);
-        if (hours.closed.includes(parseDate(date).getDay())) continue;
-        barbers.forEach(barber => {
-            // Not at work on this day: no free times.
-            if (offDays.has(`${Number(barber.id)}|${date}`)) return;
-            const step = barberStep(hours, barberSlots, barber.id);
-            const busy = taken.get(`${barber.id}|${date}`) || [];
-            const times = daySlots(hours, step, extraSlots.get(`${Number(barber.id)}|${date}`) || [])
-                .filter(start => !(day === 0 && start <= now))
-                .filter(start => !busy.some(minutes => minutes != null && minutes >= start && minutes < start + step))
-                .map(fromMinutes);
-            if (times.length) slots.push({ barber_id: Number(barber.id), date, times });
-        });
-    }
-    return slots;
-}
-
-async function postBookingSync(endpoint, key, payload) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), BOOKING_TIMEOUT_MS);
-    const headers = { 'Content-Type': 'application/json', Accept: 'application/json' };
-    if (key) headers.Authorization = `Bearer ${key}`;
-    try {
-        let response;
-        try {
-            response = await fetch(endpoint, {
-                method: 'POST',
-                headers,
-                body: JSON.stringify(payload),
-                cache: 'no-store',
-                credentials: 'omit',
-                mode: 'cors',
-                referrerPolicy: 'no-referrer',
-                signal: controller.signal
-            });
-        } catch (error) {
-            throw new Error(t(error.name === 'AbortError' ? 'booking.timeout' : 'booking.unreachable'));
-        }
-        if (response.status === 401 || response.status === 403) throw new Error(t('booking.badKey'));
-        if (response.status === 404) throw new Error(t('booking.notReady'));
-        if (!response.ok) throw new Error(t('booking.httpError', { status: response.status }));
-        const data = await response.json().catch(() => null);
-        if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error(t('booking.badReply'));
-        return data;
-    } finally {
-        clearTimeout(timer);
-    }
-}
-
-function normalizeBooking(raw) {
-    if (!raw || typeof raw !== 'object') return null;
-    const id = String(raw.id ?? '').trim();
-    if (!id || id.length > 100) return null;
-    const status = raw.status === 'cancelled' ? 'cancelled' : 'booked';
-    const date = String(raw.date || '').slice(0, 10);
-    const time = String(raw.time || '').slice(0, 5);
-    const hasWhen = isValidDate(date) && /^\d{2}:\d{2}$/.test(time);
-    if (status === 'booked' && !hasWhen) return null;
-    const barber = raw.barber_id === null || raw.barber_id === undefined || raw.barber_id === '' ? null : Number(raw.barber_id);
-    return {
-        id,
-        status,
-        barberId: Number.isInteger(barber) ? barber : null,
-        name: String(raw.name || '').trim().slice(0, 80),
-        phone: String(raw.phone || '').trim().slice(0, 30),
-        date: isValidDate(date) ? date : null,
-        time: hasWhen ? time : null
-    };
-}
-
-// Turns website bookings into waiting clients. Returns what changed, for the toast.
-async function applyOnlineBookings(rawList) {
-    const result = { added: [], changed: 0, cancelled: 0 };
-    const latest = new Map();
-    rawList.slice(0, BOOKING_MAX_PER_REPLY).map(normalizeBooking).filter(Boolean)
-        .forEach(booking => latest.set(booking.id, booking));
-    const bookings = [...latest.values()];
-    if (!bookings.length) return result;
-
-    const ids = bookings.map(booking => booking.id);
-    const [existingRows, customers, barbers] = await queryMany([
-        {
-            query: `SELECT ob.booking_id, ob.order_id, ob.barber_id, ob.date, ob.time, o.id AS order_exists, o.status AS order_status
-                    FROM online_bookings ob LEFT JOIN orders o ON o.id = ob.order_id
-                    WHERE ob.booking_id IN (${ids.map(() => '?').join(', ')})`,
-            params: ids
-        },
-        { query: 'SELECT id, name, phone FROM customers WHERE is_active = 1 ORDER BY id DESC' },
-        { query: 'SELECT id, name FROM barbers WHERE is_active = 1' }
-    ]);
-    const existing = new Map(existingRows.map(row => [String(row.booking_id), row]));
-    const barberNames = new Map(barbers.map(barber => [Number(barber.id), barber.name]));
-    const customerByPhone = new Map();
-    customers.forEach(customer => {
-        const key = digits(customer.phone);
-        if (key && !customerByPhone.has(key)) customerByPhone.set(key, customer);
-    });
-
-    let chunk = [];
-    let newCustomers = new Map();
-    const newCustomerNames = new Map();
-    const flush = async () => {
-        if (!chunk.length) return;
-        const results = await runStatements(chunk);
-        // Customers created in this batch can be reused by later bookings with the same phone.
-        newCustomers.forEach((ref, phoneKey) => {
-            const created = results[ref.lastIDFrom];
-            if (created?.lastID) customerByPhone.set(phoneKey, { id: created.lastID, name: newCustomerNames.get(phoneKey) || '' });
-        });
-        chunk = [];
-        newCustomers = new Map();
-    };
-
-    for (const booking of bookings) {
-        if (chunk.length > 85) await flush();
-        const row = existing.get(booking.id);
-        const barberId = booking.barberId != null && barberNames.has(booking.barberId) ? booking.barberId : null;
-
-        if (booking.status === 'cancelled') {
-            if (!row) {
-                chunk.push({
-                    query: `INSERT INTO online_bookings (booking_id, barber_id, customer_name, phone, date, time, status, reported_status)
-                            VALUES (?, ?, ?, ?, ?, ?, 'cancelled', 'cancelled')`,
-                    params: [booking.id, barberId, booking.name || null, booking.phone || null, booking.date, booking.time]
-                });
-            } else if (row.order_exists != null && row.order_status === 'waiting') {
-                // Only clients who have not started yet are removed.
-                chunk.push(
-                    { query: 'DELETE FROM order_items WHERE order_id = ?', params: [Number(row.order_id)] },
-                    { query: "DELETE FROM orders WHERE id = ? AND status = 'waiting'", params: [Number(row.order_id)] },
-                    {
-                        query: "UPDATE online_bookings SET status = 'cancelled', reported_status = 'cancelled', order_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE booking_id = ?",
-                        params: [booking.id]
-                    }
-                );
-                result.cancelled += 1;
-            }
-            continue;
-        }
-
-        if (!row) {
-            // The booking row goes first: a booking that is already here fails the batch instead of being added twice.
-            chunk.push({
-                query: `INSERT INTO online_bookings (booking_id, barber_id, customer_name, phone, date, time, status, reported_status)
-                        VALUES (?, ?, ?, ?, ?, ?, 'received', NULL)`,
-                params: [booking.id, barberId, booking.name || null, booking.phone || null, booking.date, booking.time]
-            });
-            let customerRef = null;
-            const phoneKey = digits(booking.phone);
-            const known = phoneKey ? customerByPhone.get(phoneKey) : null;
-            if (known) {
-                customerRef = Number(known.id);
-                if (booking.name && !String(known.name || '').trim()) {
-                    chunk.push({ query: 'UPDATE customers SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', params: [booking.name, customerRef] });
-                }
-            } else if (phoneKey && newCustomers.has(phoneKey)) {
-                customerRef = newCustomers.get(phoneKey);
-            } else if (booking.name || booking.phone) {
-                chunk.push({
-                    query: 'INSERT INTO customers (name, phone, total_visits, total_spent) VALUES (?, ?, 0, 0)',
-                    params: [booking.name || null, booking.phone || null]
-                });
-                customerRef = { lastIDFrom: chunk.length - 1 };
-                if (phoneKey) {
-                    newCustomers.set(phoneKey, customerRef);
-                    newCustomerNames.set(phoneKey, booking.name);
-                }
-            }
-            chunk.push({
-                query: "INSERT INTO orders (customer_id, date, time, total, discount, status, payment_method, barber_id) VALUES (?, ?, ?, 0, 0, 'waiting', NULL, ?)",
-                params: [customerRef, booking.date, booking.time, barberId]
-            });
-            chunk.push({
-                query: 'UPDATE online_bookings SET order_id = ?, updated_at = CURRENT_TIMESTAMP WHERE booking_id = ?',
-                params: [{ lastIDFrom: chunk.length - 1 }, booking.id]
-            });
-            result.added.push({ name: booking.name, barber: barberNames.get(barberId) || '', date: booking.date, time: booking.time });
-            continue;
-        }
-
-        // Changed on the website: move the client while they are still waiting.
-        const moved = row.date !== booking.date
-            || String(row.time || '').slice(0, 5) !== booking.time
-            || (row.barber_id == null ? null : Number(row.barber_id)) !== barberId;
-        if (moved && row.order_exists != null && row.order_status === 'waiting') {
-            chunk.push(
-                {
-                    query: "UPDATE orders SET date = ?, time = ?, barber_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'waiting'",
-                    params: [booking.date, booking.time, barberId, Number(row.order_id)]
-                },
-                {
-                    query: 'UPDATE online_bookings SET barber_id = ?, customer_name = ?, phone = ?, date = ?, time = ?, updated_at = CURRENT_TIMESTAMP WHERE booking_id = ?',
-                    params: [barberId, booking.name || null, booking.phone || null, booking.date, booking.time, booking.id]
-                }
-            );
-            result.changed += 1;
-        }
-    }
-    await flush();
-    return result;
-}
-
-async function syncOnlineBookings({ manual = false } = {}) {
-    if (!state.signedIn || bookingSyncRunning) return null;
-    if (!manual && state.booking && state.booking.enabled !== '1') return null;
-    bookingSyncRunning = true;
-    try {
-        const options = await loadBookingOptions();
-        if (options.enabled !== '1') {
-            if (manual) toast(t('booking.turnOnFirst'), 'error');
-            return null;
-        }
-        const endpoint = bookingEndpoint(options.url);
-        if (!endpoint) throw new Error(t('booking.badUrl'));
-        if (!navigator.onLine) {
-            if (manual) toast(t('booking.offline'), 'error');
-            return null;
-        }
-
-        const totals = { added: [], changed: 0, cancelled: 0 };
-        let cursor = options.cursor;
-        for (let round = 0; round < BOOKING_MAX_ROUNDS; round += 1) {
-            const { payload, updates } = await buildBookingPayload({ ...options, cursor });
-            const reply = await postBookingSync(endpoint, options.key, payload);
-            const result = await applyOnlineBookings(Array.isArray(reply.bookings) ? reply.bookings : []);
-            totals.added.push(...result.added);
-            totals.changed += result.changed;
-            totals.cancelled += result.cancelled;
-            if (reply.cursor !== undefined) cursor = reply.cursor == null ? '' : String(reply.cursor).slice(0, 500);
-
-            const statements = [
-                ...updates.map(update => ({
-                    query: 'UPDATE online_bookings SET status = ?, reported_status = ?, updated_at = CURRENT_TIMESTAMP WHERE booking_id = ?',
-                    params: [update.status, update.status, update.booking_id]
-                })),
-                ...bookingOptionStatements({ cursor, last_sync: new Date().toISOString(), last_error: '', last_error_at: '' })
-            ];
-            for (let index = 0; index < statements.length; index += 90) {
-                await runStatements(statements.slice(index, index + 90));
-            }
-            // Ask again right away when the website has more, or to confirm what just arrived.
-            if (!reply.has_more && !result.added.length && !result.cancelled && !result.changed) break;
-        }
-        await loadBookingOptions();
-        announceBookings(totals, manual);
-        return totals;
-    } catch (error) {
-        const message = String(error?.message || error).slice(0, 300);
-        try {
-            await runStatements(bookingOptionStatements({ last_error: message, last_error_at: new Date().toISOString() }));
-            await loadBookingOptions();
-        } catch (saveError) {
-            console.warn('Could not save the online booking status:', saveError);
-        }
-        if (manual) toast(t('booking.syncFailed', { message }), 'error');
-        else console.warn('Online booking sync failed:', message);
-        refreshSettingsIfOpen();
-        return null;
-    } finally {
-        bookingSyncRunning = false;
-    }
-}
-
-function announceBookings(totals, manual) {
-    const added = totals.added;
-    if (added.length === 1) {
-        const booking = added[0];
-        toast(t('booking.newOne', {
-            name: booking.name || t('cashier.walkIn'),
-            barber: booking.barber || t('cashier.anyBarber'),
-            when: `${I18N.formatDateShort(booking.date)} ${I18N.formatTime(booking.time)}`
-        }));
-    } else if (added.length > 1) {
-        toast(t('booking.newMany', { n: added.length }));
-    } else if (manual) {
-        toast(t('booking.upToDate'));
-    }
-    if ((added.length || totals.changed || totals.cancelled) && !modalStack.length && !state.slotForm && state.addSlot == null && ['cashier', 'dashboard'].includes(state.page)) {
-        renderPage({ keepScroll: true });
-    }
-    refreshSettingsIfOpen();
-}
-
-// Only the status pill is updated, so settings that are being changed are not lost.
-function refreshSettingsIfOpen() {
-    const pill = state.page === 'settings' ? dom.page.querySelector('.booking-status') : null;
-    if (!pill || !state.booking) return;
-    const { status, text } = bookingStatusInfo(state.booking);
-    pill.dataset.state = status;
-    pill.innerHTML = `<span class="status-dot"></span>${escapeHtml(text)}`;
-}
-
-function bookingStatusInfo(options) {
-    const enabled = options.enabled === '1';
-    if (!enabled) return { status: 'off', text: t('booking.statusOff') };
-    if (!navigator.onLine) return { status: 'offline', text: t('booking.statusOffline') };
-    if (options.last_error) return { status: 'error', text: t('booking.statusError', { message: options.last_error, time: formatStamp(options.last_error_at) }) };
-    if (options.last_sync) return { status: 'ok', text: t('booking.statusOk', { time: formatStamp(options.last_sync) }) };
-    return { status: 'waiting', text: t('booking.statusWaiting') };
-}
-
-function startBookingSync() {
-    stopBookingSync();
-    bookingTimer = setInterval(() => syncOnlineBookings(), BOOKING_SYNC_MS);
-    loadBookingOptions()
-        .then(() => syncOnlineBookings())
-        .catch(error => console.warn('Could not start online booking:', error));
-}
-
-function stopBookingSync() {
-    clearInterval(bookingTimer);
-    bookingTimer = null;
-}
-
-function renderBookingCard(options, received) {
-    const enabled = options.enabled === '1';
-    const { status, text: statusText } = bookingStatusInfo(options);
     const days = clampInt(options.days, 1, 60, 14);
     const dayChoices = [...new Set([7, 14, 30, days])].sort((a, b) => a - b);
-
+    const address = websiteAddress();
     return `
-        <section class="card card-wide booking-card">
+        <section class="card card-wide site-card">
             <div class="booking-head">
-                <h3 class="card-title">${icon('globe')}${escapeHtml(t('booking.title'))}</h3>
-                <span class="booking-status" data-state="${status}"><span class="status-dot"></span>${escapeHtml(statusText)}</span>
+                <h3 class="card-title">${icon('globe')}${escapeHtml(t('site.title'))}</h3>
+                <span class="booking-status" data-state="${siteOpen ? 'ok' : 'off'}"><span class="status-dot"></span>${escapeHtml(t(siteOpen ? 'site.statusOpen' : 'site.statusClosed'))}</span>
             </div>
-            <p class="card-text">${escapeHtml(t('booking.text', { domain: BOOKING_DOMAIN }))}</p>
-            <form class="stack" data-form="booking" autocomplete="off">
+            <p class="card-text">${escapeHtml(t('site.text'))}</p>
+            <a class="site-link" href="${escapeHtml(address)}" target="_blank" rel="noopener">${icon('globe')}<bdi dir="ltr">${escapeHtml(address.replace(/^https?:\/\//, '').replace(/\/$/, ''))}</bdi></a>
+            <form class="stack" data-form="site" autocomplete="off">
                 <label class="switch-row">
-                    <input type="checkbox" name="enabled" ${enabled ? 'checked' : ''}>
+                    <input type="checkbox" name="open" ${siteOpen ? 'checked' : ''}>
                     <span class="switch" aria-hidden="true"></span>
-                    <span class="switch-text"><strong>${escapeHtml(t('booking.enable'))}</strong><small>${escapeHtml(t('booking.enableHint'))}</small></span>
+                    <span class="switch-text"><strong>${escapeHtml(t('site.enable'))}</strong><small>${escapeHtml(t('site.enableHint'))}</small></span>
                 </label>
-                <div class="grid-2">
-                    <label class="field"><span>${escapeHtml(t('booking.url'))}</span>
-                        <input type="url" name="url" maxlength="200" dir="ltr" spellcheck="false" value="${escapeHtml(options.url || BOOKING_DEFAULTS.url)}">
-                    </label>
-                    <label class="field"><span>${escapeHtml(t('booking.key'))} <em>${escapeHtml(t('booking.keyHint'))}</em></span>
-                        <input type="text" name="key" maxlength="200" dir="ltr" spellcheck="false" autocomplete="off" value="${escapeHtml(options.key)}">
-                    </label>
-                </div>
                 <div class="grid-2">
                     <label class="field"><span>${escapeHtml(t('booking.daysAhead'))}</span>
                         <select name="days">${dayChoices.map(value => `<option value="${value}" ${value === days ? 'selected' : ''}>${escapeHtml(t('booking.days', { n: value }))}</option>`).join('')}</select>
@@ -4733,37 +4372,85 @@ function renderBookingCard(options, received) {
                 </div>
                 <div class="button-row booking-actions">
                     <button type="submit" class="btn btn-primary">${icon('check')}<span>${escapeHtml(t('common.save'))}</span></button>
-                    <button type="button" class="btn btn-outline" data-action="booking-sync">${icon('refresh')}<span>${escapeHtml(t('booking.syncNow'))}</span></button>
-                    <span class="booking-count">${escapeHtml(t('booking.received', { n: received }))}</span>
+                    <span class="booking-count">${escapeHtml(t('site.upcoming', { n: upcoming }))}</span>
                 </div>
             </form>
         </section>`;
 }
 
-async function saveBookingSettings(form, { quiet = false } = {}) {
-    const url = form.elements.url.value.trim() || BOOKING_DEFAULTS.url;
-    if (!bookingEndpoint(url)) {
-        toast(t('booking.badUrl'), 'error');
-        form.elements.url.focus();
-        return false;
-    }
-    const previous = state.booking || await loadBookingOptions();
-    const values = {
-        enabled: form.elements.enabled.checked ? '1' : '0',
-        url,
-        key: form.elements.key.value.trim(),
-        days: String(clampInt(form.elements.days.value, 1, 60, 14))
-    };
-    // A different website starts from the beginning.
-    if (previous.url !== url) values.cursor = '';
-    if (values.enabled !== '1' || previous.url !== url || previous.key !== values.key) {
-        values.last_error = '';
-        values.last_error_at = '';
-    }
-    await runStatements(bookingOptionStatements(values));
+async function saveSiteSettings(form) {
+    await runStatements([
+        setOption(SITE_OPEN_KEY, form.elements.open.checked ? '1' : '0'),
+        ...bookingOptionStatements({ days: String(clampInt(form.elements.days.value, 1, 60, 14)) })
+    ]);
     await loadBookingOptions();
-    if (!quiet) toast(t('toast.saved'));
-    return true;
+    toast(t('toast.saved'));
+    if (state.page === 'settings' && !modalStack.length) await renderPage({ keepScroll: true });
+}
+
+// Online cashier: bookings made on the website show up by themselves, with a message.
+function startBookingWatch() {
+    stopBookingWatch();
+    if (!state.serverMode) return;
+    bookingWatchLast = null;
+    checkNewBookings().catch(error => console.warn('Could not check for new bookings:', error));
+    bookingWatchTimer = setInterval(() => {
+        checkNewBookings().catch(error => console.warn('Could not check for new bookings:', error));
+    }, BOOKING_WATCH_MS);
+}
+
+function stopBookingWatch() {
+    clearInterval(bookingWatchTimer);
+    bookingWatchTimer = null;
+}
+
+async function checkNewBookings() {
+    if (!state.signedIn || !state.serverMode) return;
+    const latest = await queryOne('SELECT MAX(rowid) AS id FROM online_bookings');
+    const latestId = Number(latest?.id || 0);
+    if (bookingWatchLast == null) {
+        bookingWatchLast = latestId;
+        return;
+    }
+    if (latestId <= bookingWatchLast) return;
+    // A barber hears only about their own bookings.
+    const mine = isAdmin() ? '' : ' AND ob.barber_id = ?';
+    const rows = await api.dbQuery(
+        `SELECT ob.customer_name, ob.date, ob.time, b.name AS barber
+         FROM online_bookings ob JOIN orders o ON o.id = ob.order_id LEFT JOIN barbers b ON b.id = ob.barber_id
+         WHERE ob.rowid > ? AND ob.rowid <= ?${mine} ORDER BY ob.rowid LIMIT 50`,
+        isAdmin() ? [bookingWatchLast, latestId] : [bookingWatchLast, latestId, myBarberId()]
+    );
+    bookingWatchLast = latestId;
+    if (!rows.length) return;
+    if (rows.length === 1) {
+        const booking = rows[0];
+        toast(t('booking.newOne', {
+            name: booking.customer_name || t('cashier.walkIn'),
+            barber: booking.barber || t('cashier.anyBarber'),
+            when: `${I18N.formatDateShort(booking.date)} ${I18N.formatTime(booking.time)}`
+        }));
+    } else {
+        toast(t('booking.newMany', { n: rows.length }));
+    }
+    if (!modalStack.length && !state.slotForm && state.addSlot == null && ['cashier', 'dashboard'].includes(state.page)) {
+        renderPage({ keepScroll: true });
+    }
+}
+
+// Shops that kept the old default closed at 10 PM; the shop is open until midnight.
+async function migrateHoursToMidnight() {
+    if (state.serverMode) return; // the server does this itself
+    try {
+        const done = await queryOne("SELECT name FROM app_migrations WHERE name = 'hours-midnight-v1'");
+        if (done) return;
+        const close = await queryOne("SELECT value FROM app_options WHERE key = 'booking.close'");
+        const statements = [{ query: "INSERT OR IGNORE INTO app_migrations (name) VALUES ('hours-midnight-v1')", params: [] }];
+        if (close && String(close.value) === '22:00') statements.push(setOption('booking.close', '00:00'));
+        await runStatements(statements);
+    } catch (error) {
+        console.warn('Could not update the opening hours:', error);
+    }
 }
 
 // Opening hours, time between clients and closed days. The cashier makes its time slots from
@@ -5013,12 +4700,7 @@ const actions = {
         return go('catalog');
     },
     'barber-account': element => openAccountModal(Number(element.dataset.id)),
-    'booking-sync': async () => {
-        const form = document.querySelector('[data-form="booking"]');
-        if (form && !await saveBookingSettings(form, { quiet: true })) return;
-        await syncOnlineBookings({ manual: true });
-        if (state.page === 'settings' && !modalStack.length) await renderPage({ keepScroll: true });
-    },
+    'remove-photo': element => removeBarberPhoto(element.dataset.id, element.dataset.name || ''),
     'add-barber': async () => {
         const name = await promptDialog({ title: t('barbers.addTitle'), label: t('barbers.name'), placeholder: t('barbers.namePlaceholder'), okLabel: t('barbers.add'), maxLength: 60 });
         if (name) await addBarber(name);
@@ -5054,7 +4736,7 @@ const actions = {
 
 const busyActions = new Set([
     'take-client', 'back-to-waiting', 'undo-pay', 'done-client', 'slot-add', 'slot-edit', 'slot-remove', 'slot-length', 'toggle-work', 'remove-extra-slot', 'add-slot-pick',
-    'edit-finished', 'delete-finished', 'delete-sale', 'sell-done', 'barber-account', 'booking-sync', 'clear-history'
+    'edit-finished', 'delete-finished', 'delete-sale', 'sell-done', 'barber-account', 'clear-history', 'remove-photo'
 ]);
 
 document.addEventListener('click', event => {
@@ -5123,6 +4805,12 @@ document.addEventListener('change', event => {
         onSlotFormInput(event.target);
         return;
     }
+    if (event.target.matches('[data-barber-photo]')) {
+        const file = event.target.files?.[0];
+        event.target.value = '';
+        if (file) saveBarberPhoto(event.target.dataset.barberPhoto, file).catch(handleError);
+        return;
+    }
     if (event.target.matches('[data-add-slot-other]')) {
         if (event.target.value) addExtraSlot(event.target.dataset.barber, event.target.value).catch(handleError);
         return;
@@ -5164,26 +4852,11 @@ document.addEventListener('submit', event => {
         saveShop(form).catch(handleError);
     } else if (form.dataset.form === 'history-password') {
         saveHistoryPassword(form).catch(handleError);
-    } else if (form.dataset.form === 'hours') {
+    } else if (['hours', 'site', 'admin-password'].includes(form.dataset.form)) {
         const button = form.querySelector('button[type="submit"]');
         if (button) button.disabled = true;
-        saveHours(form)
-            .then(async saved => {
-                if (saved && state.booking?.enabled === '1') await syncOnlineBookings();
-            })
-            .catch(handleError)
-            .finally(() => {
-                if (button && document.contains(button)) button.disabled = false;
-            });
-    } else if (form.dataset.form === 'booking') {
-        const button = form.querySelector('button[type="submit"]');
-        if (button) button.disabled = true;
-        saveBookingSettings(form)
-            .then(async saved => {
-                if (!saved) return;
-                if (state.booking?.enabled === '1') await syncOnlineBookings();
-                if (state.page === 'settings' && !modalStack.length) await renderPage({ keepScroll: true });
-            })
+        const save = { hours: saveHours, site: saveSiteSettings, 'admin-password': saveAdminPassword }[form.dataset.form];
+        save(form)
             .catch(handleError)
             .finally(() => {
                 if (button && document.contains(button)) button.disabled = false;
@@ -5212,9 +4885,6 @@ function autoRefresh() {
 
 setInterval(autoRefresh, REFRESH_INTERVAL_MS);
 document.addEventListener('visibilitychange', autoRefresh);
-// Bookings made while the shop was offline arrive as soon as the internet is back.
-window.addEventListener('online', () => syncOnlineBookings());
-window.addEventListener('offline', () => refreshSettingsIfOpen());
 
 dom.loginForm.addEventListener('submit', handleLogin);
 I18N.apply();

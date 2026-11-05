@@ -1,0 +1,36 @@
+# XBARBER SHOP on the VPS: booking website (/) and cashier (/cashier) from one database.
+# Install: see docs/VPS-SETUP.md. Copy to /etc/systemd/system/xbarber.service
+[Unit]
+Description=XBARBER SHOP (booking website and cashier)
+After=network.target
+
+[Service]
+Type=simple
+User=xbarber
+Group=xbarber
+# The folder that contains server.js
+WorkingDirectory=/opt/xbarber/xbarber-shop
+ExecStart=/usr/bin/node server.js
+Environment=NODE_ENV=production
+# 3100, so it does not clash with another project on this VPS (those often use 3000).
+# If 3100 is taken, use another number here and in the nginx file.
+Environment=XBARBER_PORT=3100
+# Only nginx (on the same server) talks to it; nginx handles the internet and https.
+Environment=XBARBER_HOST=127.0.0.1
+Environment=XBARBER_TRUST_PROXY=1
+# Database and backups
+Environment=XBARBER_DATA_DIR=/var/lib/xbarber
+# The shop's time zone, so "today" and free times are right even if the VPS clock is UTC.
+Environment=XBARBER_TZ=Asia/Baghdad
+Restart=always
+RestartSec=3
+
+# The server may only write to its data folder.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/xbarber
+
+[Install]
+WantedBy=multi-user.target

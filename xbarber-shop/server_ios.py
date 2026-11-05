@@ -31,6 +31,22 @@ LOGIN_WINDOW_SECONDS = 5 * 60
 LOGIN_MAX_ATTEMPTS = 8
 DEMO_USERNAME = "admin"
 DEMO_PASSWORD = "admin123"
+# The default history password (Xx2727Xx); the owner can change it in Settings. Same as src/js/app.js.
+DEFAULT_HISTORY_PASSWORD_HASH = (
+    "sha256i$2000$e5c1d0a94b7f3c2a6d18f0b9$a3be0402ed692e89e332b4cbc0f6e386678ea349fb58a7c0881bb1b69dca4965"
+)
+PASSWORD_CHECK_MAX = 10
+# Barbers change their own clients. Sign-ins, photos, product sales, the catalog and shop settings
+# are for the owner only (same rules as server.js).
+OWNER_ONLY_TABLES = re.compile(
+    r"\b(admins|barber_accounts|barber_photos|product_sales|product_sale_items|settings|barbers|services|categories)\b",
+    re.IGNORECASE,
+)
+OPTION_WRITES = {
+    "INSERT OR REPLACE INTO app_options (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+    "DELETE FROM app_options WHERE key = ?",
+}
+OWN_OPTION_KEY = re.compile(r"^(?:slot\.barber\.(\d+)|extra\.(\d+)\.\d{4}-\d{2}-\d{2}|off\.(\d+)\.\d{4}-\d{2}-\d{2})$")
 
 sessions = {}
 login_attempts = {}
@@ -116,6 +132,15 @@ def initialize_database():
                 if existing is None:
                     connection.execute(f"DELETE FROM {table}")
                     connection.execute("INSERT INTO app_migrations (name) VALUES (?)", (name,))
+            # Shops that kept the old default closed at 10 PM; the shop is open until midnight.
+            if connection.execute(
+                "SELECT name FROM app_migrations WHERE name = 'hours-midnight-v1'"
+            ).fetchone() is None:
+                connection.execute(
+                    "UPDATE app_options SET value = '00:00', updated_at = CURRENT_TIMESTAMP "
+                    "WHERE key = 'booking.close' AND value = '22:00'"
+                )
+                connection.execute("INSERT OR IGNORE INTO app_migrations (name) VALUES ('hours-midnight-v1')")
             connection.commit()
         finally:
             connection.close()
@@ -212,6 +237,32 @@ def verify_password(password, stored):
     for _ in range(iterations - 1):
         value = sha256_hex(value + parts[2])
     return hmac.compare_digest(value, parts[3])
+
+
+def hash_password(password, iterations=2000):
+    salt = secrets.token_hex(12)
+    value = sha256_hex(f"{salt}:{password}")
+    for _ in range(iterations - 1):
+        value = sha256_hex(value + salt)
+    return f"sha256i${iterations}${salt}${value}"
+
+
+def read_value(query, params=()):
+    with database_lock:
+        connection = connect_database()
+        try:
+            row = connection.execute(query, params).fetchone()
+            return row[0] if row else None
+        finally:
+            connection.close()
+
+
+def verify_admin(password):
+    """The owner signs in as "admin". Until the password is changed in Settings it is admin123."""
+    stored = str(read_value("SELECT password_hash FROM admins WHERE username = 'admin'") or "")
+    if stored.startswith("sha256i$"):
+        return verify_password(password, stored)
+    return hmac.compare_digest(password, DEMO_PASSWORD)
 
 
 def find_barber_account(username):
@@ -352,10 +403,14 @@ class XBarberHandler(http.server.BaseHTTPRequestHandler):
         if session is None:
             raise RequestError(401, "Please log in again.")
         self.session = session
-        if pathname in ("/api/clear-history", "/api/backup-database", "/api/restore-database") and session["role"] != "admin":
-            raise RequestError(403, "Only the admin can do this.")
+        if pathname in ("/api/clear-history", "/api/backup-database", "/api/restore-database", "/api/admin-password") and session["role"] != "admin":
+            raise RequestError(403, "Only the owner can do this.")
         if pathname == "/api/session":
             self.send_json(200, {"ok": True})
+        elif pathname == "/api/check-history-password":
+            self.handle_check_history_password()
+        elif pathname == "/api/admin-password":
+            self.handle_admin_password()
         elif pathname == "/api/db-query":
             self.handle_db_query()
         elif pathname == "/api/db-run":
@@ -389,7 +444,7 @@ class XBarberHandler(http.server.BaseHTTPRequestHandler):
         username = username.strip()
         user = None
         if hmac.compare_digest(username.lower(), DEMO_USERNAME):
-            if hmac.compare_digest(password, DEMO_PASSWORD):
+            if verify_admin(password):
                 user = {"role": "admin", "username": DEMO_USERNAME}
         else:
             account = find_barber_account(username)
@@ -428,17 +483,75 @@ class XBarberHandler(http.server.BaseHTTPRequestHandler):
             },
         )
 
-    def check_write_allowed(self, query):
-        # Barbers sign in on shared devices; they must not change sign-in accounts or product sales.
+    def check_write_allowed(self, query, params=None):
         session = getattr(self, "session", None) or {}
-        if session.get("role") != "admin" and re.search(r"\b(barber_accounts|product_sales|product_sale_items)\b", query, re.IGNORECASE):
-            raise RequestError(403, "Only the admin can do this.")
+        if session.get("role") == "admin":
+            return
+        if OWNER_ONLY_TABLES.search(query):
+            raise RequestError(403, "Only the owner can do this.")
+        if re.search(r"\bapp_options\b", query, re.IGNORECASE):
+            # A barber may only set their own time between clients, added slots and days off.
+            shape = " ".join(query.split())
+            key = str((params or [None])[0] if params else "")
+            match = OWN_OPTION_KEY.match(key)
+            barber_id = int(next(group for group in match.groups() if group)) if match else None
+            if shape not in OPTION_WRITES or barber_id is None or barber_id != session.get("barber_id"):
+                raise RequestError(403, "Only the owner can do this.")
+
+    def check_read_allowed(self, query):
+        session = getattr(self, "session", None) or {}
+        if session.get("role") == "admin":
+            return
+        if re.search(r"\b(admins|barber_accounts)\b", query, re.IGNORECASE) or re.search(r"history_password", query, re.IGNORECASE):
+            raise RequestError(403, "Only the owner can do this.")
+
+    def handle_check_history_password(self):
+        """The history password is checked here, so its hash never reaches a barber's device."""
+        now = time.time()
+        checks = self.session.get("checks")
+        if not checks or checks[1] <= now:
+            checks = self.session["checks"] = [0, now + LOGIN_WINDOW_SECONDS]
+        checks[0] += 1
+        if checks[0] > PASSWORD_CHECK_MAX:
+            raise RequestError(429, "Too many tries. Please wait a few minutes.")
+        body = self.read_json()
+        password = body.get("password") if isinstance(body.get("password"), str) else ""
+        stored = read_value("SELECT value FROM app_options WHERE key = 'history_password'") or DEFAULT_HISTORY_PASSWORD_HASH
+        ok = verify_password(password, stored)
+        if ok:
+            self.session["checks"] = None
+        self.send_json(200, {"ok": ok})
+
+    def handle_admin_password(self):
+        """The owner changes their own sign-in password (the username stays admin)."""
+        body = self.read_json()
+        current = body.get("current") if isinstance(body.get("current"), str) else ""
+        new = body.get("next") if isinstance(body.get("next"), str) else ""
+        if not 6 <= len(new) <= 100:
+            raise RequestError(400, "Use at least 6 characters.")
+        if not verify_admin(current):
+            raise RequestError(403, "The current password is wrong.")
+        hashed = hash_password(new)
+        with database_lock:
+            connection = connect_database()
+            try:
+                cursor = connection.execute("UPDATE admins SET password_hash = ? WHERE username = 'admin'", (hashed,))
+                if cursor.rowcount == 0:
+                    connection.execute("INSERT INTO admins (username, password_hash) VALUES ('admin', ?)", (hashed,))
+                connection.commit()
+            finally:
+                connection.close()
+        with auth_lock:
+            for token in [token for token, value in sessions.items() if value.get("role") == "admin" and value is not self.session]:
+                sessions.pop(token, None)
+        self.send_json(200, {"ok": True})
 
     def handle_db_query(self):
         body = self.read_json()
         query = check_query(body.get("query"))
         if query.lstrip().split(None, 1)[0].upper() not in ("SELECT", "WITH"):
             raise RequestError(403, "Only read queries are allowed here.")
+        self.check_read_allowed(query)
         with database_lock:
             connection = connect_database()
             try:
@@ -452,7 +565,7 @@ class XBarberHandler(http.server.BaseHTTPRequestHandler):
         query = check_query(body.get("query"))
         if query.lstrip().split(None, 1)[0].upper() not in ("INSERT", "UPDATE", "DELETE"):
             raise RequestError(403, "Only data-changing queries are allowed here.")
-        self.check_write_allowed(query)
+        self.check_write_allowed(query, body.get("params") if isinstance(body.get("params"), list) else [])
         with database_lock:
             connection = connect_database()
             try:
@@ -479,8 +592,8 @@ class XBarberHandler(http.server.BaseHTTPRequestHandler):
                     query = check_query(statement.get("query"))
                     if query.lstrip().split(None, 1)[0].upper() not in ("INSERT", "UPDATE", "DELETE", "REPLACE"):
                         raise RequestError(403, "Transactions only accept data-changing queries.")
-                    self.check_write_allowed(query)
                     raw_params = statement.get("params")
+                    self.check_write_allowed(query, raw_params if isinstance(raw_params, list) else [])
                     params = []
                     for value in raw_params if isinstance(raw_params, list) else []:
                         reference = value.get("lastIDFrom") if isinstance(value, dict) else None
@@ -616,7 +729,7 @@ def main():
     print("XBARBER SHOP - iPad local server")
     print(f"Database:  {DB_PATH}")
     print(f"Open Safari on this iPad: http://127.0.0.1:{PORT}")
-    print("Login: admin / admin123 (barber sign-ins are created on the Barbers page)")
+    print("Owner sign-in: admin (password admin123 until it is changed in Settings)")
     print("Keep a-Shell open while using the app. Press Ctrl+C to stop.")
     print("")
     try:

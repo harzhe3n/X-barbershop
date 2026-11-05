@@ -209,5 +209,14 @@ CREATE TABLE IF NOT EXISTS product_sale_items (
 CREATE INDEX IF NOT EXISTS idx_product_sales_date ON product_sales(date);
 CREATE INDEX IF NOT EXISTS idx_product_sale_items_sale ON product_sale_items(sale_id);
 
--- Insert default admin user (username: admin, password: admin123)
+-- Barber photos: a large copy for the booking website and a small one for the cashier.
+CREATE TABLE IF NOT EXISTS barber_photos (
+    barber_id INTEGER PRIMARY KEY,
+    image_data TEXT,
+    thumb_data TEXT,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Default owner sign-in: admin / admin123. The password can be changed in Settings;
+-- it is then saved here as sha256i$<iterations>$<salt>$<hex> (see src/js/auth.js).
 INSERT OR IGNORE INTO admins (username, password_hash) VALUES ('admin', '$2b$10$example_hash_for_demo');

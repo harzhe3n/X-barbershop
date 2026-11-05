@@ -20,10 +20,14 @@
         'net.onlinePreparing': 'Online · preparing offline mode…',
         'net.offlineReady': 'Offline · saving on this device',
         'net.offlineNotReady': 'Offline · connect once to enable offline mode',
-        'net.unavailable': 'Offline mode needs HTTPS'
+        'net.unavailable': 'Offline mode needs HTTPS',
+        'net.serverOnline': 'Online · connected to the shop server',
+        'net.serverOffline': 'No internet · the cashier needs internet'
     };
     let statusKey = null;
     let statusState = 'checking';
+    // Online cashier (shop server): no offline copy, the data is on the server.
+    let serverMode = false;
 
     function setStatus(key, state) {
         statusKey = key;
@@ -40,6 +44,10 @@
     }
 
     function updateNetworkStatus() {
+        if (serverMode) {
+            setStatus(navigator.onLine ? 'net.serverOnline' : 'net.serverOffline', navigator.onLine ? 'online' : 'offline');
+            return;
+        }
         if (statusState === 'error') return;
         if (navigator.onLine) {
             setStatus(offlineFilesReady ? 'net.onlineReady' : 'net.onlinePreparing', 'online');
@@ -62,7 +70,7 @@
                 signal: controller.signal
             });
         } catch (error) {
-            throw new Error('Could not reach the local XBARBER server. Check that it is running and try again.');
+            throw new Error('Could not reach the XBARBER server. Check the internet connection and try again.');
         } finally {
             clearTimeout(timer);
         }
@@ -74,6 +82,23 @@
             throw requestError;
         }
         return data;
+    }
+
+    // Online: a backup comes back from the server as a file.
+    async function requestFile(url) {
+        let response;
+        try {
+            response = await fetch(url, { method: 'POST', credentials: 'same-origin', cache: 'no-store' });
+        } catch (error) {
+            throw new Error('Could not reach the XBARBER server. Check the internet connection and try again.');
+        }
+        if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            const requestError = new Error(data.error || `Request failed (${response.status}).`);
+            requestError.status = response.status;
+            throw requestError;
+        }
+        return new Uint8Array(await response.arrayBuffer());
     }
 
     async function resolveMode() {
@@ -286,14 +311,14 @@
                 .some(column => column.name === 'is_active');
             const hasOrderBarberColumn = queryRows(database, 'PRAGMA table_info(orders)')
                 .some(column => column.name === 'barber_id');
-            // Tables added later (barber accounts, app options, online bookings, product sales) are created by the schema.
+            // Tables added later (barber accounts, app options, online bookings, product sales, barber photos) are created by the schema.
             const newerTables = queryRows(
                 database,
-                "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name IN ('barber_accounts', 'app_options', 'online_bookings', 'product_sales', 'product_sale_items')"
+                "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name IN ('barber_accounts', 'app_options', 'online_bookings', 'product_sales', 'product_sale_items', 'barber_photos')"
             )[0].count;
             database.run('PRAGMA foreign_keys = ON');
             if (!hasCategoryTable || !hasCategoryColumn || !hasProductImageColumn || !hasCustomerImageColumn
-                || !hasCustomerActiveColumn || !hasOrderBarberColumn || Number(newerTables) < 5) {
+                || !hasCustomerActiveColumn || !hasOrderBarberColumn || Number(newerTables) < 6) {
                 await ensureSchema(database);
                 databaseChanged = true;
             }
@@ -491,18 +516,40 @@
             ]);
             return true;
         },
+        // Online: the server checks the history password, so its hash never leaves the server.
+        checkHistoryPassword: async password => {
+            const result = await request('/api/check-history-password', { password });
+            return Boolean(result.ok);
+        },
+        // Online: changes the owner's ("admin") sign-in password.
+        changeAdminPassword: (current, next) => request('/api/admin-password', { current, next }),
         backupDatabase: async () => {
-            if (await getMode() === 'server') {
-                const result = await request('/api/backup-database', {});
-                return result.filePath;
-            }
+            if (await getMode() === 'server') return downloadDatabase(await requestFile('/api/backup-download'));
             const bytes = await localOperation(database => database.export());
             return downloadDatabase(bytes);
         },
-        restoreDatabase: async backupPath => {
+        restoreDatabase: async () => {
             if (await getMode() === 'server') {
-                if (!backupPath) throw new Error('Enter the backup path on the server.');
-                return request('/api/restore-database', { path: backupPath });
+                const file = await chooseBackupFile();
+                if (!file) return { canceled: true };
+                const bytes = new Uint8Array(await file.arrayBuffer());
+                if (new TextDecoder().decode(bytes.subarray(0, 16)) !== 'SQLite format 3\u0000') {
+                    throw new Error('Choose a valid XBARBER SQLite backup file.');
+                }
+                let response;
+                try {
+                    response = await fetch('/api/restore-upload', {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: { 'Content-Type': 'application/octet-stream' },
+                        body: bytes
+                    });
+                } catch (error) {
+                    throw new Error('Could not reach the XBARBER server. Check the internet connection and try again.');
+                }
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok) throw new Error(data.error || `Request failed (${response.status}).`);
+                return { canceled: false, filePath: file.name };
             }
             return restoreLocalDatabase();
         },
@@ -515,19 +562,32 @@
     window.webApi = api;
     window.addEventListener('online', updateNetworkStatus);
     window.addEventListener('offline', updateNetworkStatus);
-    updateNetworkStatus();
 
-    if (window.isSecureContext && 'serviceWorker' in navigator) {
-        navigator.serviceWorker.register('/sw.js', { scope: '/' }).then(() => {
-            return navigator.serviceWorker.ready;
-        }).then(() => {
-            offlineFilesReady = true;
+    getMode().then(mode => {
+        if (mode === 'server') {
+            // The shop server also serves the booking website, so no offline copy of pages is kept here.
+            serverMode = true;
             updateNetworkStatus();
-        }).catch(error => {
-            console.error('Could not install offline support:', error);
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.getRegistrations()
+                    .then(list => list.forEach(registration => registration.unregister()))
+                    .catch(() => {});
+            }
+            return;
+        }
+        updateNetworkStatus();
+        if (window.isSecureContext && 'serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js', { scope: '/' }).then(() => {
+                return navigator.serviceWorker.ready;
+            }).then(() => {
+                offlineFilesReady = true;
+                updateNetworkStatus();
+            }).catch(error => {
+                console.error('Could not install offline support:', error);
+                setStatus('net.unavailable', 'error');
+            });
+        } else {
             setStatus('net.unavailable', 'error');
-        });
-    } else {
-        setStatus('net.unavailable', 'error');
-    }
+        }
+    });
 })();

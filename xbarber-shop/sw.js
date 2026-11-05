@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_NAME = 'xbarber-app-shell-v16';
+const CACHE_NAME = 'xbarber-app-shell-v19';
 const APP_ENTRY = '/src/index.html';
 const NETWORK_TIMEOUT_MS = 3500;
 const CORE_FILES = [
@@ -16,6 +16,7 @@ const CORE_FILES = [
   '/src/js/auth.js',
   '/src/js/app.js',
   '/src/js/web-api.js',
+  '/src/js/slots.js',
   '/database/schema.sql',
   '/assets/logo/logo.png',
   '/assets/logo/apple-touch-icon.png',

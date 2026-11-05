@@ -2979,6 +2979,7 @@ input[dir="ltr"] {
 }
 
 body[data-signed-in] #offline-status[data-key="net.onlineReady"],
+body[data-signed-in] #offline-status[data-key="net.serverOnline"],
 body[data-signed-in] #offline-status[data-state="error"] {
     display: none;
 }
@@ -3431,6 +3432,82 @@ body[data-signed-in] #offline-status[data-state="error"] {
     color: var(--muted);
     font-size: 13px;
     font-weight: 600;
+}
+
+/* ---------------- Barber photos and the booking website card ---------------- */
+
+.avatar-photo {
+    overflow: hidden;
+    background: var(--surface-3);
+}
+
+.avatar-photo img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.avatar-xl {
+    width: 76px;
+    height: 76px;
+    font-size: 28px;
+}
+
+.barber-card-head {
+    align-items: flex-start;
+}
+
+.barber-card-name {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.barber-photo-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.photo-pick {
+    cursor: pointer;
+}
+
+.site-link {
+    display: inline-flex;
+    align-self: flex-start;
+    align-items: center;
+    gap: 8px;
+    margin: 4px 0 14px;
+    padding: 10px 14px;
+    border: 1px solid var(--line-2);
+    border-radius: 12px;
+    background: var(--surface-2);
+    color: var(--ink);
+    font-size: 15px;
+    font-weight: 800;
+    text-decoration: none;
+}
+
+.site-link .icon {
+    width: 18px;
+    height: 18px;
+}
+
+.site-link:hover {
+    border-color: var(--ink);
+}
+
+.site-card .card-text {
+    margin-bottom: 8px;
+}
+
+#offline-status[data-key="net.serverOnline"] {
+    background: var(--done-bg);
+    color: var(--done-ink);
 }
 
 /* ---------------- Responsive ---------------- */
