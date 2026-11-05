@@ -110,6 +110,22 @@
         return barberSlots.get(Number(barberId)) ?? hours.slot;
     }
 
+    // Each barber's own "Book up to": app_options "days.barber.<id>" = 0 (today only) … 60 days.
+    function parseBarberDays(rows) {
+        const map = new Map();
+        rows.forEach(row => {
+            const match = /^days\.barber\.(\d+)$/.exec(String(row.key));
+            const days = clampInt(row.value, 0, 60, null);
+            if (match && days != null) map.set(Number(match[1]), days);
+        });
+        return map;
+    }
+
+    // A barber who has not chosen uses the shop's "Book up to".
+    function barberDaysAhead(hours, barberDays, barberId) {
+        return barberDays.get(Number(barberId)) ?? hours.days;
+    }
+
     function extraKey(barberId, date) {
         return `extra.${Number(barberId)}.${date}`;
     }
@@ -205,6 +221,8 @@
         slotGrid,
         parseBarberSlots,
         barberStep,
+        parseBarberDays,
+        barberDaysAhead,
         extraKey,
         offKey,
         skipKey,

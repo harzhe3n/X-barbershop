@@ -395,8 +395,8 @@ function assertWriteAllowed(session, query, params = []) {
   if (/\bapp_options\b/i.test(query)) {
     // A barber may only set their own time between clients, added and deleted slots, days off and Open / Closed.
     const shape = query.replace(/\s+/g, ' ').trim();
-    const match = /^(?:slot\.barber\.(\d+)|extra\.(\d+)\.\d{4}-\d{2}-\d{2}|off\.(\d+)\.\d{4}-\d{2}-\d{2}|online\.(\d+)|skip\.(\d+)\.\d{4}-\d{2}-\d{2})$/.exec(String(params[0] ?? ''));
-    const barberId = match ? Number(match[1] || match[2] || match[3] || match[4] || match[5]) : null;
+    const match = /^(?:slot\.barber\.(\d+)|extra\.(\d+)\.\d{4}-\d{2}-\d{2}|off\.(\d+)\.\d{4}-\d{2}-\d{2}|online\.(\d+)|skip\.(\d+)\.\d{4}-\d{2}-\d{2}|days\.barber\.(\d+))$/.exec(String(params[0] ?? ''));
+    const barberId = match ? Number(match.slice(1).find(Boolean)) : null;
     if (!OPTION_WRITES.has(shape) || barberId == null || barberId !== Number(session.session.barberId)) {
       throw httpError(403, 'Only the owner can do this.');
     }
@@ -878,14 +878,16 @@ function daysBetween(from, to) {
 async function siteSnapshot(connection, now) {
   const optionRows = await dbAll(connection,
     `SELECT key, value FROM app_options
-     WHERE key LIKE 'booking.%' OR key LIKE 'slot.barber.%' OR key LIKE 'extra.%' OR key LIKE 'off.%' OR key LIKE 'online.%' OR key LIKE 'skip.%'
+     WHERE key LIKE 'booking.%' OR key LIKE 'slot.barber.%' OR key LIKE 'extra.%' OR key LIKE 'off.%' OR key LIKE 'online.%' OR key LIKE 'skip.%' OR key LIKE 'days.barber.%'
         OR key IN ('site.open', 'shop.instagram', 'shop.whatsapp')`);
   const options = {};
   optionRows.forEach(row => {
     if (String(row.key).startsWith('booking.')) options[String(row.key).slice('booking.'.length)] = row.value;
   });
   const hours = Slots.shopHours(options);
-  const lastDay = Slots.addDays(now.date, hours.days);
+  // Each barber can take bookings for more or fewer days than the shop setting.
+  const barberDaysAhead = Slots.parseBarberDays(optionRows);
+  const lastDay = Slots.addDays(now.date, Math.max(hours.days, ...barberDaysAhead.values()));
   const barbers = await dbAll(connection, 'SELECT id, name FROM barbers WHERE is_active = 1 ORDER BY id');
   const photos = await dbAll(connection, 'SELECT barber_id, updated_at FROM barber_photos WHERE image_data IS NOT NULL');
   const busyRows = await dbAll(connection,
@@ -917,6 +919,7 @@ async function siteSnapshot(connection, now) {
     barberSlots: Slots.parseBarberSlots(optionRows),
     extras: Slots.parseExtraSlots(optionRows),
     skips: Slots.parseSkippedSlots(optionRows),
+    barberDaysAhead,
     offs: Slots.parseOffDays(optionRows),
     busy,
     shop: {
@@ -955,8 +958,9 @@ function barberDays(snapshot, barberId) {
   const { now, hours } = snapshot;
   const online = snapshot.barbers.find(barber => barber.id === barberId)?.online !== false;
   const step = Slots.barberStep(hours, snapshot.barberSlots, barberId);
+  const ahead = Slots.barberDaysAhead(hours, snapshot.barberDaysAhead, barberId);
   const days = [];
-  for (let index = 0; index <= hours.days; index += 1) {
+  for (let index = 0; index <= ahead; index += 1) {
     const date = Slots.addDays(now.date, index);
     const day = Slots.barberDay({
       hours,
@@ -1085,7 +1089,7 @@ async function handlePublicBook(req, res) {
       const barber = snapshot.barbers.find(item => item.id === barberId);
       if (!barber) throw httpError(409, 'taken');
       const index = daysBetween(snapshot.now.date, date);
-      if (index < 0 || index > snapshot.hours.days) throw httpError(409, 'taken');
+      if (index < 0) throw httpError(409, 'taken');
       const day = barberDays(snapshot, barberId)[index];
       if (!day || !day.free.includes(time)) throw httpError(409, 'taken');
 

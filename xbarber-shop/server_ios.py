@@ -46,7 +46,7 @@ OPTION_WRITES = {
     "INSERT OR REPLACE INTO app_options (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
     "DELETE FROM app_options WHERE key = ?",
 }
-OWN_OPTION_KEY = re.compile(r"^(?:slot\.barber\.(\d+)|extra\.(\d+)\.\d{4}-\d{2}-\d{2}|off\.(\d+)\.\d{4}-\d{2}-\d{2}|online\.(\d+)|skip\.(\d+)\.\d{4}-\d{2}-\d{2})$")
+OWN_OPTION_KEY = re.compile(r"^(?:slot\.barber\.(\d+)|extra\.(\d+)\.\d{4}-\d{2}-\d{2}|off\.(\d+)\.\d{4}-\d{2}-\d{2}|online\.(\d+)|skip\.(\d+)\.\d{4}-\d{2}-\d{2}|days\.barber\.(\d+))$")
 
 sessions = {}
 login_attempts = {}

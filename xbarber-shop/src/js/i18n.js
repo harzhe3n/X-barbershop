@@ -454,7 +454,11 @@
             'slots.slotDeleted': 'Slot {time} deleted. Add slot brings it back.',
             'slots.removedGroup': 'Deleted slots',
             'booking.daysToday': 'Today only',
-            'booking.daysTomorrow': 'Today and tomorrow'
+            'booking.daysTomorrow': 'Today and tomorrow',
+            'days.barberLabel': 'How far ahead customers can book {name}',
+            'days.shopSetting': 'Shop setting ({days})',
+            'days.saved': '{name}: customers can book {days}.',
+            'days.savedShop': '{name} follows the shop setting again.'
         },
 
         ar: {
@@ -897,7 +901,11 @@
             'slots.slotDeleted': 'تم حذف وقت {time}. يمكن إرجاعه من «إضافة وقت».',
             'slots.removedGroup': 'أوقات محذوفة',
             'booking.daysToday': 'اليوم فقط',
-            'booking.daysTomorrow': 'اليوم وغدًا'
+            'booking.daysTomorrow': 'اليوم وغدًا',
+            'days.barberLabel': 'إلى متى يمكن للزبائن الحجز عند {name}',
+            'days.shopSetting': 'إعداد المحل ({days})',
+            'days.saved': '{name}: يمكن للزبائن الحجز {days}.',
+            'days.savedShop': '{name} يتبع إعداد المحل مرة أخرى.'
         },
 
         ckb: {
@@ -1340,7 +1348,11 @@
             'slots.slotDeleted': 'کاتی {time} سڕایەوە. بە «زیادکردنی کات» دەگەڕێتەوە.',
             'slots.removedGroup': 'کاتە سڕاوەکان',
             'booking.daysToday': 'تەنها ئەمڕۆ',
-            'booking.daysTomorrow': 'ئەمڕۆ و سبەینێ'
+            'booking.daysTomorrow': 'ئەمڕۆ و سبەینێ',
+            'days.barberLabel': 'کڕیاران تا کەی دەتوانن نۆرە لای {name} بگرن',
+            'days.shopSetting': 'ڕێکخستنی دوکان ({days})',
+            'days.saved': '{name}: کڕیاران دەتوانن نۆرە بگرن بۆ {days}.',
+            'days.savedShop': '{name} دیسان ڕێکخستنی دوکان بەکاردەهێنێت.'
         }
     };
 

@@ -4079,6 +4079,24 @@ button.work-pill:hover {
     background: #fff;
 }
 
+.col-days select {
+    flex: 1;
+    min-width: 0;
+    height: 34px;
+    padding: 0 8px;
+    border: 1px solid var(--line-2);
+    border-radius: 10px;
+    background: #fff;
+    color: var(--ink);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.col-days {
+    margin-top: 6px;
+}
+
 .col-slot-label {
     display: inline-flex;
     align-items: center;

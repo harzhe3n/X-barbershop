@@ -731,8 +731,18 @@ const SLOT_PRESETS = [10, 20, 30];
 
 const {
     toMinutes, fromMinutes, closingMinutes, slotGrid, parseBarberSlots, barberStep,
-    offKey, extraKey, skipKey, parseExtraSlots, parseSkippedSlots, daySlots, parseOffDays, clampInt, parseWeekdays
+    offKey, extraKey, skipKey, parseExtraSlots, parseSkippedSlots, daySlots, parseOffDays, clampInt, parseWeekdays,
+    parseBarberDays, barberDaysAhead
 } = XSlots;
+
+// "Book up to" choices, for the shop and for each barber.
+const DAYS_AHEAD_CHOICES = [0, 1, 2, 3, 5, 7, 14, 21, 30, 60];
+
+function daysAheadLabel(value) {
+    if (value === 0) return t('booking.daysToday');
+    if (value === 1) return t('booking.daysTomorrow');
+    return t('booking.days', { n: value });
+}
 
 function nowMinutes() {
     const now = new Date();
@@ -745,7 +755,8 @@ function shopHours(options = state.booking || {}) {
 }
 
 // Each barber chooses their own time between clients ("slot.barber.<id>").
-const BARBER_SLOT_QUERY = { query: "SELECT key, value FROM app_options WHERE key LIKE 'slot.barber.%'" };
+// Each barber's time between clients and own "Book up to".
+const BARBER_SLOT_QUERY = { query: "SELECT key, value FROM app_options WHERE key LIKE 'slot.barber.%' OR key LIKE 'days.barber.%'" };
 
 /* ------------------------------------------------------------------ */
 /* Cashier board                                                       */
@@ -862,6 +873,7 @@ async function renderCashier() {
 
     const now = nowMinutes();
     const barberSlots = parseBarberSlots(slotRows);
+    const barberDays = parseBarberDays(slotRows);
     const offDays = parseOffDays(offRows);
     const extraSlots = parseExtraSlots(extraRows);
     const skippedSlots = parseSkippedSlots(skipRows);
@@ -879,6 +891,7 @@ async function renderCashier() {
         barbers: activeBarbers,
         pastFree: 0,
         stepFor: barberId => barberStep(hours, barberSlots, barberId),
+        daysFor: barberId => barberDays.get(Number(barberId)),
         // A slot is over once it has ended. On earlier days every slot is over.
         isPast: (minutes, step) => date < today || (date === today && minutes + step <= now)
     };
@@ -1146,6 +1159,44 @@ async function toggleWork(barberId, wasOff) {
     await renderPage({ keepScroll: true });
 }
 
+// How far ahead the website takes bookings for one barber. The barber (or the owner) picks it;
+// "Shop setting" follows Settings → Booking website.
+function renderColumnDays(column, own, shopDays, editable) {
+    const id = Number(column.barber.id);
+    const shown = own ?? shopDays;
+    if (!editable) {
+        return `<div class="col-slot col-slot-readonly col-days">${icon('calendar')}<span>${escapeHtml(t('booking.daysAhead'))}: ${escapeHtml(daysAheadLabel(shown))}</span></div>`;
+    }
+    const choices = [...new Set([...DAYS_AHEAD_CHOICES, ...(own == null ? [] : [own])])].sort((a, b) => a - b);
+    return `
+        <label class="col-slot col-days">
+            <span class="col-slot-label">${icon('calendar')}<span>${escapeHtml(t('booking.daysAhead'))}</span></span>
+            <select data-barber-days="${id}" aria-label="${escapeHtml(t('days.barberLabel', { name: column.barber.name }))}">
+                <option value="" ${own == null ? 'selected' : ''}>${escapeHtml(t('days.shopSetting', { days: daysAheadLabel(shopDays) }))}</option>
+                ${choices.map(value => `<option value="${value}" ${own === value ? 'selected' : ''}>${escapeHtml(daysAheadLabel(value))}</option>`).join('')}
+            </select>
+        </label>`;
+}
+
+async function saveBarberDays(barberId, value) {
+    const id = Number(barberId);
+    if (!Number.isInteger(id) || (!isAdmin() && !isMine(id))) {
+        denyNotYours();
+        return;
+    }
+    const barber = await queryOne('SELECT name FROM barbers WHERE id = ?', [id]);
+    if (!barber) return;
+    const key = `days.barber.${id}`;
+    const days = clampInt(value, 0, 60, null);
+    await runStatements([days == null
+        ? { query: 'DELETE FROM app_options WHERE key = ?', params: [key] }
+        : setOption(key, String(days))]);
+    toast(days == null
+        ? t('days.savedShop', { name: barber.name })
+        : t('days.saved', { name: barber.name, days: daysAheadLabel(days) }));
+    await renderPage({ keepScroll: true });
+}
+
 // The time between clients of one barber, at the top of their column.
 // The barber (or the admin) picks 10, 20, 30 minutes or types any other number.
 function renderColumnSlot(column, step, editable) {
@@ -1320,6 +1371,7 @@ function renderColumn(column, ctx) {
                 <div class="stat-done"><strong>${doneTickets.length}</strong><span>${escapeHtml(t('status.completed'))}</span></div>
             </div>
             ${column.barber && !removed && !off ? renderColumnSlot(column, step, editable) : ''}
+            ${column.barber && !removed ? renderColumnDays(column, ctx.daysFor(column.barber.id), ctx.hours.days, editable) : ''}
             ${column.barber && !removed && !off && editable
                 ? renderAddSlot(column.barber, state.addSlot === barberId ? addSlotChoices(ctx.hours, step, grid, minutes => ctx.isPast(minutes, step), skip) : null)
                 : ''}
@@ -4436,9 +4488,9 @@ function renderSiteCard(options, siteOpen, upcoming) {
             </section>`;
     }
     const days = clampInt(options.days, 0, 60, 14);
-    // From "today only" up to two months ahead.
-    const dayChoices = [...new Set([0, 1, 2, 3, 5, 7, 14, 21, 30, 60, days])].sort((a, b) => a - b);
-    const dayLabel = value => (value === 0 ? t('booking.daysToday') : value === 1 ? t('booking.daysTomorrow') : t('booking.days', { n: value }));
+    // From "today only" up to two months ahead. Each barber can also choose their own (on the board).
+    const dayChoices = [...new Set([...DAYS_AHEAD_CHOICES, days])].sort((a, b) => a - b);
+    const dayLabel = daysAheadLabel;
     const address = websiteAddress();
     return `
         <section class="card card-wide site-card">
@@ -4919,6 +4971,10 @@ document.addEventListener('change', event => {
     }
     if (event.target.matches('[data-add-slot-other]')) {
         if (event.target.value) addExtraSlot(event.target.dataset.barber, event.target.value).catch(handleError);
+        return;
+    }
+    if (event.target.matches('[data-barber-days]')) {
+        saveBarberDays(event.target.dataset.barberDays, event.target.value).catch(handleError);
         return;
     }
     if (event.target.matches('[data-slot-custom]')) {

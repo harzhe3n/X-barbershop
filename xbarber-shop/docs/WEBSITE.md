@@ -30,6 +30,7 @@ They are exactly the free slots of the cashier board:
 
 - Opening hours: Settings → Working hours (10:00 AM to midnight by default; closing at 00:00 means midnight).
 - Each barber's own time between clients (10, 20, 30 minutes or any number).
+- How far ahead: Settings → Booking website → **Book up to** (today only up to 60 days). Each barber can choose their own in their column (app_options `days.barber.<id>`); "Shop setting" follows the shop's.
 - Slots added by hand with **Add slot** in the cashier.
 - Not on closed weekdays, and not on days a barber marked **Not at work**.
 - Not for a barber who is **Closed** (app_options `online.<id>` = `0`). Each barber opens or closes themselves in the cashier; the owner can change anyone's.
