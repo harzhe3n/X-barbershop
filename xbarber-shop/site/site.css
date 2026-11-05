@@ -1007,6 +1007,42 @@ body.is-ready .picker.reveal { transition-delay: 0.3s; }
     text-decoration: none;
 }
 
+/* "See our work": opens the Instagram page. */
+.footer-cols .see-work {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 16px;
+    padding: 12px 20px;
+    border-radius: 999px;
+    background: var(--ink);
+    color: var(--on-ink);
+    font-size: 15px;
+    font-weight: 750;
+    transition: transform 0.2s var(--ease), background-color 0.2s;
+}
+
+.footer-cols .see-work[hidden] {
+    display: none;
+}
+
+.footer-cols .see-work:hover {
+    background: #333333;
+}
+
+.footer-cols .see-work:active {
+    transform: scale(0.97);
+}
+
+.see-work svg.icon {
+    width: 18px;
+    height: 18px;
+}
+
+.see-work + .socials {
+    margin-top: 14px;
+}
+
 /* Instagram and WhatsApp */
 .socials {
     display: flex;

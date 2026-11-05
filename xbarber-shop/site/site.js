@@ -97,6 +97,7 @@
             'footer.instagram': 'Instagram',
             'footer.whatsapp': 'WhatsApp',
             'footer.follow': 'Follow us',
+            'footer.seeWork': 'See our work',
             'barbers.closedNow': 'Closed now · not taking bookings',
             'common.close': 'Close',
             'common.back': 'Back',
@@ -181,6 +182,7 @@
             'footer.instagram': 'إنستغرام',
             'footer.whatsapp': 'واتساب',
             'footer.follow': 'تابعنا',
+            'footer.seeWork': 'شاهد أعمالنا',
             'barbers.closedNow': 'مغلق الآن · لا يقبل الحجوزات',
             'common.close': 'إغلاق',
             'common.back': 'رجوع',
@@ -265,6 +267,7 @@
             'footer.instagram': 'ئینستاگرام',
             'footer.whatsapp': 'واتساپ',
             'footer.follow': 'فۆڵۆومان بکە',
+            'footer.seeWork': 'کارەکانمان ببینە',
             'barbers.closedNow': 'ئێستا داخراوە · نۆرە وەرناگرێت',
             'common.close': 'داخستن',
             'common.back': 'گەڕانەوە',
@@ -701,6 +704,14 @@
         social.innerHTML = links.map(link => `
             <a class="social-link" href="${esc(link.url)}" target="_blank" rel="noopener noreferrer"
                 aria-label="${esc(t(`footer.${link.name}`))}" title="${esc(t(`footer.${link.name}`))}">${brandIcon(link.name)}</a>`).join('');
+        // "See our work" opens the Instagram page.
+        const work = $('#footer-work');
+        const instagram = /^https:\/\//.test(String(shop.instagram || '')) ? shop.instagram : '';
+        work.hidden = !instagram;
+        if (instagram) {
+            work.href = instagram;
+            work.innerHTML = `${brandIcon('instagram')}<span>${esc(t('footer.seeWork'))}</span>${icon('next', 'flip-rtl')}`;
+        }
     }
 
     // Loads (or reloads) the shop and its barbers, keeping the same barber in the middle.
