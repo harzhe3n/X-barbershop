@@ -8,7 +8,7 @@
  *   booking.open / booking.close   opening hours, "HH:MM" (close "00:00" = midnight)
  *   booking.slot                   time between clients for barbers who have not chosen their own
  *   booking.closed                 closed weekdays, "5" or "5,6" (0 = Sunday … 6 = Saturday)
- *   booking.days                   how many days ahead the website takes bookings
+ *   booking.days                   how many days ahead the website takes bookings (0 = today only)
  *   slot.barber.<id>               a barber's own time between clients, in minutes
  *   extra.<id>.<YYYY-MM-DD>        slots a barber added by hand, "HH:MM,HH:MM"
  *   off.<id>.<YYYY-MM-DD> = 1      the barber is not at work that day
@@ -26,6 +26,8 @@
     }
 
     function clampInt(value, min, max, fallback) {
+        // An empty value is "not set", not 0.
+        if (value == null || String(value).trim() === '') return fallback;
         const number = Math.round(Number(value));
         return Number.isFinite(number) && number >= min && number <= max ? number : fallback;
     }
@@ -79,7 +81,7 @@
             close,
             slot: clampInt(options.slot, 5, 240, DEFAULTS.slot),
             closed: parseWeekdays(options.closed),
-            days: clampInt(options.days, 1, 60, DEFAULTS.days)
+            days: clampInt(options.days, 0, 60, DEFAULTS.days)
         };
     }
 

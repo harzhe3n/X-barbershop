@@ -4435,8 +4435,10 @@ function renderSiteCard(options, siteOpen, upcoming) {
                 <p class="card-text">${escapeHtml(t('site.localText'))}</p>
             </section>`;
     }
-    const days = clampInt(options.days, 1, 60, 14);
-    const dayChoices = [...new Set([7, 14, 30, days])].sort((a, b) => a - b);
+    const days = clampInt(options.days, 0, 60, 14);
+    // From "today only" up to two months ahead.
+    const dayChoices = [...new Set([0, 1, 2, 3, 5, 7, 14, 21, 30, 60, days])].sort((a, b) => a - b);
+    const dayLabel = value => (value === 0 ? t('booking.daysToday') : value === 1 ? t('booking.daysTomorrow') : t('booking.days', { n: value }));
     const address = websiteAddress();
     return `
         <section class="card card-wide site-card">
@@ -4454,7 +4456,7 @@ function renderSiteCard(options, siteOpen, upcoming) {
                 </label>
                 <div class="grid-2">
                     <label class="field"><span>${escapeHtml(t('booking.daysAhead'))}</span>
-                        <select name="days">${dayChoices.map(value => `<option value="${value}" ${value === days ? 'selected' : ''}>${escapeHtml(t('booking.days', { n: value }))}</option>`).join('')}</select>
+                        <select name="days">${dayChoices.map(value => `<option value="${value}" ${value === days ? 'selected' : ''}>${escapeHtml(dayLabel(value))}</option>`).join('')}</select>
                     </label>
                     <p class="field-hint booking-hours-hint">${icon('clock')}<span>${escapeHtml(t('booking.hoursHint'))}</span></p>
                 </div>
@@ -4469,7 +4471,7 @@ function renderSiteCard(options, siteOpen, upcoming) {
 async function saveSiteSettings(form) {
     await runStatements([
         setOption(SITE_OPEN_KEY, form.elements.open.checked ? '1' : '0'),
-        ...bookingOptionStatements({ days: String(clampInt(form.elements.days.value, 1, 60, 14)) })
+        ...bookingOptionStatements({ days: String(clampInt(form.elements.days.value, 0, 60, 14)) })
     ]);
     await loadBookingOptions();
     toast(t('toast.saved'));
