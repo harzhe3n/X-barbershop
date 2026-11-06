@@ -314,11 +314,11 @@
             // Tables added later (barber accounts, app options, online bookings, product sales, barber photos) are created by the schema.
             const newerTables = queryRows(
                 database,
-                "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name IN ('barber_accounts', 'app_options', 'online_bookings', 'product_sales', 'product_sale_items', 'barber_photos')"
+                "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name IN ('barber_accounts', 'app_options', 'online_bookings', 'product_sales', 'product_sale_items', 'barber_photos', 'expenses')"
             )[0].count;
             database.run('PRAGMA foreign_keys = ON');
             if (!hasCategoryTable || !hasCategoryColumn || !hasProductImageColumn || !hasCustomerImageColumn
-                || !hasCustomerActiveColumn || !hasOrderBarberColumn || Number(newerTables) < 6) {
+                || !hasCustomerActiveColumn || !hasOrderBarberColumn || Number(newerTables) < 7) {
                 await ensureSchema(database);
                 databaseChanged = true;
             }
@@ -512,7 +512,8 @@
                 { query: 'DELETE FROM order_items', params: [] },
                 { query: 'DELETE FROM orders', params: [] },
                 { query: 'DELETE FROM product_sale_items', params: [] },
-                { query: 'DELETE FROM product_sales', params: [] }
+                { query: 'DELETE FROM product_sales', params: [] },
+                { query: 'DELETE FROM expenses', params: [] }
             ]);
             return true;
         },

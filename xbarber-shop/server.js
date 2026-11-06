@@ -382,7 +382,7 @@ function requireAdmin(session) {
 
 // Barbers change their own clients. Sign-ins, photos, product sales, the catalog and shop settings
 // are for the owner only.
-const OWNER_ONLY_TABLES = /\b(admins|barber_accounts|barber_photos|product_sales|product_sale_items|settings|barbers|services|categories)\b/i;
+const OWNER_ONLY_TABLES = /\b(admins|barber_accounts|barber_photos|product_sales|product_sale_items|expenses|settings|barbers|services|categories)\b/i;
 // The only two ways the cashier writes app_options (see setOption in src/js/app.js).
 const OPTION_WRITES = new Set([
   'INSERT OR REPLACE INTO app_options (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)',
@@ -405,7 +405,8 @@ function assertWriteAllowed(session, query, params = []) {
 
 function assertReadAllowed(session, query) {
   if (session.session.role === 'admin') return;
-  if (/\b(admins|barber_accounts)\b/i.test(query) || /history_password/i.test(query)) {
+  // Barbers do not see sign-ins, the history password or the shop's expenses.
+  if (/\b(admins|barber_accounts|expenses)\b/i.test(query) || /history_password/i.test(query)) {
     throw httpError(403, 'Only the owner can do this.');
   }
 }
@@ -588,6 +589,7 @@ async function handleClearHistory(req, res) {
       await dbRun(connection, 'DELETE FROM orders');
       await dbRun(connection, 'DELETE FROM product_sale_items');
       await dbRun(connection, 'DELETE FROM product_sales');
+      await dbRun(connection, 'DELETE FROM expenses');
       await dbRun(connection, 'COMMIT');
     } catch (error) {
       try {

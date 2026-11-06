@@ -39,7 +39,7 @@ PASSWORD_CHECK_MAX = 10
 # Barbers change their own clients. Sign-ins, photos, product sales, the catalog and shop settings
 # are for the owner only (same rules as server.js).
 OWNER_ONLY_TABLES = re.compile(
-    r"\b(admins|barber_accounts|barber_photos|product_sales|product_sale_items|settings|barbers|services|categories)\b",
+    r"\b(admins|barber_accounts|barber_photos|product_sales|product_sale_items|expenses|settings|barbers|services|categories)\b",
     re.IGNORECASE,
 )
 OPTION_WRITES = {
@@ -502,7 +502,7 @@ class XBarberHandler(http.server.BaseHTTPRequestHandler):
         session = getattr(self, "session", None) or {}
         if session.get("role") == "admin":
             return
-        if re.search(r"\b(admins|barber_accounts)\b", query, re.IGNORECASE) or re.search(r"history_password", query, re.IGNORECASE):
+        if re.search(r"\b(admins|barber_accounts|expenses)\b", query, re.IGNORECASE) or re.search(r"history_password", query, re.IGNORECASE):
             raise RequestError(403, "Only the owner can do this.")
 
     def handle_check_history_password(self):
@@ -634,6 +634,7 @@ class XBarberHandler(http.server.BaseHTTPRequestHandler):
                 connection.execute("DELETE FROM orders")
                 connection.execute("DELETE FROM product_sale_items")
                 connection.execute("DELETE FROM product_sales")
+                connection.execute("DELETE FROM expenses")
                 connection.commit()
             except Exception:
                 connection.rollback()

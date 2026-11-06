@@ -307,7 +307,8 @@ ipcMain.handle('clear-history', (event, today) => serializeDatabase(async () => 
     { query: 'DELETE FROM order_items', params: [] },
     { query: 'DELETE FROM orders', params: [] },
     { query: 'DELETE FROM product_sale_items', params: [] },
-    { query: 'DELETE FROM product_sales', params: [] }
+    { query: 'DELETE FROM product_sales', params: [] },
+    { query: 'DELETE FROM expenses', params: [] }
   ]);
   return true;
 }));

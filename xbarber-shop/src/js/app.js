@@ -35,7 +35,7 @@ const XAuth = window.XAuth;
 const XSlots = window.XSlots;
 
 const OPEN_STATUSES = ['waiting', 'in-service'];
-const ADMIN_PAGES = ['cashier', 'sell', 'dashboard', 'history', 'catalog', 'barbers', 'settings'];
+const ADMIN_PAGES = ['cashier', 'sell', 'expenses', 'dashboard', 'history', 'catalog', 'barbers', 'settings'];
 const BARBER_PAGES = ['cashier', 'history'];
 const ADMIN_USERNAME = 'admin';
 const ADMIN_PASSWORD = 'admin123';
@@ -45,6 +45,7 @@ const EDIT_UNLOCK_MS = 5 * 60 * 1000;
 const PAGE_ICONS = {
     cashier: 'columns',
     sell: 'bag',
+    expenses: 'receipt',
     dashboard: 'chart',
     history: 'history',
     catalog: 'tag',
@@ -65,6 +66,7 @@ const state = {
     boardDate: todayString(),
     dashPeriod: 'today',
     historyPeriod: 'today',
+    expensesPeriod: 'month',
     historyDay: todayString(),
     catalogTab: 'services',
     productCategory: 'all',
@@ -132,6 +134,7 @@ const ICONS = {
     alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
     cash: '<rect width="20" height="12" x="2" y="6" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/>',
     card: '<rect width="20" height="14" x="2" y="5" rx="2"/><path d="M2 10h20"/>',
+    receipt: '<path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z"/><path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"/><path d="M12 17.5v-11"/>',
     wallet: '<path d="M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4"/>',
     store: '<path d="m2 7 4.41-4.41A2 2 0 0 1 7.83 2h8.34a2 2 0 0 1 1.42.59L22 7"/><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="M2 7h20"/><path d="M22 7v3a2 2 0 0 1-2 2a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 16 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 12 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 8 12a2.7 2.7 0 0 1-1.59-.63.7.7 0 0 0-.82 0A2.7 2.7 0 0 1 4 12a2 2 0 0 1-2-2V7"/>',
     database: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/>',
@@ -629,6 +632,7 @@ function restoreScroll(saved) {
 const renderers = {
     cashier: renderCashier,
     sell: renderSell,
+    expenses: renderExpenses,
     dashboard: renderDashboard,
     history: renderHistory,
     catalog: renderCatalog,
@@ -3123,9 +3127,14 @@ async function renderHistory() {
                     JOIN product_sales ps ON ps.id = i.sale_id LEFT JOIN products p ON p.id = i.product_id
                     WHERE ps.date BETWEEN ? AND ? ORDER BY i.id`,
             params: [start, end]
+        },
+        {
+            query: `SELECT ${EXPENSE_COLUMNS} FROM expenses WHERE date BETWEEN ? AND ?
+                    ORDER BY date DESC, time DESC, id DESC LIMIT ${limit}`,
+            params: [start, end]
         }
     ];
-    const [allBarbers, ticketRows, itemRows, saleRows = [], saleItemRows = []] = await queryMany([
+    const [allBarbers, ticketRows, itemRows, saleRows = [], saleItemRows = [], expenseRows = []] = await queryMany([
         { query: 'SELECT id, name, is_active FROM barbers ORDER BY id' },
         {
             query: `SELECT ${TICKET_COLUMNS} FROM orders o LEFT JOIN customers c ON c.id = o.customer_id
@@ -3163,6 +3172,7 @@ async function renderHistory() {
 
     const salesMoney = sum(saleRows, sale => sale.total);
     const totalMoney = sum(tickets, ticket => ticket.total) + salesMoney;
+    const expensesMoney = sum(expenseRows, expense => expense.amount);
     const saleItems = new Map();
     saleItemRows.forEach(item => {
         const list = saleItems.get(Number(item.sale_id)) || [];
@@ -3198,9 +3208,12 @@ async function renderHistory() {
             <div class="day-stat"><span>${escapeHtml(t('dash.clientsDone'))}</span><strong>${escapeHtml(I18N.formatNumber(tickets.length))}</strong></div>
             ${!own ? `<div class="day-stat"><span class="swatch swatch-products"></span><span>${escapeHtml(t('history.productSales'))}</span><strong>${money(salesMoney)}</strong></div>` : ''}
             <div class="day-stat day-stat-money"><span>${escapeHtml(t('dash.totalMoney'))}</span><strong>${money(totalMoney)}</strong></div>
+            ${!own ? `
+                <div class="day-stat"><span class="swatch swatch-expenses"></span><span>${escapeHtml(t('history.expenses'))}</span><strong>${money(expensesMoney)}</strong></div>
+                <div class="day-stat day-stat-net"><span>${escapeHtml(t('history.afterExpenses'))}</span><strong>${money(totalMoney - expensesMoney)}</strong></div>` : ''}
         </div>
         ${ticketRows.length >= limit ? `<p class="notice">${escapeHtml(t('history.limited', { n: limit }))}</p>` : ''}
-        ${columns.length || saleRows.length ? `
+        ${columns.length || saleRows.length || expenseRows.length ? `
             <div class="board history-board" data-scroll-x>
                 ${columns.map(column => {
                     const earned = sum(column.tickets, ticket => ticket.total);
@@ -3247,6 +3260,7 @@ async function renderHistory() {
                         </section>`;
                 }).join('')}
                 ${!own ? renderSalesColumn(saleRows, saleItems, multiDay) : ''}
+                ${!own ? renderExpensesColumn(expenseRows, multiDay) : ''}
             </div>` : `
             <div class="empty-hero">
                 <span class="empty-hero-icon">${icon('history')}</span>
@@ -3611,6 +3625,237 @@ async function deleteProductSale(id) {
     await runStatements(statements);
     toast(t('sell.deleted'));
     await renderPage({ keepScroll: true });
+}
+
+/* ------------------------------------------------------------------ */
+/* Expenses: what the shop paid (electricity, rent, ...). Owner only.  */
+/* The owner types the name; nothing is added by itself. Changing an   */
+/* amount later, and deleting, needs the history password.             */
+/* ------------------------------------------------------------------ */
+
+const EXPENSE_COLUMNS = 'id, name, amount, date, time';
+
+// Times every 15 minutes, plus the exact time already chosen, so nothing has to be typed.
+function expenseTimeOptions(selected) {
+    const current = String(selected || '').slice(0, 5);
+    const times = [];
+    for (let minutes = 0; minutes < 24 * 60; minutes += 15) times.push(fromMinutes(minutes));
+    if (isValidTime(current) && !times.includes(current)) times.push(current);
+    times.sort();
+    return times.map(time => `<option value="${time}" ${time === current ? 'selected' : ''}>${escapeHtml(I18N.formatTime(time))}</option>`).join('');
+}
+
+function expenseFields(expense = {}) {
+    return `
+        <label class="field expense-name-field"><span>${escapeHtml(t('expenses.name'))}</span>
+            <input type="text" name="name" maxlength="80" required autocomplete="off" placeholder="${escapeHtml(t('expenses.namePh'))}" value="${escapeHtml(expense.name || '')}">
+        </label>
+        <label class="field"><span>${escapeHtml(t('expenses.amount'))} (${escapeHtml(I18N.currency())})</span>
+            <input type="number" name="amount" min="0" step="any" inputmode="decimal" required value="${expense.amount == null ? '' : escapeHtml(expense.amount)}">
+        </label>
+        <label class="field"><span>${escapeHtml(t('expenses.date'))}</span>
+            <input type="date" name="date" required value="${escapeHtml(expense.date || todayString())}">
+        </label>
+        <label class="field"><span>${escapeHtml(t('expenses.time'))}</span>
+            <select name="time">${expenseTimeOptions(expense.time || nowTime())}</select>
+        </label>`;
+}
+
+// Reads the fields; null (with a message) when something is missing.
+function readExpenseFields(form) {
+    const name = form.elements.name.value.trim();
+    if (!name) {
+        toast(t('expenses.needName'), 'error');
+        form.elements.name.focus();
+        return null;
+    }
+    const amount = parsePrice(form.elements.amount.value);
+    if (amount == null || amount <= 0) {
+        toast(t('expenses.needAmount'), 'error');
+        form.elements.amount.focus();
+        return null;
+    }
+    const date = isValidDate(form.elements.date.value) ? form.elements.date.value : todayString();
+    const time = isValidTime(form.elements.time.value) ? form.elements.time.value.slice(0, 5) : nowTime();
+    return { name, amount, date, time };
+}
+
+function expenseRow(expense, { showDate = true } = {}) {
+    return `
+        <li class="expense-row">
+            <span class="expense-when">
+                <strong>${timeLabel(expense.time)}</strong>
+                ${showDate ? `<small>${escapeHtml(I18N.formatDateShort(expense.date))}</small>` : ''}
+            </span>
+            <span class="expense-what">${escapeHtml(expense.name)}</span>
+            <span class="expense-amount">${money(expense.amount)}</span>
+            <span class="expense-buttons">
+                <button type="button" class="btn-icon btn-icon-sm" data-action="expense-edit" data-id="${expense.id}" aria-label="${escapeHtml(t('expenses.edit'))}" title="${escapeHtml(t('expenses.edit'))}">${icon('pencil')}</button>
+                <button type="button" class="btn-icon btn-icon-sm sale-delete" data-action="expense-delete" data-id="${expense.id}" aria-label="${escapeHtml(t('history.deleteLocked'))}" title="${escapeHtml(t('history.deleteLocked'))}">${icon('trash')}</button>
+            </span>
+        </li>`;
+}
+
+async function renderExpenses() {
+    const period = state.expensesPeriod;
+    const { start, end } = periodRange(period, todayString());
+    const [rows, totals] = await queryMany([
+        {
+            query: `SELECT ${EXPENSE_COLUMNS} FROM expenses WHERE date BETWEEN ? AND ?
+                    ORDER BY date DESC, time DESC, id DESC LIMIT 1000`,
+            params: [start, end]
+        },
+        { query: 'SELECT COUNT(*) AS count, COALESCE(SUM(amount), 0) AS total FROM expenses WHERE date BETWEEN ? AND ?', params: [start, end] }
+    ]);
+    const total = Number(totals[0]?.total || 0);
+    const count = Number(totals[0]?.count || 0);
+    const actions = segmented(periodOptions(), period, 'expenses-period', t('dash.period'));
+    const body = `
+        <div class="expenses">
+            <section class="card expense-add">
+                <h3 class="card-title">${icon('plus')}${escapeHtml(t('expenses.addTitle'))}</h3>
+                <form class="expense-form" data-form="expense" autocomplete="off" novalidate>
+                    ${expenseFields()}
+                    <button type="submit" class="btn btn-primary expense-submit">${icon('check')}<span>${escapeHtml(t('expenses.add'))}</span></button>
+                </form>
+                <p class="field-hint">${icon('lock')}<span>${escapeHtml(t('expenses.hint'))}</span></p>
+            </section>
+            <section class="card expense-list-card">
+                <div class="expense-head">
+                    <h3 class="card-title">${icon('receipt')}${escapeHtml(periodLabel(period, todayString()))}</h3>
+                    <div class="expense-total">
+                        <span>${escapeHtml(t('expenses.total'))} · ${escapeHtml(t('expenses.count', { n: count }))}</span>
+                        <strong>${money(total)}</strong>
+                    </div>
+                </div>
+                ${rows.length
+                    ? `<ul class="expense-list">${rows.map(row => expenseRow(row, { showDate: true })).join('')}</ul>`
+                    : `<p class="card-empty">${escapeHtml(t('expenses.none'))}</p>`}
+            </section>
+        </div>`;
+    return { actions, body };
+}
+
+async function addExpense(form) {
+    const values = readExpenseFields(form);
+    if (!values) return;
+    await api.dbRun('INSERT INTO expenses (name, amount, date, time) VALUES (?, ?, ?, ?)', [values.name, values.amount, values.date, values.time]);
+    toast(t('expenses.added', { name: values.name }));
+    await renderPage({ keepScroll: true });
+    dom.page.querySelector('[data-form="expense"] [name="name"]')?.focus({ preventScroll: true });
+}
+
+async function openExpenseEdit(id) {
+    const expense = await queryOne(`SELECT ${EXPENSE_COLUMNS} FROM expenses WHERE id = ?`, [id]);
+    if (!expense) {
+        await renderPage({ keepScroll: true });
+        return;
+    }
+    const entry = openModal({
+        title: t('expenses.edit'),
+        size: 'sm',
+        body: `
+            <form class="stack" data-expense-edit novalidate>
+                ${expenseFields(expense)}
+                <p class="field-hint">${icon('lock')}<span>${escapeHtml(t('expenses.lockText'))}</span></p>
+            </form>`,
+        footer: `
+            <span class="spacer"></span>
+            <button type="button" class="btn btn-ghost" data-modal-close>${escapeHtml(t('common.cancel'))}</button>
+            <button type="button" class="btn btn-primary" data-expense-save>${icon('check')}<span>${escapeHtml(t('common.save'))}</span></button>`
+    });
+    const form = entry.modal.querySelector('[data-expense-edit]');
+    const saveButton = entry.modal.querySelector('[data-expense-save]');
+    const save = async () => {
+        if (saveButton.disabled) return;
+        const values = readExpenseFields(form);
+        if (!values) return;
+        saveButton.disabled = true;
+        try {
+            // A changed amount needs the history password.
+            if (Number(values.amount) !== Number(expense.amount)) {
+                const ok = await requireEditPassword({ text: t('expenses.lockText') });
+                if (!ok) return;
+            }
+            await api.dbRun(
+                'UPDATE expenses SET name = ?, amount = ?, date = ?, time = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                [values.name, values.amount, values.date, values.time, Number(expense.id)]
+            );
+            entry.close();
+            toast(t('expenses.saved'));
+            await renderPage({ keepScroll: true });
+        } catch (error) {
+            handleError(error);
+        } finally {
+            if (document.contains(saveButton)) saveButton.disabled = false;
+        }
+    };
+    saveButton.addEventListener('click', save);
+    form.addEventListener('submit', event => {
+        event.preventDefault();
+        save();
+    });
+}
+
+async function deleteExpense(id) {
+    const expense = await queryOne(`SELECT ${EXPENSE_COLUMNS} FROM expenses WHERE id = ?`, [id]);
+    if (!expense) {
+        await renderPage({ keepScroll: true });
+        return;
+    }
+    const ok = await requireEditPassword({
+        always: true,
+        text: t('expenses.deleteText', { name: expense.name, amount: moneyText(expense.amount) }),
+        okLabel: t('common.delete'),
+        danger: true
+    });
+    if (!ok) return;
+    await api.dbRun('DELETE FROM expenses WHERE id = ?', [Number(expense.id)]);
+    toast(t('expenses.deleted'));
+    await renderPage({ keepScroll: true });
+}
+
+// History column with the shop's expenses (owner only).
+function renderExpensesColumn(expenses, multiDay) {
+    const spent = sum(expenses, expense => expense.amount);
+    return `
+        <section class="col hcol hcol-expenses">
+            <header class="col-head">
+                <div class="col-id">
+                    <span class="avatar avatar-expenses">${icon('receipt')}</span>
+                    <div class="col-name">
+                        <h3>${escapeHtml(t('history.expenses'))}</h3>
+                        <span class="col-note">${escapeHtml(t('history.expensesNote'))}</span>
+                    </div>
+                </div>
+            </header>
+            <div class="hcol-totals">
+                <div><span>${escapeHtml(t('history.spent'))}</span><strong>${money(spent)}</strong></div>
+                <div><span>${escapeHtml(t('history.expenseCount'))}</span><strong>${escapeHtml(I18N.formatNumber(expenses.length))}</strong></div>
+            </div>
+            <div class="col-body" data-scroll-key="h-expenses">
+                ${expenses.length ? `
+                    <ol class="hlist">
+                        ${expenses.map(expense => `
+                            <li class="hrow">
+                                <div class="hrow-when">
+                                    ${expense.time ? `<span>${timeLabel(expense.time)}</span>` : ''}
+                                    ${multiDay ? `<small>${escapeHtml(I18N.formatDateShort(expense.date))}</small>` : ''}
+                                </div>
+                                <div class="hrow-main">
+                                    <strong>${escapeHtml(expense.name)}</strong>
+                                </div>
+                                <div class="hrow-amount">
+                                    ${money(expense.amount)}
+                                    <span class="hrow-buttons">
+                                        <button type="button" class="hrow-edit" data-action="expense-edit" data-id="${expense.id}" title="${escapeHtml(t('expenses.edit'))}">${icon('pencil')}<span>${escapeHtml(t('common.edit'))}</span></button>
+                                        <button type="button" class="hrow-edit hrow-delete" data-action="expense-delete" data-id="${expense.id}" title="${escapeHtml(t('history.deleteLocked'))}" aria-label="${escapeHtml(t('history.deleteLocked'))}">${icon('trash')}</button>
+                                    </span>
+                                </div>
+                            </li>`).join('')}
+                    </ol>` : `<p class="col-empty">${escapeHtml(t('history.noExpenses'))}</p>`}
+            </div>
+        </section>`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -4426,6 +4671,7 @@ async function clearHistory() {
         { query: "DELETE FROM orders WHERE COALESCE(status, 'completed') IN ('completed', 'cancelled')", params: [] },
         { query: 'DELETE FROM product_sale_items', params: [] },
         { query: 'DELETE FROM product_sales', params: [] },
+        { query: 'DELETE FROM expenses', params: [] },
         { query: "DELETE FROM appointments WHERE date < ? OR COALESCE(status, 'scheduled') IN ('completed', 'cancelled', 'transferred')", params: [todayString()] }
     ]);
     toast(t('settings.cleared'));
@@ -4853,6 +5099,12 @@ const actions = {
     },
     'sell-done': () => finishSale(),
     'delete-sale': element => deleteProductSale(Number(element.dataset.id)),
+    'expense-edit': element => openExpenseEdit(Number(element.dataset.id)),
+    'expense-delete': element => deleteExpense(Number(element.dataset.id)),
+    'expenses-period': element => {
+        state.expensesPeriod = element.dataset.value;
+        renderPage();
+    },
     'open-catalog-products': () => {
         state.catalogTab = 'products';
         return go('catalog');
@@ -4894,7 +5146,7 @@ const actions = {
 
 const busyActions = new Set([
     'take-client', 'back-to-waiting', 'undo-pay', 'done-client', 'slot-add', 'slot-edit', 'slot-remove', 'slot-length', 'toggle-work', 'toggle-online', 'remove-extra-slot', 'skip-slot', 'add-slot-pick',
-    'edit-finished', 'delete-finished', 'delete-sale', 'sell-done', 'barber-account', 'clear-history', 'remove-photo'
+    'edit-finished', 'delete-finished', 'delete-sale', 'expense-delete', 'sell-done', 'barber-account', 'clear-history', 'remove-photo'
 ]);
 
 document.addEventListener('click', event => {
@@ -5010,6 +5262,15 @@ document.addEventListener('submit', event => {
         saveSlotForm().catch(handleError);
     } else if (form.dataset.form === 'add-barber') {
         addBarber(form.elements.name.value).catch(handleError);
+    } else if (form.dataset.form === 'expense') {
+        const button = form.querySelector('button[type="submit"]');
+        if (button.disabled) return;
+        button.disabled = true;
+        addExpense(form)
+            .catch(handleError)
+            .finally(() => {
+                if (document.contains(button)) button.disabled = false;
+            });
     } else if (form.dataset.form === 'shop') {
         saveShop(form).catch(handleError);
     } else if (form.dataset.form === 'history-password') {

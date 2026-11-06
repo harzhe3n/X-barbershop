@@ -209,6 +209,19 @@ CREATE TABLE IF NOT EXISTS product_sale_items (
 CREATE INDEX IF NOT EXISTS idx_product_sales_date ON product_sales(date);
 CREATE INDEX IF NOT EXISTS idx_product_sale_items_sale ON product_sale_items(sale_id);
 
+-- What the shop paid (electricity, rent, ...). The owner types the name; owner only.
+CREATE TABLE IF NOT EXISTS expenses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    amount DECIMAL(10,2) NOT NULL DEFAULT 0,
+    date DATE NOT NULL,
+    time TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(date);
+
 -- Barber photos: a large copy for the booking website and a small one for the cashier.
 CREATE TABLE IF NOT EXISTS barber_photos (
     barber_id INTEGER PRIMARY KEY,
