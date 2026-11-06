@@ -5104,3 +5104,19 @@ button.slot:focus-visible .slot-plus {
         display: none !important;
     }
 }
+
+/* Every column is as long as its slots and the whole page scrolls, instead of a small box
+   that scrolls inside (its header leaves too little room for the slots, mostly on phones).
+   On phones, swipe sideways for the other barbers. */
+.page-cashier > .board,
+.page-history > .board {
+    flex: none;
+    min-height: 0;
+    align-items: flex-start;
+}
+
+.col-body {
+    flex: none;
+    overflow-y: visible;
+    overscroll-behavior: auto;
+}
