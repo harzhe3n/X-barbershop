@@ -6,8 +6,8 @@ The booking website is part of this project. `server.js` serves it at `/` and th
 
 | File | What it is |
 |---|---|
-| `site/index.html` | The page: loading screen, header, barber slideshow, how it works, footer, booking window |
-| `site/site.css` | Design (white, black type), loading animation, the always-moving XBARBER, slideshow, phone layout |
+| `site/index.html` | The page: loading screen, header, barber slider, black tools band, how it works, footer, booking window |
+| `site/site.css` | Design (black and white, editorial), loading screen, slider, barber tool animations, phone layout |
 | `site/site.js` | Texts in Kurdish (default), Arabic and English, the slideshow and the three booking steps |
 | `src/js/slots.js` | How time slots are made. Used by the cashier and by the server, so both always show the same free times |
 | `server.js` | The public API below, plus the cashier API |
@@ -15,7 +15,7 @@ The booking website is part of this project. `server.js` serves it at `/` and th
 ## What the customer does
 
 1. **Loading screen**: the two halves of the X logo slide together, then "XBARBER" appears letter by letter.
-2. **Barbers**: one big black-and-white photo in the middle (set in the cashier on the Barbers page), with the barbers before and after it at the sides. The next barber comes every 5 seconds; arrows, swiping, or the button with each barber's name show one straight away. It waits while the mouse is on it or the booking window is open. Under the photo: the name, the next free time and **Book with ...** (tapping the big photo also opens booking).
+2. **Barbers**: black-and-white photos in a row (set in the cashier on the Barbers page). Drag or swipe them: they follow, glide on and settle on the nearest barber; the row never ends. The next barber comes every 5 seconds; the arrows and the button with each barber's name work too. It waits while the mouse is on it or the booking window is open. Under the photos: the name, the next free time and **Book with ...** (tapping the photo in the middle also opens booking).
 3. **Pick a time**: days from today up to "Book up to" (Settings → Booking website). Free times can be tapped; taken times are shown crossed out. Closed days and days the barber is "Not at work" cannot be picked.
 4. **Your details**: name and phone number only. No sign-up.
 5. **Done**: the day and time, and the shop's phone number to change or cancel.

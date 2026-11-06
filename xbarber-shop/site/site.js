@@ -2,8 +2,9 @@
 
 /*
  * XBARBER booking website.
- * The barbers' photos are the centre of the page: one big photo in the middle, the next barber
- * every 5 seconds, arrows and a button for every barber.
+ * Black and white. A long loading screen (the X is drawn, scissors cut a line, a counter runs to 100),
+ * then the barbers in a slider you can drag, with momentum, that never ends and moves on every
+ * 5 seconds. Barber tools (scissors, razor, comb, clipper) move in the background and in a black band.
  * Booking: 1. pick a day and a free time.  2. type name and phone number.  3. done.
  * Free times come from the cashier (GET /api/public/availability); a booking becomes a waiting
  * client in that barber's slot (POST /api/public/book). No sign-in for customers.
@@ -17,7 +18,8 @@
     // Kurdish until the visitor picks another language (remembered on their phone).
     const DEFAULT_LANG = 'ckb';
     const STORAGE_KEY = 'xbarber-site-language';
-    const MIN_LOADER_MS = 1900;
+    // The loading screen stays at least this long, so the logo animation can play in full.
+    const MIN_LOADER_MS = 4900;
     const REFRESH_MS = 30000;
     // The next barber comes to the middle every 5 seconds.
     const SLIDE_MS = 5000;
@@ -106,7 +108,9 @@
             'carousel.prev': 'Previous barber',
             'carousel.next': 'Next barber',
             'carousel.slide': '{n} of {total}',
-            'barbers.bookWith': 'Book with {name}'
+            'barbers.bookWith': 'Book with {name}',
+            'cursor.drag': 'Drag',
+            'cursor.book': 'Book'
         },
         ar: {
             'nav.book': 'احجز الآن',
@@ -191,7 +195,9 @@
             'carousel.prev': 'الحلاق السابق',
             'carousel.next': 'الحلاق التالي',
             'carousel.slide': '{n} من {total}',
-            'barbers.bookWith': 'احجز مع {name}'
+            'barbers.bookWith': 'احجز مع {name}',
+            'cursor.drag': 'اسحب',
+            'cursor.book': 'احجز'
         },
         ckb: {
             'nav.book': 'ئێستا نۆرە بگرە',
@@ -276,7 +282,9 @@
             'carousel.prev': 'باربەری پێشوو',
             'carousel.next': 'باربەری دواتر',
             'carousel.slide': '{n} لە {total}',
-            'barbers.bookWith': 'نۆرە لای {name} بگرە'
+            'barbers.bookWith': 'نۆرە لای {name} بگرە',
+            'cursor.drag': 'ڕایبکێشە',
+            'cursor.book': 'نۆرە بگرە'
         }
     };
 
@@ -312,6 +320,7 @@
     const MARK = '<svg viewBox="300 270 660 760" aria-hidden="true"><polygon points="325,288 651,593 388,839 388,676 457,608 325,481"/><polygon points="904,385 904,593 797,690 934,822 934,1014 589,683"/></svg>';
 
     const reducedMotion = Boolean(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    const LOADER_MS = reducedMotion ? 900 : MIN_LOADER_MS;
     const state = {
         lang: pickLanguage(),
         info: null,
@@ -346,10 +355,12 @@
     const stage = $('#stage');
     const spotlight = $('#spotlight');
     const picker = $('#picker');
+    const sliderCount = $('#slider-count');
+    const loader = $('#loader');
+    const cursor = $('#cursor');
     let slideTimer = null;
     let slideStarted = 0;
     let slideLeft = SLIDE_MS;
-    let stageKey = '';
 
     /* ---------------- Language and formatting ---------------- */
 
@@ -456,7 +467,26 @@
         return data;
     }
 
-    /* ---------------- Barber slideshow ---------------- */
+    /* ---------------- Barber slider ---------------- */
+    /*
+     * The photos sit in a row. Drag them (or swipe, or use the arrows); they glide with momentum and
+     * settle on the nearest barber, who is the one shown under the photos. The row never ends: with
+     * only a few barbers it is filled with copies. Every 5 seconds it moves on by itself.
+     */
+
+    const slider = {
+        cards: [],
+        count: 0,
+        total: 0,
+        current: 0,
+        target: 0,
+        step: 300,
+        raf: 0,
+        last: 0,
+        drag: null,
+        wheelTimer: 0,
+        key: ''
+    };
 
     function barberList() {
         return state.info?.barbers || [];
@@ -471,21 +501,29 @@
         return Boolean(barber) && barber.online !== false;
     }
 
-    // Runs while nothing holds it: not hovered, no booking window open, page visible.
+    function mod(value, size) {
+        return ((value % size) + size) % size;
+    }
+
+    function pad(value, size) {
+        return String(value).padStart(size, '0');
+    }
+
+    // Runs while nothing holds it: not dragged or hovered, no booking window open, page visible.
     // People who ask their phone for less motion move between barbers themselves.
     function playing() {
         return state.ready && !reducedMotion && barberList().length > 1 && !state.hoverHold && !state.focusHold
-            && sheetRoot.hidden && !document.hidden;
+            && !slider.drag && sheetRoot.hidden && !document.hidden;
     }
 
-    // The 5-second timer. A pause keeps the time that was left, so the bar below continues where it stopped.
+    // The 5-second timer. A pause keeps the time that was left, so the line below continues where it stopped.
     function syncTimer() {
         const run = playing();
         if (run && !slideTimer) {
             slideStarted = Date.now();
             slideTimer = setTimeout(() => {
                 slideTimer = null;
-                goTo(state.slide + 1, { auto: true });
+                moveBy(1, { auto: true });
             }, slideLeft);
         } else if (!run && slideTimer) {
             clearTimeout(slideTimer);
@@ -505,60 +543,144 @@
         syncTimer();
     }
 
-    function goTo(index, { auto = false } = {}) {
+    // The slider has come to rest on a barber (or is on its way): show their name and button.
+    function settle({ auto = false } = {}) {
         const count = barberList().length;
         if (!count) return;
+        const before = state.slide;
+        state.slide = mod(Math.round(slider.target), count);
         const pickerHadFocus = picker.contains(document.activeElement);
-        state.slide = ((index % count) + count) % count;
-        renderCarousel(true);
-        if (pickerHadFocus && !auto) picker.querySelector('.pick[aria-current="true"]')?.focus({ preventScroll: true });
+        if (state.slide !== before) {
+            renderSpotlight(true);
+            renderPicker();
+            renderCount();
+            if (pickerHadFocus && !auto) picker.querySelector('.pick[aria-current="true"]')?.focus({ preventScroll: true });
+        }
         restartTimer();
+        kick();
     }
 
-    // Where a barber's photo sits: 0 in the middle, 1 and -1 beside it, 2 and -2 further out.
-    function slidePosition(index, active, count) {
-        let distance = (index - active + count) % count;
-        if (distance > count / 2) distance -= count;
-        return Math.abs(distance) <= 2 ? String(distance) : 'hidden';
+    function moveBy(delta, options) {
+        if (barberList().length < 2) return;
+        slider.target = Math.round(slider.target) + delta;
+        settle(options);
+    }
+
+    // Straight to one barber, the short way round.
+    function goTo(index) {
+        const count = barberList().length;
+        if (count < 2) return;
+        const base = Math.round(slider.target);
+        let diff = mod(index, count) - mod(base, count);
+        if (Math.abs(diff) > count / 2) diff -= Math.sign(diff) * count;
+        slider.target = base + diff;
+        settle();
+    }
+
+    function measureSlider() {
+        const card = stage.querySelector('.card');
+        if (!card) return;
+        const gap = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--gap')) || 20;
+        slider.step = card.offsetWidth + gap;
+    }
+
+    // Puts every photo in its place for the slider's position right now.
+    function layoutSlider() {
+        if (!slider.total) return;
+        const dir = isRtl() ? -1 : 1;
+        const half = slider.total / 2;
+        const speed = slider.target - slider.current;
+        const skew = Math.max(-6, Math.min(6, speed * -9)) * dir;
+        slider.cards.forEach((card, virtual) => {
+            let offset = virtual - slider.current;
+            if (slider.total > 1) offset = mod(offset + half, slider.total) - half;
+            const distance = Math.abs(offset);
+            const scale = 1 - Math.min(distance, 1) * 0.12;
+            card.style.transform = `translate3d(${(offset * slider.step * dir).toFixed(2)}px, 0, 0) scale(${scale.toFixed(4)}) skewX(${skew.toFixed(2)}deg)`;
+            card.style.opacity = String(Math.max(0, 1 - Math.min(distance, 3) * 0.24).toFixed(3));
+            card.style.zIndex = String(100 - Math.round(distance * 10));
+            // The photo moves a little slower than its frame.
+            const media = card.firstElementChild;
+            if (media) media.style.transform = `translate3d(${(-offset * 9 * dir).toFixed(2)}%, 0, 0)`;
+            const active = distance < 0.5;
+            card.classList.toggle('is-active', active);
+            card.tabIndex = active && virtual < slider.count ? 0 : -1;
+        });
+    }
+
+    function tick(now) {
+        const elapsed = slider.last ? Math.min(64, now - slider.last) : 16.7;
+        slider.last = now;
+        const ease = reducedMotion ? 1 : 1 - Math.pow(1 - 0.075, elapsed / 16.7);
+        slider.current += (slider.target - slider.current) * ease;
+        if (!slider.drag && Math.abs(slider.target - slider.current) < 0.0005) slider.current = slider.target;
+        layoutSlider();
+        if (slider.drag || slider.current !== slider.target) {
+            slider.raf = requestAnimationFrame(tick);
+        } else {
+            slider.raf = 0;
+            slider.last = 0;
+        }
+    }
+
+    function kick() {
+        if (slider.raf) return;
+        slider.last = 0;
+        slider.raf = requestAnimationFrame(tick);
+    }
+
+    function photoMarkup(barber) {
+        return barber.photo
+            ? `<img src="${esc(barber.photo)}" alt="" draggable="false">`
+            : `<span class="card-initial" aria-hidden="true">${esc(initial(barber.name))}</span>`;
     }
 
     function renderStage() {
         const list = barberList();
-        if (state.loadError) {
-            stageKey = 'error';
-            stage.innerHTML = `<div class="slide slide-empty" data-pos="0">${MARK}<p>${esc(t('err.load'))}</p></div>`;
+        let placeholder = '';
+        if (state.loadError) placeholder = `<div class="card card-empty">${MARK}<p>${esc(t('err.load'))}</p></div>`;
+        else if (!state.info) placeholder = '<div class="card card-loading"></div>';
+        else if (!list.length) placeholder = `<div class="card card-empty">${MARK}<p>${esc(t('barbers.empty'))}</p></div>`;
+        if (placeholder) {
+            const key = state.loadError ? 'error' : state.info ? 'empty' : 'loading';
+            if (slider.key !== key) {
+                slider.key = key;
+                stage.innerHTML = placeholder;
+            }
+            slider.cards = [];
+            slider.count = 0;
+            slider.total = 0;
             return;
         }
-        if (!state.info) {
-            stageKey = 'loading';
-            stage.innerHTML = '<div class="slide slide-loading" data-pos="0"></div>';
-            return;
+        // The photos are only rebuilt when the barbers change, so moving between them stays smooth.
+        const key = `${state.lang}|${list.map(barber => `${barber.id}:${barber.name}:${barber.photo || ''}:${isOpen(barber)}`).join('|')}`;
+        if (key !== slider.key) {
+            slider.key = key;
+            const count = list.length;
+            // Enough copies that the row never runs out, even on a wide screen.
+            const copies = count > 1 ? Math.max(1, Math.ceil(9 / count)) : 1;
+            const total = count * copies;
+            let html = '';
+            for (let virtual = 0; virtual < total; virtual += 1) {
+                const index = virtual % count;
+                const barber = list[index];
+                const copy = virtual >= count;
+                html += `
+                    <button type="button" class="card ${isOpen(barber) ? '' : 'is-closed'}" data-index="${index}" data-virtual="${virtual}"
+                        ${copy ? 'aria-hidden="true" tabindex="-1"' : `aria-roledescription="slide" aria-label="${esc(`${barber.name} · ${t('carousel.slide', { n: index + 1, total: count })}`)}"`}>
+                        <span class="card-media">${photoMarkup(barber)}</span>
+                        <span class="card-num" dir="ltr">NO ${pad(index + 1, 3)}</span>
+                        <span class="card-name">${esc(barber.name)}</span>
+                    </button>`;
+            }
+            stage.innerHTML = html;
+            slider.cards = [...stage.querySelectorAll('.card[data-virtual]')];
+            slider.count = count;
+            slider.total = total;
+            slider.current = slider.target = state.slide;
+            measureSlider();
         }
-        if (!list.length) {
-            stageKey = 'empty';
-            stage.innerHTML = `<div class="slide slide-empty" data-pos="0">${MARK}<p>${esc(t('barbers.empty'))}</p></div>`;
-            return;
-        }
-        // The photos are only rebuilt when the barbers change, so moving between them animates.
-        const key = `${state.lang}|${list.map(barber => `${barber.id}:${barber.name}:${barber.photo || ''}`).join('|')}`;
-        if (key !== stageKey) {
-            stageKey = key;
-            stage.innerHTML = list.map((barber, index) => `
-                <button type="button" class="slide" data-index="${index}" aria-roledescription="slide"
-                    aria-label="${esc(`${barber.name} · ${t('carousel.slide', { n: index + 1, total: list.length })}`)}">
-                    <span class="slide-num" dir="ltr">${String(index + 1).padStart(2, '0')}</span>
-                    ${barber.photo
-                        ? `<img src="${esc(barber.photo)}" alt="" draggable="false">`
-                        : `<span class="slide-initial" aria-hidden="true">${esc(initial(barber.name))}</span>`}
-                </button>`).join('');
-        }
-        stage.querySelectorAll('.slide[data-index]').forEach(element => {
-            const position = slidePosition(Number(element.dataset.index), state.slide, list.length);
-            element.dataset.pos = position;
-            element.tabIndex = position === '0' ? 0 : -1;
-            if (position === 'hidden') element.setAttribute('aria-hidden', 'true');
-            else element.removeAttribute('aria-hidden');
-        });
+        layoutSlider();
     }
 
     function renderSpotlight(animate) {
@@ -584,7 +706,7 @@
         spotlight.innerHTML = `
             <h2 class="spot-name">${esc(barber.name)}</h2>
             <p class="spot-status">${status}</p>
-            <button type="button" class="btn btn-light" data-book="${barber.id}" ${state.info.open && isOpen(barber) ? '' : 'disabled'}>${esc(t('barbers.bookWith', { name: barber.name }))}</button>`;
+            <button type="button" class="btn btn-ink" data-book="${barber.id}" ${state.info.open && isOpen(barber) ? '' : 'disabled'}>${esc(t('barbers.bookWith', { name: barber.name }))}</button>`;
         if (animate) {
             spotlight.classList.remove('spot-in');
             void spotlight.offsetWidth;
@@ -600,20 +722,24 @@
             return;
         }
         picker.setAttribute('aria-label', t('carousel.label'));
-        picker.innerHTML = `${list.map((barber, index) => `
+        picker.innerHTML = list.map((barber, index) => `
             <button type="button" class="pick ${isOpen(barber) ? '' : 'is-closed'}" data-index="${index}" aria-current="${index === state.slide}">
-                <span class="pick-face">${barber.photo ? `<img src="${esc(barber.photo)}" alt="">` : esc(initial(barber.name))}</span>
-                <span>${esc(barber.name)}</span>
+                <span class="pick-num" dir="ltr">${pad(index + 1, 3)}</span>
+                <span class="pick-name">${esc(barber.name)}</span>
                 <span class="pick-progress" aria-hidden="true"></span>
-            </button>`).join('')}`;
-        // On phones, keep the current barber's button in view. Only the row of buttons scrolls,
-        // never the page (scrollIntoView would also move the slideshow sideways).
+            </button>`).join('');
+        // On phones, keep the current barber's button in view. Only the row of buttons scrolls.
         const active = picker.querySelector('.pick[aria-current="true"]');
         if (active && picker.scrollWidth > picker.clientWidth) {
             const row = picker.getBoundingClientRect();
             const button = active.getBoundingClientRect();
             picker.scrollBy({ left: (button.left + button.width / 2) - (row.left + row.width / 2), behavior: 'smooth' });
         }
+    }
+
+    function renderCount() {
+        const count = barberList().length;
+        sliderCount.textContent = count ? `${pad(state.slide + 1, 2)} / ${pad(count, 2)}` : '';
     }
 
     function renderCarousel(animate = false) {
@@ -623,13 +749,199 @@
         renderStage();
         renderSpotlight(animate);
         renderPicker();
-        carousel.querySelectorAll('[data-slide]').forEach(arrow => {
+        renderCount();
+        document.querySelectorAll('[data-slide]').forEach(arrow => {
             const next = arrow.dataset.slide === 'next';
             arrow.hidden = count < 2;
             arrow.setAttribute('aria-label', t(next ? 'carousel.next' : 'carousel.prev'));
             arrow.innerHTML = icon(next ? 'next' : 'prev', 'flip-rtl');
         });
         syncTimer();
+    }
+
+    /* ---------------- Barber tools ---------------- */
+
+    // Line drawings of the barber's tools (64 × 64). Their parts move with the CSS in site.css.
+    const TOOLS = {
+        scissors: `
+            <g class="t-blade t-blade-a"><circle cx="13" cy="21" r="7"/><path d="M19 24.5 30 32"/><path d="M30 32 60 39 57 41.5 31 35.5"/></g>
+            <g class="t-blade t-blade-b"><circle cx="13" cy="43" r="7"/><path d="M19 39.5 30 32"/><path d="M30 32 60 25 57 22.5 31 28.5"/></g>
+            <circle class="t-fill" cx="30" cy="32" r="1.8"/>`,
+        razor: `
+            <path d="M8 42.5c0-2.6 1.8-4.2 4.2-4.1l27.6 1.4c2.3.1 4.2 1.8 4.2 4.1s-1.9 3.9-4.2 3.9H12.2C9.8 47.8 8 45.6 8 42.5Z"/>
+            <path d="M14 43h20"/>
+            <g class="t-razor-blade"><path d="M41.5 43.5V36c0-3 2.2-5 5-5h12.3c1.6 0 2.4 1.5 1.6 2.8L54.6 42c-.9 1.1-2 1.6-3.4 1.6Z"/><path d="M46 35.5h10.5"/></g>
+            <circle class="t-fill" cx="41.5" cy="43.5" r="1.6"/>`,
+        comb: `
+            <g class="t-comb"><path d="M8 20h48a2.5 2.5 0 0 1 2.5 2.5v5a2.5 2.5 0 0 1-2.5 2.5H8a2.5 2.5 0 0 1-2.5-2.5v-5A2.5 2.5 0 0 1 8 20Z"/>
+            <path d="M10 30v15M14.5 30v15M19 30v15M23.5 30v15M28 30v15M32.5 30v11M37 30v11M41.5 30v11M46 30v11M50.5 30v11M55 30v11"/></g>`,
+        clipper: `
+            <g class="t-clipper"><rect x="21" y="16" width="22" height="40" rx="8"/><path d="M23 16v-5h18v5"/>
+            <path d="M25.5 11V7M29.5 11V7M33.5 11V7M37.5 11V7"/><path d="M27 27h10M27 31.5h10"/><circle cx="32" cy="45" r="3.2"/></g>`
+    };
+
+    function toolSvg(name) {
+        return `<svg class="tool tool-${name}" viewBox="0 0 64 64" aria-hidden="true" focusable="false">${TOOLS[name] || ''}</svg>`;
+    }
+
+    // Lines that draw themselves need their own length.
+    function measureLines(root) {
+        root.querySelectorAll('.tool path, .tool circle, .tool rect').forEach(shape => {
+            if (typeof shape.getTotalLength !== 'function') return;
+            try {
+                shape.style.setProperty('--len', String(Math.ceil(shape.getTotalLength()) + 1));
+            } catch (error) {
+                // Not drawn on screen yet; it keeps the default length.
+            }
+        });
+    }
+
+    function renderTools() {
+        document.querySelectorAll('[data-tool]').forEach(holder => {
+            holder.innerHTML = toolSvg(holder.dataset.tool);
+        });
+        document.querySelectorAll('.step-tool').forEach(holder => {
+            holder.classList.add('draw-ready');
+            measureLines(holder);
+        });
+    }
+
+    // The black bands: XBARBER, in full and in outline, with a tool between each, twice over so they
+    // loop. The second band runs the other way.
+    function renderBand() {
+        const word = extra => `<span class="band-word ${extra}">XBARBER</span>`;
+        const tool = name => `<span class="band-tool">${toolSvg(name)}</span>`;
+        const first = [word(''), tool('scissors'), word('band-outline'), tool('razor'), word('band-italic'), tool('comb'), word('band-outline'), tool('clipper')].join('');
+        const second = [word('band-outline'), tool('comb'), word('band-italic'), tool('clipper'), word('band-outline'), tool('scissors'), word(''), tool('razor')].join('');
+        $('#band-track').innerHTML = first + first;
+        $('#band-track-2').innerHTML = second + second;
+    }
+
+    /* ---------------- Depth: tools that follow the scroll and the mouse ---------------- */
+
+    function startParallax() {
+        if (reducedMotion) return;
+        const items = [...document.querySelectorAll('[data-depth]')];
+        const word = $('.hero-word');
+        let scroll = 0;
+        let mx = 0;
+        let my = 0;
+        let queued = false;
+        const update = () => {
+            queued = false;
+            if (scroll > window.innerHeight * 1.6) return;
+            items.forEach(item => {
+                const depth = Number(item.dataset.depth) || 0.2;
+                item.style.translate = `${(mx * depth * 60).toFixed(1)}px ${(-scroll * depth + my * depth * 60).toFixed(1)}px`;
+            });
+            word.style.translate = `0 ${(scroll * 0.18).toFixed(1)}px`;
+        };
+        const queue = () => {
+            if (queued) return;
+            queued = true;
+            requestAnimationFrame(update);
+        };
+        window.addEventListener('scroll', () => {
+            scroll = window.scrollY;
+            queue();
+        }, { passive: true });
+        document.addEventListener('pointermove', event => {
+            if (event.pointerType !== 'mouse') return;
+            mx = event.clientX / window.innerWidth - 0.5;
+            my = event.clientY / window.innerHeight - 0.5;
+            queue();
+        });
+    }
+
+    /* ---------------- Loading screen ---------------- */
+
+    function startLoader() {
+        document.body.classList.add('is-loading');
+        loader.querySelectorAll('[data-draw]').forEach(shape => {
+            try {
+                shape.style.setProperty('--len', String(Math.ceil(shape.getTotalLength()) + 2));
+            } catch (error) {
+                shape.style.setProperty('--len', '3000');
+            }
+        });
+        loader.classList.add('is-drawing');
+        const count = $('#loader-count');
+        const run = now => {
+            if (state.ready) return;
+            const progress = Math.min(1, (Date.now() - startedAt) / LOADER_MS);
+            // Slow at the end, and it waits at 99 until the barbers have arrived.
+            const eased = 1 - Math.pow(1 - progress, 2.2);
+            const value = state.info || state.loadError ? Math.floor(eased * 100) : Math.min(99, Math.floor(eased * 100));
+            count.textContent = pad(value, 3);
+            requestAnimationFrame(run);
+        };
+        requestAnimationFrame(run);
+    }
+
+    function finishLoader() {
+        $('#loader-count').textContent = '100';
+        document.body.classList.remove('is-loading');
+        document.body.classList.add('is-ready');
+        state.ready = true;
+        measureSlider();
+        layoutSlider();
+        restartTimer();
+    }
+
+    /* ---------------- Mouse ring ---------------- */
+
+    function startCursor() {
+        const fine = window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+        if (!fine || reducedMotion) return;
+        document.documentElement.classList.add('has-cursor');
+        const label = cursor.firstElementChild;
+        let x = -200;
+        let y = -200;
+        let tx = -200;
+        let ty = -200;
+        let raf = 0;
+        const follow = () => {
+            x += (tx - x) * 0.22;
+            y += (ty - y) * 0.22;
+            cursor.style.transform = `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0)`;
+            raf = Math.abs(tx - x) + Math.abs(ty - y) > 0.3 ? requestAnimationFrame(follow) : 0;
+        };
+        document.addEventListener('pointermove', event => {
+            if (event.pointerType !== 'mouse') return;
+            tx = event.clientX;
+            ty = event.clientY;
+            const overTrack = Boolean(event.target.closest?.('.slider-track')) && sheetRoot.hidden && barberList().length > 0;
+            const card = event.target.closest?.('.card[data-virtual]');
+            let text = '';
+            if (overTrack) {
+                const bookable = card && card.classList.contains('is-active') && isOpen(activeBarber()) && state.info?.open;
+                text = bookable && !slider.drag ? t('cursor.book') : t('cursor.drag');
+            }
+            if (label.textContent !== text) label.textContent = text;
+            cursor.classList.toggle('is-on', Boolean(text));
+            if (!raf) raf = requestAnimationFrame(follow);
+        });
+        document.documentElement.addEventListener('pointerleave', () => cursor.classList.remove('is-on'));
+        // Scrolling moves the photos away from under the mouse.
+        window.addEventListener('scroll', () => cursor.classList.remove('is-on'), { passive: true });
+    }
+
+    /* ---------------- Scrolling into view ---------------- */
+
+    function startReveal() {
+        const targets = document.querySelectorAll('.reveal-up, .draw-ready, .reveal-letters');
+        if (!('IntersectionObserver' in window)) {
+            targets.forEach(element => element.classList.add('in'));
+            return;
+        }
+        const observer = new IntersectionObserver(entries => {
+            entries.forEach(entry => {
+                if (!entry.isIntersecting) return;
+                entry.target.classList.add('in');
+                observer.unobserve(entry.target);
+            });
+        }, { threshold: 0.2, rootMargin: '0px 0px -40px 0px' });
+        targets.forEach(element => observer.observe(element));
     }
 
     /* ---------------- Page ---------------- */
@@ -647,6 +959,7 @@
             element.textContent = t(element.dataset.t);
         });
         $('#loader').setAttribute('aria-label', t('loading'));
+        $('#badge').setAttribute('aria-label', t('nav.book'));
         renderLanguages();
         renderPage();
         if (!sheetRoot.hidden) renderSheet();
@@ -726,13 +1039,9 @@
         state.slide = index >= 0 ? index : Math.min(state.slide, Math.max(barberList().length - 1, 0));
         renderPage();
         if (!state.ready) {
-            // Let the logo finish its animation before the page shows, then start the slideshow.
-            const wait = Math.max(0, MIN_LOADER_MS - (Date.now() - startedAt));
-            setTimeout(() => {
-                document.body.classList.add('is-ready');
-                state.ready = true;
-                restartTimer();
-            }, wait);
+            // Let the logo finish its animation before the page shows, then start the slider.
+            const wait = Math.max(0, LOADER_MS - (Date.now() - startedAt));
+            setTimeout(finishLoader, wait);
         } else {
             restartTimer();
         }
@@ -1015,7 +1324,6 @@
 
     /* ---------------- Events ---------------- */
 
-    let swipe = null;
     let ignoreClick = false;
 
     document.addEventListener('click', event => {
@@ -1048,19 +1356,20 @@
         }
         const arrow = event.target.closest('[data-slide]');
         if (arrow) {
-            goTo(state.slide + (arrow.dataset.slide === 'next' ? 1 : -1));
+            moveBy(arrow.dataset.slide === 'next' ? 1 : -1);
             return;
         }
-        const slide = event.target.closest('.slide[data-index]');
-        if (slide) {
+        const card = event.target.closest('.card[data-virtual]');
+        if (card) {
             if (ignoreClick) return;
-            const index = Number(slide.dataset.index);
-            // The photo in the middle opens the booking; a photo beside it comes to the middle.
-            if (index === state.slide) {
+            // The photo in the middle opens the booking; another photo comes to the middle.
+            const half = slider.total / 2;
+            const offset = Math.round(mod(Number(card.dataset.virtual) - slider.target + half, slider.total) - half);
+            if (offset === 0) {
                 const barber = activeBarber();
                 if (isOpen(barber) && state.info?.open) openSheet(barber.id);
             } else {
-                goTo(index);
+                moveBy(offset);
             }
             return;
         }
@@ -1103,28 +1412,85 @@
         if (event.target.closest('[data-confirm]')) confirmBooking();
     });
 
-    // Swipe the photos left or right on a phone.
+    // Drag the photos with a finger or the mouse. They follow, glide on when let go, and settle
+    // on the nearest barber. Up-and-down moves still scroll the page.
     stage.addEventListener('pointerdown', event => {
-        swipe = { x: event.clientX, y: event.clientY };
+        if (barberList().length < 2 || event.button > 0) return;
+        slider.drag = { id: event.pointerId, x: event.clientX, y: event.clientY, start: slider.target, lastX: event.clientX, lastT: performance.now(), speed: 0, axis: null };
     });
-    stage.addEventListener('pointerup', event => {
-        if (!swipe) return;
-        const dx = event.clientX - swipe.x;
-        const dy = event.clientY - swipe.y;
-        swipe = null;
-        if (Math.abs(dx) < 45 || Math.abs(dx) < Math.abs(dy)) return;
+    window.addEventListener('pointermove', event => {
+        const drag = slider.drag;
+        if (!drag || event.pointerId !== drag.id) return;
+        const dx = event.clientX - drag.x;
+        const dy = event.clientY - drag.y;
+        if (!drag.axis) {
+            if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+            drag.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+            if (drag.axis === 'y') {
+                slider.drag = null;
+                return;
+            }
+            stage.classList.add('is-dragging');
+            try {
+                stage.setPointerCapture(event.pointerId);
+            } catch (error) {
+                // Not every browser allows it here; dragging still works.
+            }
+            syncTimer();
+        }
+        const dir = isRtl() ? -1 : 1;
+        slider.target = drag.start - (dx / slider.step) * dir;
+        const now = performance.now();
+        const elapsed = now - drag.lastT;
+        if (elapsed > 0) drag.speed = 0.8 * ((event.clientX - drag.lastX) / elapsed) + 0.2 * drag.speed;
+        drag.lastX = event.clientX;
+        drag.lastT = now;
+        kick();
+    });
+    const endDrag = event => {
+        const drag = slider.drag;
+        if (!drag || (event && event.pointerId !== drag.id)) return;
+        slider.drag = null;
+        stage.classList.remove('is-dragging');
+        if (drag.axis !== 'x') return;
+        const dir = isRtl() ? -1 : 1;
+        // A quick flick carries on a little (at most a barber or two); any clear swipe moves at
+        // least one barber, so a short swipe on a phone is never lost.
+        const speed = Math.max(-2.5, Math.min(2.5, drag.speed));
+        const fling = Math.max(-1.5, Math.min(1.5, (-speed * 220 / slider.step) * dir));
+        const from = Math.round(drag.start);
+        const moved = slider.target - drag.start;
+        let next = Math.round(slider.target + fling);
+        if (next === from && Math.abs(moved) > 0.12) next = from + Math.sign(moved);
+        slider.target = next;
+        settle();
         ignoreClick = true;
         setTimeout(() => {
             ignoreClick = false;
-        }, 350);
-        const forward = dx < 0 ? 1 : -1;
-        goTo(state.slide + (isRtl() ? -forward : forward));
-    });
-    stage.addEventListener('pointercancel', () => {
-        swipe = null;
+        }, 80);
+    };
+    window.addEventListener('pointerup', endDrag);
+    window.addEventListener('pointercancel', endDrag);
+
+    // Sideways on a trackpad moves the photos too.
+    stage.addEventListener('wheel', event => {
+        if (barberList().length < 2 || Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return;
+        event.preventDefault();
+        slider.target += (event.deltaX / slider.step) * (isRtl() ? -1 : 1);
+        kick();
+        clearTimeout(slider.wheelTimer);
+        slider.wheelTimer = setTimeout(() => {
+            slider.target = Math.round(slider.target);
+            settle();
+        }, 140);
+    }, { passive: false });
+
+    window.addEventListener('resize', () => {
+        measureSlider();
+        layoutSlider();
     });
 
-    // The slideshow waits while the mouse is on a photo, an arrow or a barber button
+    // The slider waits while the mouse is on a photo, an arrow or a barber button
     // (not the empty space beside them), and while the keyboard is in them.
     function setHoverHold(on) {
         if (state.hoverHold === on) return;
@@ -1133,7 +1499,7 @@
     }
     document.addEventListener('pointerover', event => {
         if (event.pointerType !== 'mouse') return;
-        setHoverHold(Boolean(event.target.closest?.('.slide[data-index], .arrow, .pick')));
+        setHoverHold(Boolean(event.target.closest?.('.card[data-virtual], .arrow, .pick')));
     });
     document.documentElement.addEventListener('pointerleave', () => setHoverHold(false));
     [carousel, picker].forEach(element => {
@@ -1141,7 +1507,7 @@
             if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
             event.preventDefault();
             const forward = event.key === 'ArrowRight' ? 1 : -1;
-            goTo(state.slide + (isRtl() ? -forward : forward));
+            moveBy(isRtl() ? -forward : forward);
         });
     });
     hero.addEventListener('focusin', event => {
@@ -1198,8 +1564,13 @@
         if (!document.hidden && sheetRoot.hidden && state.info) loadInfo();
     }, 60000);
 
-    [$('.hero-head'), carousel, spotlight, picker].forEach(element => element.classList.add('reveal'));
     $('#footer-year').textContent = String(new Date().getFullYear());
+    renderTools();
+    renderBand();
+    startLoader();
     applyLanguage();
     loadInfo();
+    startReveal();
+    startCursor();
+    startParallax();
 }());

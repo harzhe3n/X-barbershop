@@ -3,25 +3,42 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <meta name="theme-color" content="#ffffff">
+    <meta name="theme-color" content="#0a0a0a">
     <meta name="description" content="Book your barber online: pick a barber, choose a free time, leave your name and phone number.">
     <title>XBARBER · Book your barber</title>
     <link rel="icon" href="/assets/logo/logo.ico">
     <link rel="apple-touch-icon" href="/assets/logo/apple-touch-icon.png">
-    <link rel="stylesheet" href="/site/site.css?v=2026.11.05.6">
+    <link rel="stylesheet" href="/site/site.css?v=2026.11.06.2">
 </head>
 <body>
-    <!-- Loading screen: the two halves of the X come together, then the name appears. -->
+    <!-- Loading screen: the X is drawn line by line and filled, scissors cut along a line,
+         XBARBER rises letter by letter, a counter runs to 100, then the black curtain opens. -->
     <div class="loader" id="loader" role="status" aria-live="polite">
-        <div class="loader-inner">
-            <svg class="loader-mark" viewBox="300 270 660 760" aria-hidden="true">
-                <polygon class="mark-left" points="325,288 651,593 388,839 388,676 457,608 325,481"/>
-                <polygon class="mark-right" points="904,385 904,593 797,690 934,822 934,1014 589,683"/>
-            </svg>
-            <div class="loader-word" aria-label="XBARBER" dir="ltr">
-                <span>X</span><span>B</span><span>A</span><span>R</span><span>B</span><span>E</span><span>R</span>
+        <div class="loader-panel loader-panel-top"></div>
+        <div class="loader-panel loader-panel-bottom"></div>
+        <div class="loader-frame">
+            <div class="loader-row">
+                <span class="tag" dir="ltr">XBARBER</span>
+                <span class="tag" data-t="hero.eyebrow">Barber shop</span>
             </div>
-            <div class="loader-line"><span></span></div>
+            <div class="loader-center">
+                <svg class="loader-mark" viewBox="300 270 660 760" aria-hidden="true">
+                    <polygon class="mark-left" data-draw points="325,288 651,593 388,839 388,676 457,608 325,481"/>
+                    <polygon class="mark-right" data-draw points="904,385 904,593 797,690 934,822 934,1014 589,683"/>
+                </svg>
+                <div class="loader-word" aria-label="XBARBER" dir="ltr">
+                    <span><i>X</i></span><span><i>B</i></span><span><i>A</i></span><span><i>R</i></span><span><i>B</i></span><span><i>E</i></span><span><i>R</i></span>
+                </div>
+                <div class="loader-cut" aria-hidden="true" dir="ltr">
+                    <span class="cut-line"></span>
+                    <span class="cut-done"></span>
+                    <span class="loader-scissors" data-tool="scissors"></span>
+                </div>
+            </div>
+            <div class="loader-row loader-row-end">
+                <span class="loader-count" id="loader-count" dir="ltr">000</span>
+                <span class="tag" data-t="loading">Loading</span>
+            </div>
         </div>
     </div>
 
@@ -31,73 +48,105 @@
                 <polygon points="325,288 651,593 388,839 388,676 457,608 325,481"/>
                 <polygon points="904,385 904,593 797,690 934,822 934,1014 589,683"/>
             </svg>
-            <span class="brand-word">XBARBER</span>
+            <span class="brand-word" dir="ltr">XBARBER</span>
         </a>
         <div class="header-end">
             <div class="langs" id="langs" role="group"></div>
-            <button type="button" class="btn btn-light btn-small header-book" data-book-active data-t="nav.book">Book now</button>
+            <button type="button" class="btn btn-ink btn-small header-book" data-book-active data-t="nav.book">Book now</button>
         </div>
     </header>
 
     <main id="main">
-        <!-- The barbers: one big photo in the middle, the next one every 5 seconds. -->
+        <!-- The barbers: a slider you can drag, with momentum; it never ends and moves on every 5 seconds. -->
         <section class="hero" aria-labelledby="hero-title">
             <div class="hero-word" aria-hidden="true" dir="ltr"><div class="hero-word-track"><span>XBARBER</span><span>XBARBER</span><span>XBARBER</span><span>XBARBER</span></div></div>
-            <div class="hero-head">
+            <!-- Barber tools that float and follow the scroll and the mouse, and falling hair clippings. -->
+            <div class="hero-deco" aria-hidden="true">
+                <span class="hero-tool hero-tool-scissors" data-tool="scissors" data-depth="0.35"></span>
+                <span class="hero-tool hero-tool-razor" data-tool="razor" data-depth="0.22"></span>
+                <span class="hero-tool hero-tool-comb" data-tool="comb" data-depth="0.5"></span>
+                <span class="hero-tool hero-tool-clipper" data-tool="clipper" data-depth="0.3"></span>
+                <span class="hair"></span><span class="hair"></span><span class="hair"></span><span class="hair"></span>
+                <span class="hair"></span><span class="hair"></span><span class="hair"></span><span class="hair"></span>
+                <span class="hair"></span><span class="hair"></span><span class="hair"></span><span class="hair"></span>
+            </div>
+
+            <div class="hero-top">
                 <p class="eyebrow" id="hero-eyebrow"></p>
-                <h1 class="display hero-title" id="hero-title">
-                    <span data-t="hero.title1">Sharp cuts.</span>
-                    <span class="hero-accent" data-t="hero.title2">Booked in seconds.</span>
-                </h1>
                 <p class="hero-hours" id="hero-hours"></p>
             </div>
+            <h1 class="hero-title" id="hero-title">
+                <span class="line"><span data-t="hero.title1">Sharp cuts.</span></span>
+                <span class="line line-2"><em data-t="hero.title2">Booked in seconds.</em></span>
+            </h1>
 
             <div class="closed-banner" id="closed-banner" hidden></div>
 
-            <div class="carousel" id="carousel" role="region" aria-roledescription="carousel">
-                <div class="stage" id="stage"></div>
-                <button type="button" class="arrow arrow-prev" data-slide="prev" hidden></button>
-                <button type="button" class="arrow arrow-next" data-slide="next" hidden></button>
+            <div class="slider" id="carousel" role="region" aria-roledescription="carousel">
+                <div class="slider-track" id="stage"></div>
             </div>
 
-            <div class="spotlight" id="spotlight"></div>
+            <div class="slider-bar">
+                <div class="slider-nav">
+                    <button type="button" class="arrow" data-slide="prev" hidden></button>
+                    <span class="slider-count" id="slider-count" dir="ltr"></span>
+                    <button type="button" class="arrow" data-slide="next" hidden></button>
+                </div>
+                <div class="spotlight" id="spotlight"></div>
+                <!-- A round badge that keeps turning; it opens the booking. -->
+                <button type="button" class="badge" data-book-active id="badge">
+                    <svg class="badge-ring" viewBox="0 0 200 200" aria-hidden="true">
+                        <defs><path id="badge-path" d="M100,100 m-76,0 a76,76 0 1,1 152,0 a76,76 0 1,1 -152,0"/></defs>
+                        <text><textPath href="#badge-path" textLength="470">XBARBER · BOOK NOW · XBARBER · BOOK NOW ·</textPath></text>
+                    </svg>
+                    <span class="badge-core" data-tool="scissors"></span>
+                </button>
+            </div>
             <div class="picker" id="picker" role="group"></div>
         </section>
 
+        <!-- A black band that never stops: XBARBER and the barber's tools. -->
+        <div class="band" aria-hidden="true" dir="ltr">
+            <div class="band-track" id="band-track"></div>
+            <div class="band-track band-track-reverse" id="band-track-2"></div>
+        </div>
+
         <section class="section steps" aria-labelledby="steps-title">
-            <h2 class="display section-title" id="steps-title" data-t="steps.title">How it works</h2>
+            <div class="section-head reveal-up">
+                <span class="tag" dir="ltr">(01 — 03)</span>
+                <h2 class="section-title" id="steps-title" data-t="steps.title">How it works</h2>
+            </div>
             <ol class="step-list">
-                <li><span class="step-num">01</span><strong data-t="steps.1"></strong><span data-t="steps.1text"></span></li>
-                <li><span class="step-num">02</span><strong data-t="steps.2"></strong><span data-t="steps.2text"></span></li>
-                <li><span class="step-num">03</span><strong data-t="steps.3"></strong><span data-t="steps.3text"></span></li>
+                <li class="step reveal-up"><span class="step-tool" data-tool="comb"></span><span class="step-num" dir="ltr">01</span><strong data-t="steps.1"></strong><span data-t="steps.1text"></span></li>
+                <li class="step reveal-up"><span class="step-tool" data-tool="scissors"></span><span class="step-num" dir="ltr">02</span><strong data-t="steps.2"></strong><span data-t="steps.2text"></span></li>
+                <li class="step reveal-up"><span class="step-tool" data-tool="razor"></span><span class="step-num" dir="ltr">03</span><strong data-t="steps.3"></strong><span data-t="steps.3text"></span></li>
             </ol>
         </section>
     </main>
 
     <footer class="site-footer">
-        <div class="footer-brand">
-            <svg class="brand-mark" viewBox="300 270 660 760" aria-hidden="true">
-                <polygon points="325,288 651,593 388,839 388,676 457,608 325,481"/>
-                <polygon points="904,385 904,593 797,690 934,822 934,1014 589,683"/>
-            </svg>
-            <span class="brand-word" id="footer-name">XBARBER</span>
-        </div>
-        <div class="footer-cols">
-            <div>
+        <div class="footer-top">
+            <div class="footer-col reveal-up">
                 <h3 data-t="footer.hours">Opening hours</h3>
                 <p id="footer-hours"></p>
                 <p id="footer-closed"></p>
             </div>
-            <div>
+            <div class="footer-col reveal-up">
                 <h3 data-t="footer.contact">Contact</h3>
                 <p id="footer-address"></p>
                 <p><a id="footer-phone" href="#" hidden dir="ltr"></a></p>
+            </div>
+            <div class="footer-col footer-col-end reveal-up">
                 <a class="see-work" id="footer-work" href="#" target="_blank" rel="noopener noreferrer" hidden></a>
                 <div class="socials" id="footer-social" role="group" hidden></div>
             </div>
         </div>
+        <div class="footer-word reveal-letters" aria-hidden="true" dir="ltr">
+            <span class="footer-tool" data-tool="clipper"></span>
+            <span class="footer-letters"><span>X</span><span>B</span><span>A</span><span>R</span><span>B</span><span>E</span><span>R</span></span>
+        </div>
         <div class="footer-bottom">
-            <span>© <span id="footer-year"></span> XBARBER</span>
+            <span dir="ltr">© <span id="footer-year"></span> <span id="footer-name">XBARBER</span></span>
             <a href="/cashier" data-t="footer.staff">Staff sign-in</a>
         </div>
     </footer>
@@ -107,7 +156,10 @@
         <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title" tabindex="-1"></div>
     </div>
 
+    <!-- With a mouse: a ring that follows it and says "Drag" or "Book" over the photos. -->
+    <div class="cursor" id="cursor" aria-hidden="true"><span></span></div>
+
     <noscript><p class="noscript">Please turn on JavaScript to book an appointment.</p></noscript>
-    <script src="/site/site.js?v=2026.11.05.7"></script>
+    <script src="/site/site.js?v=2026.11.06.2"></script>
 </body>
 </html>
