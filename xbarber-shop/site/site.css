@@ -1,25 +1,28 @@
-/* XOSHAWI BARBER booking website. Black and white, editorial: big serif titles, small spaced capitals,
-   numbered labels, a barber slider you can drag, and barber tools (scissors, razor, comb,
-   clipper) that keep moving. The booking window is at the end. */
+/* XOSHAWI BARBER booking website. Dark and quiet: near-black page, ivory type, big serif titles,
+   small spaced capitals, numbered labels and a barber slider you can drag. Movement is kept slow
+   and few. The booking window is at the end. */
 
 :root {
-    color-scheme: light;
-    --bg: #efefed;
-    --bg-2: #f6f6f6;
-    --surface: #f3f3f3;
-    --surface-2: #e8e8e8;
-    --surface-3: #dcdcdc;
-    --line: rgba(0, 0, 0, 0.12);
-    --line-2: rgba(0, 0, 0, 0.22);
-    --ink: #0a0a0a;
-    --ink-2: #2e2e2e;
-    --muted: #6b6b6b;
-    /* Text on black buttons and on the chosen day / time. */
-    --on-ink: #ffffff;
-    --error: #c62828;
+    color-scheme: dark;
+    --bg: #0a0a0a;
+    --bg-2: #0f0f0f;
+    --surface: #141414;
+    --surface-2: #1c1c1c;
+    --surface-3: #2a2a2a;
+    /* The booking window, the days and times. */
+    --paper: #121212;
+    --line: rgba(241, 237, 228, 0.1);
+    --line-2: rgba(241, 237, 228, 0.22);
+    /* Warm ivory text. */
+    --ink: #f1ede4;
+    --ink-2: #d4cfc5;
+    --muted: #8c877e;
+    /* Text on ivory buttons and on the chosen day / time. */
+    --on-ink: #0a0a0a;
+    --error: #ef7a7a;
     --radius: 14px;
     --radius-lg: 22px;
-    --shadow: 0 30px 80px rgba(0, 0, 0, 0.18);
+    --shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
     --font: system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
     --font-display: "Didot", "Bodoni 72", "Bodoni MT", "Playfair Display", Georgia, "Times New Roman", serif;
     --font-arabic: "Noto Kufi Arabic", "Noto Sans Arabic", "Geeza Pro", "Segoe UI", Tahoma, sans-serif;
@@ -181,7 +184,7 @@ svg.icon-brand {
 
 .btn-ink:hover:not(:disabled),
 .btn-light:hover:not(:disabled) {
-    background: #2b2b2b;
+    background: #ffffff;
 }
 
 .btn-ghost {
@@ -468,54 +471,17 @@ svg.icon-brand {
     to { opacity: 1; }
 }
 
-/* Scissors cut along a dotted line. */
-.loader-cut {
-    position: relative;
-    width: min(340px, 72vw);
-    height: 44px;
-}
-
-.cut-line,
-.cut-done {
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: 50%;
-}
-
-.cut-line {
-    border-top: 1px dashed rgba(255, 255, 255, 0.35);
-}
-
-.cut-done {
+/* A thin line grows under the name. */
+.loader-rule {
+    width: min(220px, 50vw);
     height: 1px;
-    background: #fff;
+    background: rgba(255, 255, 255, 0.5);
     transform: scaleX(0);
-    transform-origin: left;
-    animation: cut-run 2.8s 1s var(--ease-io) forwards;
+    animation: rule-grow 1.6s 3s var(--ease-io) forwards;
 }
 
-.loader-scissors {
-    position: absolute;
-    top: 50%;
-    left: 0;
-    width: 44px;
-    margin: -22px 0 0 -22px;
-    color: #fff;
-    animation: scissors-run 2.8s 1s var(--ease-io) forwards;
-}
-
-.loader-scissors .tool-scissors .t-blade-a,
-.loader-scissors .tool-scissors .t-blade-b {
-    animation-duration: 0.42s;
-}
-
-@keyframes cut-run {
+@keyframes rule-grow {
     to { transform: scaleX(1); }
-}
-
-@keyframes scissors-run {
-    to { left: 100%; }
 }
 
 /* The page is ready: the logo steps back and the black curtain opens up and down. */
@@ -549,7 +515,7 @@ body.is-ready .loader-panel-bottom {
     gap: 14px;
     padding: max(14px, env(safe-area-inset-top)) var(--pad) 14px;
     border-bottom: 1px solid var(--line);
-    background: rgba(239, 239, 237, 0.86);
+    background: rgba(10, 10, 10, 0.82);
     -webkit-backdrop-filter: blur(14px);
     backdrop-filter: blur(14px);
 }
@@ -656,7 +622,7 @@ body.is-ready .loader-panel-bottom {
     line-height: 1;
     letter-spacing: -0.02em;
     color: transparent;
-    -webkit-text-stroke: 2px rgba(0, 0, 0, 0.2);
+    -webkit-text-stroke: 1px rgba(241, 237, 228, 0.09);
     white-space: nowrap;
     transform: translateY(-50%);
     pointer-events: none;
@@ -667,7 +633,7 @@ body.is-ready .loader-panel-bottom {
 .hero-word-track {
     display: flex;
     width: max-content;
-    animation: word-slide 48s linear infinite;
+    animation: word-slide 140s linear infinite;
 }
 
 .hero-word-track span {
@@ -675,121 +641,13 @@ body.is-ready .loader-panel-bottom {
 }
 
 .hero-word-track span:nth-child(even) {
-    color: rgba(0, 0, 0, 0.06);
+    color: rgba(241, 237, 228, 0.025);
     -webkit-text-stroke: 0;
 }
 
 @keyframes word-slide {
     from { transform: translateX(0); }
     to { transform: translateX(-50%); }
-}
-
-/* Barber tools in the background: bold, always floating and working. */
-.hero-deco {
-    position: absolute;
-    inset: 0;
-    z-index: 0;
-    overflow: hidden;
-    pointer-events: none;
-}
-
-.hero-tool {
-    position: absolute;
-    color: var(--ink);
-    opacity: 0.2;
-    will-change: translate;
-}
-
-.hero-tool .tool {
-    stroke-width: 2.6;
-    animation: float 8s ease-in-out infinite;
-}
-
-.hero-tool-scissors {
-    top: 3%;
-    inset-inline-end: -30px;
-    width: clamp(180px, 23vw, 340px);
-    rotate: -24deg;
-}
-
-.hero-tool-scissors .t-blade-a,
-.hero-tool-scissors .t-blade-b {
-    animation-duration: 2.6s;
-}
-
-.hero-tool-razor {
-    bottom: 2%;
-    inset-inline-start: -24px;
-    width: clamp(160px, 19vw, 290px);
-    rotate: 14deg;
-}
-
-.hero-tool-razor .tool {
-    animation-duration: 10s;
-    animation-delay: -3s;
-}
-
-.hero-tool-comb {
-    top: 40%;
-    inset-inline-start: 3%;
-    width: clamp(120px, 13vw, 200px);
-    rotate: -62deg;
-    opacity: 0.16;
-}
-
-.hero-tool-comb .tool {
-    animation-duration: 9s;
-    animation-delay: -5s;
-}
-
-.hero-tool-clipper {
-    bottom: 12%;
-    inset-inline-end: 7%;
-    width: clamp(100px, 10vw, 160px);
-    rotate: 20deg;
-    opacity: 0.16;
-}
-
-.hero-tool-clipper .tool {
-    animation-duration: 7s;
-    animation-delay: -2s;
-}
-
-@keyframes float {
-    0%, 100% { transform: translateY(0) rotate(0deg); }
-    50% { transform: translateY(-18px) rotate(5deg); }
-}
-
-/* Hair clippings drifting down. */
-.hair {
-    position: absolute;
-    top: -40px;
-    width: 9px;
-    height: 20px;
-    border-left: 2px solid rgba(0, 0, 0, 0.45);
-    border-radius: 50%;
-    animation: hair-fall 11s linear infinite;
-}
-
-.hair:nth-child(5) { left: 6%; animation-duration: 12s; animation-delay: -2s; }
-.hair:nth-child(6) { left: 14%; animation-duration: 9s; animation-delay: -7s; height: 14px; }
-.hair:nth-child(7) { left: 23%; animation-duration: 13s; animation-delay: -4s; }
-.hair:nth-child(8) { left: 31%; animation-duration: 10s; animation-delay: -9s; height: 16px; }
-.hair:nth-child(9) { left: 42%; animation-duration: 14s; animation-delay: -1s; }
-.hair:nth-child(10) { left: 51%; animation-duration: 11s; animation-delay: -6s; height: 13px; }
-.hair:nth-child(11) { left: 60%; animation-duration: 12s; animation-delay: -10s; }
-.hair:nth-child(12) { left: 68%; animation-duration: 9.5s; animation-delay: -3s; height: 15px; }
-.hair:nth-child(13) { left: 76%; animation-duration: 13s; animation-delay: -8s; }
-.hair:nth-child(14) { left: 84%; animation-duration: 10.5s; animation-delay: -5s; height: 12px; }
-.hair:nth-child(15) { left: 91%; animation-duration: 12.5s; animation-delay: -11s; }
-.hair:nth-child(16) { left: 97%; animation-duration: 11.5s; animation-delay: -0.5s; height: 17px; }
-
-@keyframes hair-fall {
-    0% { transform: translate3d(0, 0, 0) rotate(0deg); opacity: 0; }
-    8% { opacity: 1; }
-    50% { transform: translate3d(36px, 55vh, 0) rotate(200deg); }
-    92% { opacity: 1; }
-    100% { transform: translate3d(-10px, 110vh, 0) rotate(380deg); opacity: 0; }
 }
 
 /* A round badge that keeps turning, with scissors in the middle, beside the booking button.
@@ -805,7 +663,7 @@ body.is-ready .loader-panel-bottom {
     border: 0;
     border-radius: 50%;
     background: var(--ink);
-    color: #fff;
+    color: var(--on-ink);
     cursor: pointer;
     opacity: 0;
     scale: 0.6;
@@ -828,24 +686,26 @@ body.is-ready .badge:hover {
     inset: 0;
     width: 100%;
     height: 100%;
-    animation: spin 16s linear infinite;
+    animation: spin 40s linear infinite;
 }
 
 .badge-ring text {
     direction: ltr;
-    fill: #fff;
+    fill: var(--on-ink);
     font-family: var(--font-mono);
     font-size: 12px;
     letter-spacing: 1px;
 }
 
 .badge-core {
-    width: 38%;
-    color: #fff;
+    display: grid;
+    width: 26%;
 }
 
-.badge-core .tool {
-    stroke-width: 2.6;
+.badge-core svg {
+    width: 100%;
+    height: auto;
+    fill: var(--on-ink);
 }
 
 @keyframes spin {
@@ -914,13 +774,13 @@ body.is-ready .badge:hover {
 .dot-on {
     border-color: var(--ink);
     background: var(--ink);
-    box-shadow: 0 0 0 0 rgba(0, 0, 0, 0.35);
+    box-shadow: 0 0 0 0 rgba(241, 237, 228, 0.35);
     animation: dot-pulse 2s ease-out infinite;
 }
 
 @keyframes dot-pulse {
-    70% { box-shadow: 0 0 0 9px rgba(0, 0, 0, 0); }
-    100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); }
+    70% { box-shadow: 0 0 0 9px rgba(241, 237, 228, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(241, 237, 228, 0); }
 }
 
 /* The title rises line by line once the curtain opens. */
@@ -1023,7 +883,7 @@ body.is-ready .slider {
     overflow: hidden;
     border: 0;
     border-radius: 4px;
-    background: linear-gradient(160deg, #efefef, #d6d6d6);
+    background: linear-gradient(160deg, #1d1d1d, #0e0e0e);
     cursor: grab;
     will-change: transform, opacity;
     -webkit-tap-highlight-color: transparent;
@@ -1056,7 +916,7 @@ body.is-ready .slider {
 }
 
 .card-initial {
-    color: rgba(0, 0, 0, 0.7);
+    color: rgba(241, 237, 228, 0.7);
     font-family: var(--font-display);
     font-size: calc(var(--card-w) * 0.5);
     line-height: 1;
@@ -1125,7 +985,7 @@ body.is-ready .slider {
 }
 
 .card-empty polygon {
-    fill: rgba(0, 0, 0, 0.18);
+    fill: rgba(241, 237, 228, 0.18);
 }
 
 .card-loading {
@@ -1181,7 +1041,7 @@ body.is-ready .picker {
     height: 48px;
     border: 1px solid var(--line-2);
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.85);
+    background: rgba(20, 20, 20, 0.85);
     cursor: pointer;
     transition: background-color 0.25s, color 0.25s, border-color 0.25s;
 }
@@ -1369,26 +1229,12 @@ body.is-ready .picker {
 /* ---------------- Black band: XOSHAWI BARBER and the tools ---------------- */
 
 .band {
-    display: flex;
-    flex-direction: column;
-    gap: clamp(10px, 1.6vw, 18px);
     overflow: hidden;
-    padding: clamp(20px, 3.4vw, 36px) 0;
-    background: #0a0a0a;
-    color: #fff;
-}
-
-.band-track-reverse {
-    animation-direction: reverse;
-    animation-duration: 56s;
-}
-
-.band-track-reverse .band-word {
-    font-size: clamp(30px, 5vw, 70px);
-}
-
-.band .tool {
-    stroke-width: 2.6;
+    padding: clamp(22px, 3.6vw, 40px) 0;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    background: var(--bg-2);
+    color: var(--ink);
 }
 
 .band-track {
@@ -1396,12 +1242,12 @@ body.is-ready .picker {
     align-items: center;
     gap: clamp(28px, 4vw, 56px);
     width: max-content;
-    animation: band-slide 44s linear infinite;
+    animation: band-slide 90s linear infinite;
 }
 
 .band-word {
     font-family: var(--font-display);
-    font-size: clamp(42px, 7.4vw, 104px);
+    font-size: clamp(34px, 5.6vw, 80px);
     font-weight: 400;
     letter-spacing: 0.02em;
     line-height: 1;
@@ -1410,16 +1256,20 @@ body.is-ready .picker {
 
 .band-outline {
     color: transparent;
-    -webkit-text-stroke: 1.6px #fff;
+    -webkit-text-stroke: 1px var(--ink);
 }
 
 .band-italic {
     font-style: italic;
 }
 
-.band-tool {
-    width: clamp(46px, 6vw, 80px);
+.band-dot {
+    width: 7px;
+    height: 7px;
     flex-shrink: 0;
+    background: var(--ink);
+    opacity: 0.5;
+    transform: rotate(45deg);
 }
 
 @keyframes band-slide {
@@ -1545,8 +1395,9 @@ body.is-ready .picker {
 .site-footer {
     overflow: hidden;
     padding: clamp(56px, 8vw, 96px) var(--pad) calc(24px + env(safe-area-inset-bottom));
-    background: #0a0a0a;
-    color: #fff;
+    border-top: 1px solid var(--line);
+    background: #050505;
+    color: var(--ink);
 }
 
 .footer-top {
@@ -1611,7 +1462,7 @@ body.is-ready .picker {
 }
 
 .footer-col .see-work:hover {
-    background: #dedede;
+    background: #ffffff;
 }
 
 .footer-col .see-work:active {
@@ -1780,7 +1631,7 @@ body.is-ready .picker {
     align-items: center;
     justify-content: center;
     padding: 24px;
-    background: rgba(0, 0, 0, 0.45);
+    background: rgba(0, 0, 0, 0.72);
     -webkit-backdrop-filter: blur(8px);
     backdrop-filter: blur(8px);
     opacity: 0;
@@ -1800,7 +1651,7 @@ body.is-ready .picker {
     max-height: min(92dvh, 860px);
     overflow: hidden;
     border-radius: var(--radius-lg);
-    background: #fff;
+    background: var(--paper);
     box-shadow: var(--shadow);
     transform: translateY(30px) scale(0.98);
     transition: transform 0.5s var(--ease);
@@ -1926,7 +1777,7 @@ body.is-ready .picker {
     gap: 10px;
     padding: 14px 20px calc(16px + env(safe-area-inset-bottom));
     border-top: 1px solid var(--line);
-    background: #fff;
+    background: var(--paper);
 }
 
 .label {
@@ -1969,7 +1820,7 @@ body.is-ready .picker {
     padding: 10px 10px 9px;
     border: 1px solid var(--line-2);
     border-radius: 12px;
-    background: #fff;
+    background: var(--paper);
     cursor: pointer;
     scroll-snap-align: start;
     transition: border-color 0.2s, background-color 0.2s, color 0.2s;
@@ -2012,7 +1863,7 @@ body.is-ready .picker {
 
 .day[aria-pressed="true"] small,
 .day[aria-pressed="true"] em {
-    color: #c9c9c9;
+    color: #5a5650;
 }
 
 .times {
@@ -2026,7 +1877,7 @@ body.is-ready .picker {
     padding: 0 6px;
     border: 1px solid var(--line-2);
     border-radius: 10px;
-    background: #fff;
+    background: var(--paper);
     font-size: 15.5px;
     font-weight: 750;
     cursor: pointer;
@@ -2074,7 +1925,7 @@ body.is-ready .picker {
     height: 14px;
     border: 1px solid var(--line-2);
     border-radius: 4px;
-    background: #fff;
+    background: var(--paper);
 }
 
 .time-legend .legend-taken {
@@ -2087,7 +1938,7 @@ body.is-ready .picker {
     padding: 12px 14px;
     border: 1px solid var(--ink);
     border-radius: 10px;
-    background: #fff;
+    background: var(--paper);
     color: var(--ink);
     font-size: 14.5px;
     font-weight: 650;
@@ -2173,7 +2024,7 @@ body.is-ready .picker {
     padding: 0 18px;
     border: 1px solid var(--line-2);
     border-radius: 12px;
-    background: #fff;
+    background: var(--paper);
     color: var(--ink);
     font: inherit;
     font-size: 17px;
@@ -2181,13 +2032,13 @@ body.is-ready .picker {
 }
 
 .field input::placeholder {
-    color: #9a9a9a;
+    color: #6d6962;
 }
 
 .field input:focus {
     border-color: var(--ink);
     outline: none;
-    box-shadow: 0 0 0 4px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 0 0 4px rgba(241, 237, 228, 0.08);
 }
 
 .field input[aria-invalid="true"] {
@@ -2226,7 +2077,7 @@ body.is-ready .picker {
 }
 
 .done-check circle {
-    fill: rgba(0, 0, 0, 0.04);
+    fill: rgba(241, 237, 228, 0.05);
     stroke: var(--ink);
     stroke-width: 2;
     stroke-dasharray: 260;
@@ -2319,23 +2170,6 @@ body.is-ready .picker {
         align-items: flex-start;
     }
 
-    .hero-tool-scissors {
-        width: 150px;
-        inset-inline-end: -46px;
-    }
-
-    .hero-tool-razor {
-        width: 130px;
-    }
-
-    .hero-tool-comb {
-        width: 96px;
-        top: 34%;
-    }
-
-    .hero-tool-clipper {
-        display: none;
-    }
 
 
 

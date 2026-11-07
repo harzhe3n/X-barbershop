@@ -8,11 +8,11 @@
     <title>XOSHAWI BARBER · Book your barber</title>
     <link rel="icon" href="/assets/logo/logo.ico">
     <link rel="apple-touch-icon" href="/assets/logo/apple-touch-icon.png">
-    <link rel="stylesheet" href="/site/site.css?v=2026.11.07.1">
+    <link rel="stylesheet" href="/site/site.css?v=2026.11.07.2">
 </head>
 <body>
-    <!-- Loading screen: the X is drawn line by line and filled, scissors cut along a line,
-         XOSHAWI BARBER rises letter by letter, a counter runs to 100, then the black curtain opens. -->
+    <!-- Loading screen: the X is drawn line by line and filled, XOSHAWI BARBER rises letter by
+         letter, a counter runs to 100, then the black curtain opens. -->
     <div class="loader" id="loader" role="status" aria-live="polite">
         <div class="loader-panel loader-panel-top"></div>
         <div class="loader-panel loader-panel-bottom"></div>
@@ -29,11 +29,7 @@
                 <div class="loader-word" aria-label="XOSHAWI BARBER" dir="ltr">
                     <span><i>X</i></span><span><i>O</i></span><span><i>S</i></span><span><i>H</i></span><span><i>A</i></span><span><i>W</i></span><span><i>I</i></span><span class="gap"></span><span><i>B</i></span><span><i>A</i></span><span><i>R</i></span><span><i>B</i></span><span><i>E</i></span><span><i>R</i></span>
                 </div>
-                <div class="loader-cut" aria-hidden="true" dir="ltr">
-                    <span class="cut-line"></span>
-                    <span class="cut-done"></span>
-                    <span class="loader-scissors" data-tool="scissors"></span>
-                </div>
+                <span class="loader-rule" aria-hidden="true"></span>
             </div>
             <div class="loader-row loader-row-end">
                 <span class="loader-count" id="loader-count" dir="ltr">000</span>
@@ -60,17 +56,6 @@
         <!-- The barbers: a slider you can drag, with momentum; it never ends and moves on every 5 seconds. -->
         <section class="hero" aria-labelledby="hero-title">
             <div class="hero-word" aria-hidden="true" dir="ltr"><div class="hero-word-track"><span>XOSHAWI BARBER</span><span>XOSHAWI BARBER</span><span>XOSHAWI BARBER</span><span>XOSHAWI BARBER</span></div></div>
-            <!-- Barber tools that float and follow the scroll and the mouse, and falling hair clippings. -->
-            <div class="hero-deco" aria-hidden="true">
-                <span class="hero-tool hero-tool-scissors" data-tool="scissors" data-depth="0.35"></span>
-                <span class="hero-tool hero-tool-razor" data-tool="razor" data-depth="0.22"></span>
-                <span class="hero-tool hero-tool-comb" data-tool="comb" data-depth="0.5"></span>
-                <span class="hero-tool hero-tool-clipper" data-tool="clipper" data-depth="0.3"></span>
-                <span class="hair"></span><span class="hair"></span><span class="hair"></span><span class="hair"></span>
-                <span class="hair"></span><span class="hair"></span><span class="hair"></span><span class="hair"></span>
-                <span class="hair"></span><span class="hair"></span><span class="hair"></span><span class="hair"></span>
-            </div>
-
             <div class="hero-top">
                 <p class="eyebrow" id="hero-eyebrow"></p>
                 <p class="hero-hours" id="hero-hours"></p>
@@ -99,16 +84,20 @@
                         <defs><path id="badge-path" d="M100,100 m-76,0 a76,76 0 1,1 152,0 a76,76 0 1,1 -152,0"/></defs>
                         <text><textPath href="#badge-path" textLength="470">XOSHAWI BARBER · BOOK NOW · XOSHAWI BARBER · BOOK NOW ·</textPath></text>
                     </svg>
-                    <span class="badge-core" data-tool="scissors"></span>
+                    <span class="badge-core">
+                        <svg viewBox="300 270 660 760" aria-hidden="true">
+                            <polygon points="325,288 651,593 388,839 388,676 457,608 325,481"/>
+                            <polygon points="904,385 904,593 797,690 934,822 934,1014 589,683"/>
+                        </svg>
+                    </span>
                 </button>
             </div>
             <div class="picker" id="picker" role="group"></div>
         </section>
 
-        <!-- A black band that never stops: XOSHAWI BARBER and the barber's tools. -->
+        <!-- A quiet band: the name, slowly passing. -->
         <div class="band" aria-hidden="true" dir="ltr">
             <div class="band-track" id="band-track"></div>
-            <div class="band-track band-track-reverse" id="band-track-2"></div>
         </div>
 
         <section class="section steps" aria-labelledby="steps-title">
@@ -117,9 +106,9 @@
                 <h2 class="section-title" id="steps-title" data-t="steps.title">How it works</h2>
             </div>
             <ol class="step-list">
-                <li class="step reveal-up"><span class="step-tool" data-tool="comb"></span><span class="step-num" dir="ltr">01</span><strong data-t="steps.1"></strong><span data-t="steps.1text"></span></li>
-                <li class="step reveal-up"><span class="step-tool" data-tool="scissors"></span><span class="step-num" dir="ltr">02</span><strong data-t="steps.2"></strong><span data-t="steps.2text"></span></li>
-                <li class="step reveal-up"><span class="step-tool" data-tool="razor"></span><span class="step-num" dir="ltr">03</span><strong data-t="steps.3"></strong><span data-t="steps.3text"></span></li>
+                <li class="step reveal-up"><span class="step-num" dir="ltr">01</span><strong data-t="steps.1"></strong><span data-t="steps.1text"></span></li>
+                <li class="step reveal-up"><span class="step-num" dir="ltr">02</span><strong data-t="steps.2"></strong><span data-t="steps.2text"></span></li>
+                <li class="step reveal-up"><span class="step-num" dir="ltr">03</span><strong data-t="steps.3"></strong><span data-t="steps.3text"></span></li>
             </ol>
         </section>
     </main>
@@ -142,7 +131,6 @@
             </div>
         </div>
         <div class="footer-word reveal-letters" aria-hidden="true" dir="ltr">
-            <span class="footer-tool" data-tool="clipper"></span>
             <span class="footer-letters"><span>X</span><span>O</span><span>S</span><span>H</span><span>A</span><span>W</span><span>I</span><span class="gap"></span><span>B</span><span>A</span><span>R</span><span>B</span><span>E</span><span>R</span></span>
         </div>
         <div class="footer-bottom">
@@ -160,6 +148,6 @@
     <div class="cursor" id="cursor" aria-hidden="true"><span></span></div>
 
     <noscript><p class="noscript">Please turn on JavaScript to book an appointment.</p></noscript>
-    <script src="/site/site.js?v=2026.11.07.1"></script>
+    <script src="/site/site.js?v=2026.11.07.2"></script>
 </body>
 </html>

@@ -808,15 +808,12 @@
         });
     }
 
-    // The black bands: XOSHAWI BARBER, in full and in outline, with a tool between each, twice over so they
-    // loop. The second band runs the other way.
+    // The band: the name, in full and in outline, with a small diamond between, twice over so it loops.
     function renderBand() {
         const word = extra => `<span class="band-word ${extra}">XOSHAWI BARBER</span>`;
-        const tool = name => `<span class="band-tool">${toolSvg(name)}</span>`;
-        const first = [word(''), tool('scissors'), word('band-outline'), tool('razor'), word('band-italic'), tool('comb'), word('band-outline'), tool('clipper')].join('');
-        const second = [word('band-outline'), tool('comb'), word('band-italic'), tool('clipper'), word('band-outline'), tool('scissors'), word(''), tool('razor')].join('');
-        $('#band-track').innerHTML = first + first;
-        $('#band-track-2').innerHTML = second + second;
+        const dot = '<span class="band-dot"></span>';
+        const row = [word(''), dot, word('band-outline'), dot, word('band-italic'), dot, word('band-outline'), dot].join('');
+        $('#band-track').innerHTML = row + row;
     }
 
     /* ---------------- Depth: tools that follow the scroll and the mouse ---------------- */
