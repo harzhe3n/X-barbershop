@@ -70,7 +70,7 @@ const state = {
     historyDay: todayString(),
     catalogTab: 'services',
     productCategory: 'all',
-    shopName: 'XBARBER SHOP',
+    shopName: 'XOSHAWI BARBER',
     // The client form open inside a time slot: { ticketId, barberId, date, time, name, phone, ... }
     slotForm: null,
     // The barber whose "Add slot" box is open on the board.
@@ -596,7 +596,8 @@ function signOut() {
 async function loadShopName() {
     try {
         const settings = await queryOne('SELECT shop_name FROM settings ORDER BY id DESC LIMIT 1');
-        state.shopName = String(settings?.shop_name || '').trim() || 'XBARBER SHOP';
+        const savedName = String(settings?.shop_name || '').trim();
+        state.shopName = savedName && savedName.toUpperCase() !== 'XBARBER SHOP' ? savedName : 'XOSHAWI BARBER';
     } catch (error) {
         console.warn('Could not load shop name:', error);
     }
@@ -4498,7 +4499,7 @@ async function renderSettings() {
                 <h3 class="card-title">${icon('store')}${escapeHtml(t('settings.shop'))}</h3>
                 <form class="stack" data-form="shop">
                     <label class="field"><span>${escapeHtml(t('settings.shopName'))}</span>
-                        <input type="text" name="shop_name" maxlength="60" value="${escapeHtml(settings.shop_name || 'XBARBER SHOP')}">
+                        <input type="text" name="shop_name" maxlength="60" value="${escapeHtml(state.shopName || 'XOSHAWI BARBER')}">
                     </label>
                     <div class="grid-2">
                         <label class="field"><span>${escapeHtml(t('settings.phone'))} <em>${escapeHtml(t('common.optional'))}</em></span>
@@ -4598,7 +4599,7 @@ function instagramName(value) {
 }
 
 async function saveShop(form) {
-    const shopName = form.elements.shop_name.value.trim() || 'XBARBER SHOP';
+    const shopName = form.elements.shop_name.value.trim() || 'XOSHAWI BARBER';
     const phone = form.elements.phone.value.trim();
     const address = form.elements.address.value.trim();
     const instagramText = form.elements.instagram.value.trim();

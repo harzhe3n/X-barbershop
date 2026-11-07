@@ -1,7 +1,7 @@
 {
   "id": "./src/index.html",
-  "name": "XBARBER SHOP",
-  "short_name": "XBARBER",
+  "name": "XOSHAWI BARBER",
+  "short_name": "XOSHAWI",
   "description": "Barber shop cashier: one column per barber, clients, services, products, dashboard and history. Works offline.",
   "start_url": "./src/index.html",
   "scope": "./",

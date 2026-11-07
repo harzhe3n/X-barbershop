@@ -1,7 +1,7 @@
 'use strict';
 
 /*
- * XBARBER booking website.
+ * XOSHAWI BARBER booking website.
  * Black and white. A long loading screen (the X is drawn, scissors cut a line, a counter runs to 100),
  * then the barbers in a slider you can drag, with momentum, that never ends and moves on every
  * 5 seconds. Barber tools (scissors, razor, comb, clipper) move in the background and in a black band.
@@ -470,8 +470,9 @@
     /* ---------------- Barber slider ---------------- */
     /*
      * The photos sit in a row. Drag them (or swipe, or use the arrows); they glide with momentum and
-     * settle on the nearest barber, who is the one shown under the photos. The row never ends: with
-     * only a few barbers it is filled with copies. Every 5 seconds it moves on by itself.
+     * settle on the nearest barber, who is the one shown under the photos. Each barber has one photo;
+     * the row stops at the first and the last. Every 5 seconds it moves on by itself, and after the
+     * last barber it goes back to the first.
      */
 
     const slider = {
@@ -503,6 +504,11 @@
 
     function mod(value, size) {
         return ((value % size) + size) % size;
+    }
+
+    // A position on the row, kept between the first and the last barber.
+    function clampSlide(value) {
+        return Math.max(0, Math.min(barberList().length - 1, value));
     }
 
     function pad(value, size) {
@@ -548,7 +554,8 @@
         const count = barberList().length;
         if (!count) return;
         const before = state.slide;
-        state.slide = mod(Math.round(slider.target), count);
+        slider.target = clampSlide(Math.round(slider.target));
+        state.slide = slider.target;
         const pickerHadFocus = picker.contains(document.activeElement);
         if (state.slide !== before) {
             renderSpotlight(true);
@@ -560,20 +567,20 @@
         kick();
     }
 
-    function moveBy(delta, options) {
-        if (barberList().length < 2) return;
-        slider.target = Math.round(slider.target) + delta;
+    function moveBy(delta, options = {}) {
+        const count = barberList().length;
+        if (count < 2) return;
+        let next = Math.round(slider.target) + delta;
+        // The timer and the arrows go round: after the last barber comes the first again.
+        if (next > count - 1) next = 0;
+        else if (next < 0) next = count - 1;
+        slider.target = next;
         settle(options);
     }
 
-    // Straight to one barber, the short way round.
     function goTo(index) {
-        const count = barberList().length;
-        if (count < 2) return;
-        const base = Math.round(slider.target);
-        let diff = mod(index, count) - mod(base, count);
-        if (Math.abs(diff) > count / 2) diff -= Math.sign(diff) * count;
-        slider.target = base + diff;
+        if (barberList().length < 2) return;
+        slider.target = clampSlide(index);
         settle();
     }
 
@@ -588,12 +595,10 @@
     function layoutSlider() {
         if (!slider.total) return;
         const dir = isRtl() ? -1 : 1;
-        const half = slider.total / 2;
         const speed = slider.target - slider.current;
         const skew = Math.max(-6, Math.min(6, speed * -9)) * dir;
         slider.cards.forEach((card, virtual) => {
-            let offset = virtual - slider.current;
-            if (slider.total > 1) offset = mod(offset + half, slider.total) - half;
+            const offset = virtual - slider.current;
             const distance = Math.abs(offset);
             const scale = 1 - Math.min(distance, 1) * 0.12;
             card.style.transform = `translate3d(${(offset * slider.step * dir).toFixed(2)}px, 0, 0) scale(${scale.toFixed(4)}) skewX(${skew.toFixed(2)}deg)`;
@@ -604,7 +609,7 @@
             if (media) media.style.transform = `translate3d(${(-offset * 9 * dir).toFixed(2)}%, 0, 0)`;
             const active = distance < 0.5;
             card.classList.toggle('is-active', active);
-            card.tabIndex = active && virtual < slider.count ? 0 : -1;
+            card.tabIndex = active ? 0 : -1;
         });
     }
 
@@ -657,17 +662,14 @@
         if (key !== slider.key) {
             slider.key = key;
             const count = list.length;
-            // Enough copies that the row never runs out, even on a wide screen.
-            const copies = count > 1 ? Math.max(1, Math.ceil(9 / count)) : 1;
-            const total = count * copies;
+            // One photo for each barber.
+            const total = count;
             let html = '';
-            for (let virtual = 0; virtual < total; virtual += 1) {
-                const index = virtual % count;
+            for (let index = 0; index < count; index += 1) {
                 const barber = list[index];
-                const copy = virtual >= count;
                 html += `
-                    <button type="button" class="card ${isOpen(barber) ? '' : 'is-closed'}" data-index="${index}" data-virtual="${virtual}"
-                        ${copy ? 'aria-hidden="true" tabindex="-1"' : `aria-roledescription="slide" aria-label="${esc(`${barber.name} · ${t('carousel.slide', { n: index + 1, total: count })}`)}"`}>
+                    <button type="button" class="card ${isOpen(barber) ? '' : 'is-closed'}" data-index="${index}" data-virtual="${index}"
+                        aria-roledescription="slide" aria-label="${esc(`${barber.name} · ${t('carousel.slide', { n: index + 1, total: count })}`)}">
                         <span class="card-media">${photoMarkup(barber)}</span>
                         <span class="card-num" dir="ltr">NO ${pad(index + 1, 3)}</span>
                         <span class="card-name">${esc(barber.name)}</span>
@@ -806,10 +808,10 @@
         });
     }
 
-    // The black bands: XBARBER, in full and in outline, with a tool between each, twice over so they
+    // The black bands: XOSHAWI BARBER, in full and in outline, with a tool between each, twice over so they
     // loop. The second band runs the other way.
     function renderBand() {
-        const word = extra => `<span class="band-word ${extra}">XBARBER</span>`;
+        const word = extra => `<span class="band-word ${extra}">XOSHAWI BARBER</span>`;
         const tool = name => `<span class="band-tool">${toolSvg(name)}</span>`;
         const first = [word(''), tool('scissors'), word('band-outline'), tool('razor'), word('band-italic'), tool('comb'), word('band-outline'), tool('clipper')].join('');
         const second = [word('band-outline'), tool('comb'), word('band-italic'), tool('clipper'), word('band-outline'), tool('scissors'), word(''), tool('razor')].join('');
@@ -978,20 +980,26 @@
         return { open: false, text: t('hours.today', { open: formatTime(info.hours.open), close: closingTime(info.hours.close) }) };
     }
 
+    // The old default name counts as no name.
+    function shopName(shop) {
+        const name = String(shop?.name || '').trim();
+        return name && name.toUpperCase() !== 'XBARBER SHOP' ? name : 'XOSHAWI BARBER';
+    }
+
     function renderPage() {
         const info = state.info;
         renderCarousel(false);
         if (!info) return;
 
         const shop = info.shop || {};
-        document.title = `${shop.name || 'XBARBER'} · ${t('nav.book')}`;
+        document.title = `${shopName(shop)} · ${t('nav.book')}`;
         $('#hero-eyebrow').textContent = [t('hero.eyebrow'), shop.address].filter(Boolean).join(' · ');
         const status = todayOpenText(info);
         $('#hero-hours').innerHTML = `<span class="dot ${status.open ? 'dot-on' : ''}"></span><span>${esc(status.text)}</span>`;
         $('#closed-banner').hidden = info.open;
         $('#closed-banner').textContent = t('closed.banner');
 
-        $('#footer-name').textContent = String(shop.name || 'XBARBER').toUpperCase();
+        $('#footer-name').textContent = shopName(shop).toUpperCase();
         $('#footer-hours').textContent = t('footer.daily', { open: formatTime(info.hours.open), close: closingTime(info.hours.close) });
         const closedDays = info.hours.closed_weekdays.map(day => WEEKDAYS[state.lang][day]).join(state.lang === 'en' ? ', ' : '، ');
         $('#footer-closed').textContent = closedDays ? t('footer.closedDays', { days: closedDays }) : '';
@@ -1363,8 +1371,7 @@
         if (card) {
             if (ignoreClick) return;
             // The photo in the middle opens the booking; another photo comes to the middle.
-            const half = slider.total / 2;
-            const offset = Math.round(mod(Number(card.dataset.virtual) - slider.target + half, slider.total) - half);
+            const offset = Math.round(Number(card.dataset.virtual) - slider.target);
             if (offset === 0) {
                 const barber = activeBarber();
                 if (isOpen(barber) && state.info?.open) openSheet(barber.id);
@@ -1439,7 +1446,9 @@
             syncTimer();
         }
         const dir = isRtl() ? -1 : 1;
-        slider.target = drag.start - (dx / slider.step) * dir;
+        const raw = drag.start - (dx / slider.step) * dir;
+        const last = barberList().length - 1;
+        slider.target = raw < 0 ? raw * 0.3 : raw > last ? last + (raw - last) * 0.3 : raw;
         const now = performance.now();
         const elapsed = now - drag.lastT;
         if (elapsed > 0) drag.speed = 0.8 * ((event.clientX - drag.lastX) / elapsed) + 0.2 * drag.speed;
@@ -1476,7 +1485,7 @@
     stage.addEventListener('wheel', event => {
         if (barberList().length < 2 || Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return;
         event.preventDefault();
-        slider.target += (event.deltaX / slider.step) * (isRtl() ? -1 : 1);
+        slider.target = Math.max(-0.3, Math.min(barberList().length - 0.7, slider.target + (event.deltaX / slider.step) * (isRtl() ? -1 : 1)));
         kick();
         clearTimeout(slider.wheelTimer);
         slider.wheelTimer = setTimeout(() => {

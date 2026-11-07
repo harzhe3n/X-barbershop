@@ -1,4 +1,4 @@
-/* XBARBER booking website. Black and white, editorial: big serif titles, small spaced capitals,
+/* XOSHAWI BARBER booking website. Black and white, editorial: big serif titles, small spaced capitals,
    numbered labels, a barber slider you can drag, and barber tools (scissors, razor, comb,
    clipper) that keep moving. The booking window is at the end. */
 
@@ -421,9 +421,9 @@ svg.icon-brand {
 
 .loader-word {
     display: flex;
-    gap: 0.5em;
+    gap: 0.22em;
     font-family: var(--font-display);
-    font-size: clamp(20px, 2.6vw, 30px);
+    font-size: clamp(17px, 2.4vw, 28px);
     font-weight: 500;
     line-height: 1.1;
 }
@@ -433,6 +433,11 @@ svg.icon-brand {
     overflow: hidden;
 }
 
+.loader-word .gap,
+.footer-letters .gap {
+    width: 0.32em;
+}
+
 .loader-word i {
     display: inline-block;
     font-style: normal;
@@ -440,13 +445,20 @@ svg.icon-brand {
     animation: rise-in 1s var(--ease) forwards;
 }
 
-.loader-word span:nth-child(1) i { animation-delay: 2.5s; }
-.loader-word span:nth-child(2) i { animation-delay: 2.6s; }
-.loader-word span:nth-child(3) i { animation-delay: 2.7s; }
-.loader-word span:nth-child(4) i { animation-delay: 2.8s; }
-.loader-word span:nth-child(5) i { animation-delay: 2.9s; }
-.loader-word span:nth-child(6) i { animation-delay: 3s; }
-.loader-word span:nth-child(7) i { animation-delay: 3.1s; }
+.loader-word span:nth-child(1) i { animation-delay: 2.50s; }
+.loader-word span:nth-child(2) i { animation-delay: 2.56s; }
+.loader-word span:nth-child(3) i { animation-delay: 2.62s; }
+.loader-word span:nth-child(4) i { animation-delay: 2.68s; }
+.loader-word span:nth-child(5) i { animation-delay: 2.74s; }
+.loader-word span:nth-child(6) i { animation-delay: 2.80s; }
+.loader-word span:nth-child(7) i { animation-delay: 2.86s; }
+.loader-word span:nth-child(8) i { animation-delay: 2.92s; }
+.loader-word span:nth-child(9) i { animation-delay: 2.98s; }
+.loader-word span:nth-child(10) i { animation-delay: 3.04s; }
+.loader-word span:nth-child(11) i { animation-delay: 3.10s; }
+.loader-word span:nth-child(12) i { animation-delay: 3.16s; }
+.loader-word span:nth-child(13) i { animation-delay: 3.22s; }
+.loader-word span:nth-child(14) i { animation-delay: 3.28s; }
 
 @keyframes rise-in {
     to { transform: none; }
@@ -580,9 +592,10 @@ body.is-ready .loader-panel-bottom {
 
 .brand-word {
     font-family: var(--font-display);
-    font-size: 19px;
+    font-size: 18px;
     font-weight: 500;
-    letter-spacing: 0.32em;
+    letter-spacing: 0.22em;
+    white-space: nowrap;
 }
 
 .header-end {
@@ -630,7 +643,7 @@ body.is-ready .loader-panel-bottom {
     overflow: hidden;
 }
 
-/* A huge outlined XBARBER behind the photos that keeps sliding past, without end. */
+/* A huge outlined XOSHAWI BARBER behind the photos that keeps sliding past, without end. */
 .hero-word {
     position: absolute;
     top: 58%;
@@ -638,7 +651,7 @@ body.is-ready .loader-panel-bottom {
     width: 100%;
     overflow: hidden;
     font-family: var(--font-display);
-    font-size: 24vw;
+    font-size: 16vw;
     font-weight: 500;
     line-height: 1;
     letter-spacing: -0.02em;
@@ -822,8 +835,8 @@ body.is-ready .badge:hover {
     direction: ltr;
     fill: #fff;
     font-family: var(--font-mono);
-    font-size: 15px;
-    letter-spacing: 3px;
+    font-size: 12px;
+    letter-spacing: 1px;
 }
 
 .badge-core {
@@ -1353,7 +1366,7 @@ body.is-ready .picker {
     margin-top: 6px;
 }
 
-/* ---------------- Black band: XBARBER and the tools ---------------- */
+/* ---------------- Black band: XOSHAWI BARBER and the tools ---------------- */
 
 .band {
     display: flex;
@@ -1633,7 +1646,7 @@ body.is-ready .picker {
     color: #0a0a0a;
 }
 
-/* A huge XBARBER across the bottom, with clippers before it. */
+/* A huge XOSHAWI BARBER across the bottom, with clippers before it. */
 .footer-word {
     display: flex;
     align-items: center;
@@ -1641,7 +1654,7 @@ body.is-ready .picker {
     gap: 0.12em;
     margin: 0 calc(var(--pad) * -0.4);
     font-family: var(--font-display);
-    font-size: clamp(56px, 17vw, 260px);
+    font-size: clamp(30px, 8.4vw, 150px);
     font-weight: 400;
     letter-spacing: -0.02em;
     line-height: 0.85;
@@ -1674,12 +1687,19 @@ body.is-ready .picker {
     transform: none;
 }
 
-.footer-letters span:nth-child(2) { transition-delay: 0.06s; }
-.footer-letters span:nth-child(3) { transition-delay: 0.12s; }
-.footer-letters span:nth-child(4) { transition-delay: 0.18s; }
-.footer-letters span:nth-child(5) { transition-delay: 0.24s; }
-.footer-letters span:nth-child(6) { transition-delay: 0.3s; }
-.footer-letters span:nth-child(7) { transition-delay: 0.36s; }
+.footer-letters span:nth-child(2) { transition-delay: 0.045s; }
+.footer-letters span:nth-child(3) { transition-delay: 0.090s; }
+.footer-letters span:nth-child(4) { transition-delay: 0.135s; }
+.footer-letters span:nth-child(5) { transition-delay: 0.180s; }
+.footer-letters span:nth-child(6) { transition-delay: 0.225s; }
+.footer-letters span:nth-child(7) { transition-delay: 0.270s; }
+.footer-letters span:nth-child(8) { transition-delay: 0.315s; }
+.footer-letters span:nth-child(9) { transition-delay: 0.360s; }
+.footer-letters span:nth-child(10) { transition-delay: 0.405s; }
+.footer-letters span:nth-child(11) { transition-delay: 0.450s; }
+.footer-letters span:nth-child(12) { transition-delay: 0.495s; }
+.footer-letters span:nth-child(13) { transition-delay: 0.540s; }
+.footer-letters span:nth-child(14) { transition-delay: 0.585s; }
 
 .footer-bottom {
     display: flex;
@@ -2290,8 +2310,8 @@ body.is-ready .picker {
     }
 
     .brand-word {
-        font-size: 16px;
-        letter-spacing: 0.24em;
+        font-size: 13px;
+        letter-spacing: 0.12em;
     }
 
     .hero-top {
@@ -2321,7 +2341,7 @@ body.is-ready .picker {
 
     .hero-word {
         top: 52%;
-        font-size: 40vw;
+        font-size: 30vw;
     }
 
     .picker {
