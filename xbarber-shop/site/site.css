@@ -1,4 +1,4 @@
-/* XOSHAWI BARBER booking website. Dark and quiet: near-black page, ivory type, big serif titles,
+/* XOSHAWI STUDIO booking website. Dark and quiet: near-black page, ivory type, big serif titles,
    small spaced capitals, numbered labels and a barber slider you can drag. Movement is kept slow
    and few. The booking window is at the end. */
 
@@ -609,7 +609,7 @@ body.is-ready .loader-panel-bottom {
     overflow: hidden;
 }
 
-/* A huge outlined XOSHAWI BARBER behind the photos that keeps sliding past, without end. */
+/* A huge outlined XOSHAWI STUDIO behind the photos that keeps sliding past, without end. */
 .hero-word {
     position: absolute;
     top: 58%;
@@ -1226,7 +1226,7 @@ body.is-ready .picker {
     margin-top: 6px;
 }
 
-/* ---------------- Black band: XOSHAWI BARBER and the tools ---------------- */
+/* ---------------- Black band: XOSHAWI STUDIO and the tools ---------------- */
 
 .band {
     overflow: hidden;
@@ -1497,7 +1497,7 @@ body.is-ready .picker {
     color: #0a0a0a;
 }
 
-/* A huge XOSHAWI BARBER across the bottom, with clippers before it. */
+/* A huge XOSHAWI STUDIO across the bottom, with clippers before it. */
 .footer-word {
     display: flex;
     align-items: center;

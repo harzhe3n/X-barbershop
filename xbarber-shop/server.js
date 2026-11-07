@@ -925,7 +925,7 @@ async function siteSnapshot(connection, now) {
     offs: Slots.parseOffDays(optionRows),
     busy,
     shop: {
-      name: shop.shop_name && String(shop.shop_name).trim().toUpperCase() !== 'XBARBER SHOP' ? String(shop.shop_name) : 'XOSHAWI BARBER',
+      name: shop.shop_name && !['XBARBER SHOP', 'XOSHAWI BARBER'].includes(String(shop.shop_name).trim().toUpperCase()) ? String(shop.shop_name) : 'XOSHAWI STUDIO',
       phone: shop.phone ? String(shop.phone) : null,
       address: shop.address ? String(shop.address) : null,
       instagram: instagramUrl(optionValue('shop.instagram')),
