@@ -1,28 +1,27 @@
-/* XOSHAWI STUDIO booking website. Dark and quiet: near-black page, ivory type, big serif titles,
+/* XOSHAWIS STUDIO booking website. White and quiet: light page, black type, big serif titles,
    small spaced capitals, numbered labels and a barber slider you can drag. Movement is kept slow
    and few. The booking window is at the end. */
 
 :root {
-    color-scheme: dark;
-    --bg: #0a0a0a;
-    --bg-2: #0f0f0f;
-    --surface: #141414;
-    --surface-2: #1c1c1c;
-    --surface-3: #2a2a2a;
+    color-scheme: light;
+    --bg: #ffffff;
+    --bg-2: #f6f6f4;
+    --surface: #f3f3f3;
+    --surface-2: #e8e8e8;
+    --surface-3: #dcdcdc;
     /* The booking window, the days and times. */
-    --paper: #121212;
-    --line: rgba(241, 237, 228, 0.1);
-    --line-2: rgba(241, 237, 228, 0.22);
-    /* Warm ivory text. */
-    --ink: #f1ede4;
-    --ink-2: #d4cfc5;
-    --muted: #8c877e;
-    /* Text on ivory buttons and on the chosen day / time. */
-    --on-ink: #0a0a0a;
-    --error: #ef7a7a;
+    --paper: #ffffff;
+    --line: rgba(0, 0, 0, 0.1);
+    --line-2: rgba(0, 0, 0, 0.22);
+    --ink: #0a0a0a;
+    --ink-2: #2e2e2e;
+    --muted: #6b6b6b;
+    /* Text on black buttons and on the chosen day / time. */
+    --on-ink: #ffffff;
+    --error: #c62828;
     --radius: 14px;
     --radius-lg: 22px;
-    --shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
+    --shadow: 0 30px 80px rgba(0, 0, 0, 0.16);
     --font: system-ui, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
     --font-display: "Didot", "Bodoni 72", "Bodoni MT", "Playfair Display", Georgia, "Times New Roman", serif;
     --font-arabic: "Noto Kufi Arabic", "Noto Sans Arabic", "Geeza Pro", "Segoe UI", Tahoma, sans-serif;
@@ -184,7 +183,7 @@ svg.icon-brand {
 
 .btn-ink:hover:not(:disabled),
 .btn-light:hover:not(:disabled) {
-    background: #ffffff;
+    background: #2b2b2b;
 }
 
 .btn-ghost {
@@ -462,6 +461,7 @@ svg.icon-brand {
 .loader-word span:nth-child(12) i { animation-delay: 3.16s; }
 .loader-word span:nth-child(13) i { animation-delay: 3.22s; }
 .loader-word span:nth-child(14) i { animation-delay: 3.28s; }
+.loader-word span:nth-child(15) i { animation-delay: 3.34s; }
 
 @keyframes rise-in {
     to { transform: none; }
@@ -515,7 +515,7 @@ body.is-ready .loader-panel-bottom {
     gap: 14px;
     padding: max(14px, env(safe-area-inset-top)) var(--pad) 14px;
     border-bottom: 1px solid var(--line);
-    background: rgba(10, 10, 10, 0.82);
+    background: rgba(255, 255, 255, 0.86);
     -webkit-backdrop-filter: blur(14px);
     backdrop-filter: blur(14px);
 }
@@ -609,7 +609,7 @@ body.is-ready .loader-panel-bottom {
     overflow: hidden;
 }
 
-/* A huge outlined XOSHAWI STUDIO behind the photos that keeps sliding past, without end. */
+/* A huge outlined XOSHAWIS STUDIO behind the photos that keeps sliding past, without end. */
 .hero-word {
     position: absolute;
     top: 58%;
@@ -622,7 +622,7 @@ body.is-ready .loader-panel-bottom {
     line-height: 1;
     letter-spacing: -0.02em;
     color: transparent;
-    -webkit-text-stroke: 1px rgba(241, 237, 228, 0.09);
+    -webkit-text-stroke: 1px rgba(0, 0, 0, 0.12);
     white-space: nowrap;
     transform: translateY(-50%);
     pointer-events: none;
@@ -641,7 +641,7 @@ body.is-ready .loader-panel-bottom {
 }
 
 .hero-word-track span:nth-child(even) {
-    color: rgba(241, 237, 228, 0.025);
+    color: rgba(0, 0, 0, 0.035);
     -webkit-text-stroke: 0;
 }
 
@@ -774,13 +774,13 @@ body.is-ready .badge:hover {
 .dot-on {
     border-color: var(--ink);
     background: var(--ink);
-    box-shadow: 0 0 0 0 rgba(241, 237, 228, 0.35);
+    box-shadow: 0 0 0 0 rgba(0, 0, 0, 0.3);
     animation: dot-pulse 2s ease-out infinite;
 }
 
 @keyframes dot-pulse {
-    70% { box-shadow: 0 0 0 9px rgba(241, 237, 228, 0); }
-    100% { box-shadow: 0 0 0 0 rgba(241, 237, 228, 0); }
+    70% { box-shadow: 0 0 0 9px rgba(0, 0, 0, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(0, 0, 0, 0); }
 }
 
 /* The title rises line by line once the curtain opens. */
@@ -883,7 +883,7 @@ body.is-ready .slider {
     overflow: hidden;
     border: 0;
     border-radius: 4px;
-    background: linear-gradient(160deg, #1d1d1d, #0e0e0e);
+    background: linear-gradient(160deg, #f2f2f2, #dadada);
     cursor: grab;
     will-change: transform, opacity;
     -webkit-tap-highlight-color: transparent;
@@ -916,7 +916,7 @@ body.is-ready .slider {
 }
 
 .card-initial {
-    color: rgba(241, 237, 228, 0.7);
+    color: rgba(0, 0, 0, 0.7);
     font-family: var(--font-display);
     font-size: calc(var(--card-w) * 0.5);
     line-height: 1;
@@ -985,7 +985,7 @@ body.is-ready .slider {
 }
 
 .card-empty polygon {
-    fill: rgba(241, 237, 228, 0.18);
+    fill: rgba(0, 0, 0, 0.18);
 }
 
 .card-loading {
@@ -1041,7 +1041,7 @@ body.is-ready .picker {
     height: 48px;
     border: 1px solid var(--line-2);
     border-radius: 50%;
-    background: rgba(20, 20, 20, 0.85);
+    background: rgba(255, 255, 255, 0.85);
     cursor: pointer;
     transition: background-color 0.25s, color 0.25s, border-color 0.25s;
 }
@@ -1226,7 +1226,7 @@ body.is-ready .picker {
     margin-top: 6px;
 }
 
-/* ---------------- Black band: XOSHAWI STUDIO and the tools ---------------- */
+/* ---------------- Black band: XOSHAWIS STUDIO and the tools ---------------- */
 
 .band {
     overflow: hidden;
@@ -1395,9 +1395,8 @@ body.is-ready .picker {
 .site-footer {
     overflow: hidden;
     padding: clamp(56px, 8vw, 96px) var(--pad) calc(24px + env(safe-area-inset-bottom));
-    border-top: 1px solid var(--line);
-    background: #050505;
-    color: var(--ink);
+    background: #0a0a0a;
+    color: #fff;
 }
 
 .footer-top {
@@ -1462,7 +1461,7 @@ body.is-ready .picker {
 }
 
 .footer-col .see-work:hover {
-    background: #ffffff;
+    background: #dedede;
 }
 
 .footer-col .see-work:active {
@@ -1497,7 +1496,7 @@ body.is-ready .picker {
     color: #0a0a0a;
 }
 
-/* A huge XOSHAWI STUDIO across the bottom, with clippers before it. */
+/* A huge XOSHAWIS STUDIO across the bottom, with clippers before it. */
 .footer-word {
     display: flex;
     align-items: center;
@@ -1551,6 +1550,7 @@ body.is-ready .picker {
 .footer-letters span:nth-child(12) { transition-delay: 0.495s; }
 .footer-letters span:nth-child(13) { transition-delay: 0.540s; }
 .footer-letters span:nth-child(14) { transition-delay: 0.585s; }
+.footer-letters span:nth-child(15) { transition-delay: 0.630s; }
 
 .footer-bottom {
     display: flex;
@@ -1631,7 +1631,7 @@ body.is-ready .picker {
     align-items: center;
     justify-content: center;
     padding: 24px;
-    background: rgba(0, 0, 0, 0.72);
+    background: rgba(0, 0, 0, 0.45);
     -webkit-backdrop-filter: blur(8px);
     backdrop-filter: blur(8px);
     opacity: 0;
@@ -1863,7 +1863,7 @@ body.is-ready .picker {
 
 .day[aria-pressed="true"] small,
 .day[aria-pressed="true"] em {
-    color: #5a5650;
+    color: #c9c9c9;
 }
 
 .times {
@@ -2032,13 +2032,13 @@ body.is-ready .picker {
 }
 
 .field input::placeholder {
-    color: #6d6962;
+    color: #9a9a9a;
 }
 
 .field input:focus {
     border-color: var(--ink);
     outline: none;
-    box-shadow: 0 0 0 4px rgba(241, 237, 228, 0.08);
+    box-shadow: 0 0 0 4px rgba(0, 0, 0, 0.08);
 }
 
 .field input[aria-invalid="true"] {
@@ -2077,7 +2077,7 @@ body.is-ready .picker {
 }
 
 .done-check circle {
-    fill: rgba(241, 237, 228, 0.05);
+    fill: rgba(0, 0, 0, 0.04);
     stroke: var(--ink);
     stroke-width: 2;
     stroke-dasharray: 260;

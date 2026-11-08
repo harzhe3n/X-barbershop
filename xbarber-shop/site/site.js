@@ -1,7 +1,7 @@
 'use strict';
 
 /*
- * XOSHAWI STUDIO booking website.
+ * XOSHAWIS STUDIO booking website.
  * Black and white. A long loading screen (the X is drawn, scissors cut a line, a counter runs to 100),
  * then the barbers in a slider you can drag, with momentum, that never ends and moves on every
  * 5 seconds. Barber tools (scissors, razor, comb, clipper) move in the background and in a black band.
@@ -810,7 +810,7 @@
 
     // The band: the name, in full and in outline, with a small diamond between, twice over so it loops.
     function renderBand() {
-        const word = extra => `<span class="band-word ${extra}">XOSHAWI STUDIO</span>`;
+        const word = extra => `<span class="band-word ${extra}">XOSHAWIS STUDIO</span>`;
         const dot = '<span class="band-dot"></span>';
         const row = [word(''), dot, word('band-outline'), dot, word('band-italic'), dot, word('band-outline'), dot].join('');
         $('#band-track').innerHTML = row + row;
@@ -980,7 +980,7 @@
     // The old default name counts as no name.
     function shopName(shop) {
         const name = String(shop?.name || '').trim();
-        return name && !['XBARBER SHOP', 'XOSHAWI BARBER'].includes(name.toUpperCase()) ? name : 'XOSHAWI STUDIO';
+        return name && !['XBARBER SHOP', 'XOSHAWI BARBER', 'XOSHAWI STUDIO'].includes(name.toUpperCase()) ? name : 'XOSHAWIS STUDIO';
     }
 
     function renderPage() {

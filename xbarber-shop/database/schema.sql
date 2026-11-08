@@ -135,7 +135,7 @@ CREATE TABLE IF NOT EXISTS payments (
 -- Settings table
 CREATE TABLE IF NOT EXISTS settings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    shop_name TEXT DEFAULT 'XOSHAWI STUDIO',
+    shop_name TEXT DEFAULT 'XOSHAWIS STUDIO',
     phone TEXT,
     address TEXT,
     currency TEXT DEFAULT 'IQD',
