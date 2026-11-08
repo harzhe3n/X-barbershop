@@ -389,9 +389,17 @@ const OPTION_WRITES = new Set([
   'DELETE FROM app_options WHERE key = ?'
 ]);
 
+// Finishing a client (marking it paid) is for the owner only.
+function finishesClient(query, params) {
+  if (!/\borders\b/i.test(query)) return false;
+  if (/\bstatus\s*=\s*'completed'/i.test(query)) return true;
+  return /\bstatus\b/i.test(query) && params.some(value => String(value).toLowerCase() === 'completed');
+}
+
 function assertWriteAllowed(session, query, params = []) {
   if (session.session.role === 'admin') return;
   if (OWNER_ONLY_TABLES.test(query)) throw httpError(403, 'Only the owner can do this.');
+  if (finishesClient(query, params)) throw httpError(403, 'Only the owner can finish a client.');
   if (/\bapp_options\b/i.test(query)) {
     // A barber may only set their own time between clients, added and deleted slots, days off and Open / Closed.
     const shape = query.replace(/\s+/g, ' ').trim();

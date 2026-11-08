@@ -1469,7 +1469,8 @@ function renderTicket(ticket, access = { editable: true, takeable: false }, nowM
     if (isActive && canEdit) {
         buttons.push(`<button type="button" class="btn-icon" data-action="back-to-waiting" data-id="${ticket.id}" aria-label="${escapeHtml(t('cashier.backToWaiting'))}" title="${escapeHtml(t('cashier.backToWaiting'))}">${icon('undo')}</button>`);
     }
-    if (canEdit) {
+    // Only the owner finishes a client (takes the money). Barbers add and edit their clients.
+    if (canEdit && isAdmin()) {
         buttons.push(`<button type="button" class="btn ${isActive ? 'btn-light' : 'btn-primary'} btn-sm btn-done" data-action="done-client" data-id="${ticket.id}">${icon('check')}<span>${escapeHtml(t('done.button'))}</span></button>`);
     }
 
@@ -2803,8 +2804,8 @@ async function openDoneDialog(id) {
         await renderPage({ keepScroll: true });
         return;
     }
-    if (!canManageTicket(ticket)) {
-        denyNotYours();
+    if (!isAdmin()) {
+        toast(t('done.ownerOnly'), 'error');
         await renderPage({ keepScroll: true });
         return;
     }

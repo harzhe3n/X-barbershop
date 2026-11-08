@@ -489,6 +489,12 @@ class XBarberHandler(http.server.BaseHTTPRequestHandler):
             return
         if OWNER_ONLY_TABLES.search(query):
             raise RequestError(403, "Only the owner can do this.")
+        # Finishing a client (marking it paid) is for the owner only.
+        if re.search(r"\borders\b", query, re.IGNORECASE) and (
+            re.search(r"\bstatus\s*=\s*'completed'", query, re.IGNORECASE)
+            or (re.search(r"\bstatus\b", query, re.IGNORECASE) and any(str(value).lower() == "completed" for value in (params or [])))
+        ):
+            raise RequestError(403, "Only the owner can finish a client.")
         if re.search(r"\bapp_options\b", query, re.IGNORECASE):
             # A barber may only set their own time between clients, added slots and days off.
             shape = " ".join(query.split())
