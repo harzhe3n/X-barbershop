@@ -18,6 +18,7 @@
  *   XBARBER_TRUST_PROXY=1   behind nginx: read the visitor's address and https from its headers
  *   XBARBER_SECURE_COOKIE=1 sign-in cookie only over https
  *   XBARBER_TZ              the shop's time zone (default Asia/Baghdad)
+ *   XBARBER_WHATSAPP_DEBUG=1 show the WhatsApp library's messages in the log
  */
 
 const http = require('http');
@@ -27,6 +28,7 @@ const os = require('os');
 const crypto = require('crypto');
 const sqlite3 = require('sqlite3').verbose();
 const Slots = require('./src/js/slots.js');
+const WhatsApp = require('./whatsapp.js');
 
 const ROOT = __dirname;
 const PORT = Number(process.env.XBARBER_PORT || process.env.PORT || 3000);
@@ -846,6 +848,10 @@ async function handleApi(req, res, pathname) {
     requireAdmin(session);
     return handleRestore(req, res);
   }
+  if (pathname.startsWith('/api/whatsapp/')) {
+    requireAdmin(session);
+    return handleWhatsApp(req, res, pathname);
+  }
 
   throw httpError(404, 'API route not found.');
 }
@@ -951,16 +957,24 @@ function instagramUrl(value) {
   return match ? `https://www.instagram.com/${match[1]}/` : null;
 }
 
-// WhatsApp from the cashier: a phone number. "+964..." or "00964..." is used as it is;
-// a number that starts with a single 0 (0750 123 4567) is an Iraqi number.
-function whatsappUrl(value) {
+// A phone number as WhatsApp wants it: digits with the country code. "+964..." or "00964..."
+// is used as it is; a number that starts with a single 0 (0750 123 4567), or a 10-digit
+// number that starts with 7 (750 123 4567), is an Iraqi number.
+function whatsappDigits(value) {
   const text = String(value || '').trim();
   let digits = text.replace(/\D+/g, '');
   if (!text.startsWith('+')) {
     if (digits.startsWith('00')) digits = digits.slice(2);
     else if (digits.startsWith('0')) digits = `964${digits.slice(1)}`;
+    else if (digits.length === 10 && digits.startsWith('7')) digits = `964${digits}`;
   }
-  return digits.length >= 8 && digits.length <= 15 ? `https://wa.me/${digits}` : null;
+  return digits.length >= 8 && digits.length <= 15 ? digits : null;
+}
+
+// WhatsApp from the cashier (shown on the website): its own number, or the shop phone.
+function whatsappUrl(value) {
+  const digits = whatsappDigits(value);
+  return digits ? `https://wa.me/${digits}` : null;
 }
 
 // One barber's days, from today up to the last day customers may book.
@@ -1156,6 +1170,104 @@ async function handlePublicApi(req, res, url) {
   throw httpError(404, 'API route not found.');
 }
 
+/* ------------------------------------------------------------------ */
+/* WhatsApp reminders                                                  */
+/*                                                                     */
+/* Once the owner links the shop's WhatsApp (Settings), every client   */
+/* still waiting, with a phone number, gets one message 20 minutes     */
+/* before their time: website bookings and clients added in the        */
+/* cashier alike. whatsapp_reminders keeps who was sent what, so       */
+/* nobody gets it twice, even after a restart. A client moved to       */
+/* another time gets a new reminder for the new time.                  */
+/* ------------------------------------------------------------------ */
+
+const REMINDER_TEXT = 'بەڕێز ٢٠ دەقە ماوە بۆ کاتی سەرتاشیت دڵنیابە لەوەی لە کاتی خۆی لەوێ دەبیت';
+const REMINDER_BEFORE_MINUTES = 20;
+// Sent while 15 to 20 minutes are left. A booking made later than that gets no reminder.
+const REMINDER_LATEST_MINUTES = 15;
+const REMINDER_CHECK_MS = 30 * 1000;
+let reminderRunning = false;
+let reminderCleanedAt = 0;
+
+async function sendReminders() {
+  if (reminderRunning || !WhatsApp.isReady()) return;
+  reminderRunning = true;
+  try {
+    const now = shopNow();
+    const tomorrow = Slots.addDays(now.date, 1);
+    // Claim the clients first, then send without holding the database.
+    const due = await serialize(async () => {
+      const connection = await openDatabase();
+      if (Date.now() - reminderCleanedAt > 60 * 60 * 1000) {
+        reminderCleanedAt = Date.now();
+        await dbRun(connection, "DELETE FROM whatsapp_reminders WHERE created_at < datetime('now', '-14 days')");
+      }
+      const rows = await dbAll(connection,
+        `SELECT o.id, o.date, o.time, c.name,
+                COALESCE(NULLIF(TRIM(ob.phone), ''), c.phone) AS phone
+         FROM orders o
+         LEFT JOIN customers c ON c.id = o.customer_id
+         LEFT JOIN online_bookings ob ON ob.order_id = o.id
+         WHERE o.status = 'waiting' AND o.date IN (?, ?) AND o.time IS NOT NULL AND o.time <> ''
+           AND NOT EXISTS (SELECT 1 FROM whatsapp_reminders r
+                           WHERE r.order_id = o.id AND r.date = o.date AND r.time = substr(o.time, 1, 5))`,
+        [now.date, tomorrow]);
+      const claimed = [];
+      for (const row of rows) {
+        const time = String(row.time).slice(0, 5);
+        if (!/^\d{2}:\d{2}$/.test(time) || !String(row.phone || '').trim()) continue;
+        const left = daysBetween(now.date, row.date) * 1440 + Slots.toMinutes(time) - now.minutes;
+        if (left > REMINDER_BEFORE_MINUTES || left <= REMINDER_LATEST_MINUTES) continue;
+        const digits = whatsappDigits(row.phone);
+        await dbRun(connection,
+          `INSERT OR IGNORE INTO whatsapp_reminders (order_id, date, time, name, phone, status)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [row.id, row.date, time, row.name || null, String(row.phone), digits ? 'sending' : 'bad-number']);
+        if (digits) claimed.push({ id: Number(row.id), date: row.date, time, digits });
+      }
+      return claimed;
+    });
+
+    for (const item of due) {
+      let result = null;
+      try {
+        result = await WhatsApp.sendText(item.digits, REMINDER_TEXT);
+      } catch (error) {
+        console.error(`WhatsApp reminder to +${item.digits} failed:`, error.message);
+      }
+      await serialize(async () => {
+        const connection = await openDatabase();
+        if (result) {
+          await dbRun(connection,
+            'UPDATE whatsapp_reminders SET status = ?, sent_at = CURRENT_TIMESTAMP WHERE order_id = ? AND date = ? AND time = ?',
+            [result, item.id, item.date, item.time]);
+        } else {
+          // Not sent: try again on the next check, while it is still 15-20 minutes before.
+          await dbRun(connection,
+            "DELETE FROM whatsapp_reminders WHERE order_id = ? AND date = ? AND time = ? AND status = 'sending'",
+            [item.id, item.date, item.time]);
+        }
+      });
+    }
+  } catch (error) {
+    console.error('WhatsApp reminders:', error.message);
+  } finally {
+    reminderRunning = false;
+  }
+}
+
+// Owner only: link state, the QR code to scan, and the latest reminders.
+async function handleWhatsApp(req, res, pathname) {
+  await readJson(req, 4096);
+  if (pathname === '/api/whatsapp/link') await WhatsApp.link();
+  else if (pathname === '/api/whatsapp/unlink') await WhatsApp.unlink();
+  else if (pathname !== '/api/whatsapp/status') throw httpError(404, 'API route not found.');
+  const recent = await serialize(async () => dbAll(await openDatabase(),
+    `SELECT name, phone, date, time, status, COALESCE(sent_at, created_at) AS at
+     FROM whatsapp_reminders ORDER BY created_at DESC, rowid DESC LIMIT 15`));
+  sendJson(res, 200, { ...WhatsApp.status(), message: REMINDER_TEXT, before: REMINDER_BEFORE_MINUTES, recent });
+}
+
 function serveAppMode(req, res) {
   if (req.method !== 'GET') throw httpError(405, 'Method not allowed.');
   sendJson(res, 200, { mode: 'server' });
@@ -1285,6 +1397,8 @@ server.on('error', error => {
 
 server.listen(PORT, HOST, () => {
   const addresses = lanAddresses();
+  WhatsApp.init(DATA_DIR);
+  setInterval(() => sendReminders(), REMINDER_CHECK_MS).unref();
   console.log('');
   console.log('XBARBER SHOP server');
   console.log(`Database:  ${DB_PATH}`);
@@ -1307,6 +1421,7 @@ server.listen(PORT, HOST, () => {
 });
 
 function shutdown() {
+  WhatsApp.close();
   server.close(() => {
     closeDatabase().finally(() => process.exit(0));
   });

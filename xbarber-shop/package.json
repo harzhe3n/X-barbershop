@@ -29,6 +29,8 @@
     "sql.js": "^1.15.2"
   },
   "dependencies": {
+    "@whiskeysockets/baileys": "6.7.24",
+    "qrcode": "1.5.4",
     "sqlite3": "^5.1.6"
   },
   "build": {

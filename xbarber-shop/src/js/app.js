@@ -141,7 +141,9 @@ const ICONS = {
     lock: '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
     unlock: '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>',
     key: '<path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"/><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/>',
-    refresh: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>'
+    refresh: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+    bell: '<path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/>',
+    link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>'
 };
 
 function icon(name, className = '') {
@@ -4481,6 +4483,7 @@ async function renderSettings() {
         { query: 'SELECT key, value FROM app_options WHERE key IN (?, ?)', params: [INSTAGRAM_KEY, WHATSAPP_KEY] }
     ]);
     const siteOpen = String(siteRows[0]?.value ?? '1') !== '0';
+    const whatsapp = await loadWhatsappStatus();
     const social = Object.fromEntries(socialRows.map(row => [row.key, row.value == null ? '' : String(row.value)]));
 
     const body = `
@@ -4524,6 +4527,7 @@ async function renderSettings() {
             </section>
             ${renderHoursCard(booking, settingsBarbers, parseBarberSlots(settingsSlotRows))}
             ${renderSiteCard(booking, siteOpen, Number(upcomingRows[0]?.count || 0))}
+            ${renderWhatsappCard(whatsapp)}
             <section class="card">
                 <h3 class="card-title">${icon('lock')}${escapeHtml(t('lock.settingsTitle'))}</h3>
                 <p class="card-text">${escapeHtml(t('lock.settingsText'))}</p>
@@ -4582,6 +4586,7 @@ async function renderSettings() {
 }
 
 function settingsAfterRender() {
+    watchWhatsapp();
     if (!state.focusHours) return;
     state.focusHours = false;
     dom.page.querySelector('.hours-card')?.scrollIntoView({ block: 'start' });
@@ -4776,6 +4781,130 @@ async function saveSiteSettings(form) {
     await loadBookingOptions();
     toast(t('toast.saved'));
     if (state.page === 'settings' && !modalStack.length) await renderPage({ keepScroll: true });
+}
+
+/* ------------------------------------------------------------------ */
+/* WhatsApp reminders (online only)                                    */
+/*                                                                     */
+/* The owner links the shop's WhatsApp once by scanning a QR code.     */
+/* The server then sends every waiting client with a phone number a   */
+/* message 20 minutes before their time. See server.js.                */
+/* ------------------------------------------------------------------ */
+
+const WHATSAPP_POLL_MS = 3000;
+let whatsappTimer = null;
+
+async function loadWhatsappStatus() {
+    if (!state.serverMode || typeof api.whatsapp !== 'function') return null;
+    try {
+        return await api.whatsapp('status');
+    } catch (error) {
+        console.warn('Could not read the WhatsApp status:', error);
+        return { state: 'error', error: error.message, recent: [] };
+    }
+}
+
+const WHATSAPP_RESULT_KEYS = {
+    sent: 'wa.sent',
+    sending: 'wa.sending',
+    'no-whatsapp': 'wa.noWhatsapp',
+    'bad-number': 'wa.badNumber'
+};
+
+function renderWhatsappCard(info) {
+    if (!state.serverMode) {
+        return `
+            <section class="card card-wide wa-card">
+                <h3 class="card-title">${icon('bell')}${escapeHtml(t('wa.title'))}</h3>
+                <p class="card-text">${escapeHtml(t('wa.localText'))}</p>
+            </section>`;
+    }
+    const current = info?.state || 'error';
+    const pill = {
+        ready: ['ok', 'wa.statusReady'],
+        qr: ['waiting', 'wa.statusQr'],
+        connecting: ['waiting', 'wa.statusConnecting'],
+        off: ['off', 'wa.statusOff'],
+        unavailable: ['error', 'wa.statusUnavailable'],
+        error: ['error', 'wa.statusError']
+    }[current] || ['error', 'wa.statusError'];
+
+    let main = '';
+    if (current === 'ready') {
+        main = `
+            <p class="card-text">${escapeHtml(t('wa.readyText', { n: info.before || 20 }))}</p>
+            ${info.phone ? `<p class="wa-phone">${icon('check')}<bdi dir="ltr">+${escapeHtml(info.phone)}</bdi></p>` : ''}
+            <div class="button-row"><button type="button" class="btn btn-ghost" data-action="wa-unlink">${icon('logout')}<span>${escapeHtml(t('wa.unlink'))}</span></button></div>`;
+    } else if (current === 'qr') {
+        main = `
+            <div class="wa-qr">
+                ${info.qr ? `<img src="${escapeHtml(info.qr)}" alt="${escapeHtml(t('wa.qrAlt'))}" width="240" height="240">` : `<span class="wa-qr-wait">${escapeHtml(t('wa.statusConnecting'))}</span>`}
+                <ol class="wa-steps">
+                    <li>${escapeHtml(t('wa.step1'))}</li>
+                    <li>${escapeHtml(t('wa.step2'))}</li>
+                    <li>${escapeHtml(t('wa.step3'))}</li>
+                </ol>
+            </div>
+            <div class="button-row"><button type="button" class="btn btn-ghost" data-action="wa-unlink">${icon('x')}<span>${escapeHtml(t('common.cancel'))}</span></button></div>`;
+    } else if (current === 'connecting') {
+        main = `<p class="card-text">${escapeHtml(t('wa.connectingText'))}</p>
+            <div class="button-row"><button type="button" class="btn btn-ghost" data-action="wa-unlink">${icon('logout')}<span>${escapeHtml(t('wa.unlink'))}</span></button></div>`;
+    } else if (current === 'off') {
+        main = `
+            <p class="card-text">${escapeHtml(t('wa.offText', { n: info.before || 20 }))}</p>
+            <div class="button-row"><button type="button" class="btn btn-primary" data-action="wa-link">${icon('link')}<span>${escapeHtml(t('wa.link'))}</span></button></div>`;
+    } else {
+        main = `<p class="card-text">${escapeHtml(t(current === 'unavailable' ? 'wa.unavailableText' : 'wa.errorText'))}</p>`;
+    }
+
+    const recent = Array.isArray(info?.recent) ? info.recent : [];
+    const list = recent.length ? `
+        <h4 class="wa-sub">${escapeHtml(t('wa.recent'))}</h4>
+        <ul class="wa-list">
+            ${recent.map(row => `
+                <li data-state="${escapeHtml(row.status)}">
+                    <strong>${escapeHtml(row.name || t('cashier.walkIn'))}</strong>
+                    <bdi dir="ltr">${escapeHtml(row.phone || '')}</bdi>
+                    <span>${escapeHtml(`${I18N.formatDateShort(row.date)} ${I18N.formatTime(row.time)}`)}</span>
+                    <em>${escapeHtml(t(WHATSAPP_RESULT_KEYS[row.status] || 'wa.sending'))}</em>
+                </li>`).join('')}
+        </ul>` : '';
+
+    return `
+        <section class="card card-wide wa-card" data-wa-state="${escapeHtml(current)}">
+            <div class="booking-head">
+                <h3 class="card-title">${icon('bell')}${escapeHtml(t('wa.title'))}</h3>
+                <span class="booking-status" data-state="${pill[0]}"><span class="status-dot"></span>${escapeHtml(t(pill[1]))}</span>
+            </div>
+            ${main}
+            ${info?.message ? `<p class="wa-message" lang="ckb" dir="rtl">${escapeHtml(info.message)}</p>` : ''}
+            ${list}
+        </section>`;
+}
+
+// While a QR code is shown or WhatsApp is connecting, the card refreshes by itself.
+function watchWhatsapp() {
+    clearTimeout(whatsappTimer);
+    const card = dom.page.querySelector('.wa-card[data-wa-state]');
+    if (!card || !['qr', 'connecting'].includes(card.dataset.waState)) return;
+    whatsappTimer = setTimeout(async () => {
+        const live = dom.page.querySelector('.wa-card[data-wa-state]');
+        if (!live || state.page !== 'settings') return;
+        const info = await loadWhatsappStatus();
+        const again = dom.page.querySelector('.wa-card[data-wa-state]');
+        if (!again) return;
+        again.outerHTML = renderWhatsappCard(info);
+        watchWhatsapp();
+    }, WHATSAPP_POLL_MS);
+}
+
+async function whatsappAction(action) {
+    if (action === 'unlink' && !await confirmDialog(t('wa.confirmUnlink'), { okLabel: t('wa.unlink'), danger: true })) return;
+    const info = await api.whatsapp(action);
+    const card = dom.page.querySelector('.wa-card[data-wa-state]');
+    if (card) card.outerHTML = renderWhatsappCard(info);
+    if (action === 'unlink') toast(t('wa.unlinked'));
+    watchWhatsapp();
 }
 
 // Online cashier: bookings made on the website show up by themselves, with a message.
@@ -5142,13 +5271,15 @@ const actions = {
     'add-product': () => openProductModal(),
     'edit-product': element => openProductModal(Number(element.dataset.id)),
     backup: () => backupDatabase(),
+    'wa-link': () => whatsappAction('link'),
+    'wa-unlink': () => whatsappAction('unlink'),
     restore: () => restoreDatabase(),
     'clear-history': () => clearHistory()
 };
 
 const busyActions = new Set([
     'take-client', 'back-to-waiting', 'undo-pay', 'done-client', 'slot-add', 'slot-edit', 'slot-remove', 'slot-length', 'toggle-work', 'toggle-online', 'remove-extra-slot', 'skip-slot', 'add-slot-pick',
-    'edit-finished', 'delete-finished', 'delete-sale', 'expense-delete', 'sell-done', 'barber-account', 'clear-history', 'remove-photo'
+    'edit-finished', 'delete-finished', 'delete-sale', 'expense-delete', 'sell-done', 'barber-account', 'clear-history', 'remove-photo', 'wa-link', 'wa-unlink'
 ]);
 
 document.addEventListener('click', event => {

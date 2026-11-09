@@ -230,6 +230,20 @@ CREATE TABLE IF NOT EXISTS barber_photos (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+-- WhatsApp reminders sent by the server, 20 minutes before a waiting client's time (see server.js).
+-- status: sending, sent, no-whatsapp (the number has no WhatsApp), bad-number.
+CREATE TABLE IF NOT EXISTS whatsapp_reminders (
+    order_id INTEGER NOT NULL,
+    date DATE NOT NULL,
+    time TEXT NOT NULL,
+    name TEXT,
+    phone TEXT,
+    status TEXT NOT NULL DEFAULT 'sending',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    sent_at DATETIME,
+    PRIMARY KEY (order_id, date, time)
+);
+
 -- Default owner sign-in: admin / admin123. The password can be changed in Settings;
 -- it is then saved here as sha256i$<iterations>$<salt>$<hex> (see src/js/auth.js).
 INSERT OR IGNORE INTO admins (username, password_hash) VALUES ('admin', '$2b$10$example_hash_for_demo');

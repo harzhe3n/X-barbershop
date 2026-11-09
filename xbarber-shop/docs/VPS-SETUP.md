@@ -48,9 +48,9 @@ ufw status
 
 | What you see | What to do |
 |---|---|
-| `node -v` shows **v18 or higher** | Node is ready. Skip the Node part of step 4. |
+| `node -v` shows **v20 or higher** | Node is ready. Skip the Node part of step 4. |
 | `node: command not found` | Install Node in step 4. |
-| Node **older than v18** | Stop here and send the output to your developer. A new Node could break the other project. |
+| Node **older than v20** | Stop here and send the output to your developer. A new Node could break the other project. |
 | Ports **80 / 443** belong to **nginx** | Good. XBARBER adds its own file to that nginx. |
 | Ports 80 / 443 belong to something else (`docker-proxy`, `apache2`, `caddy`, ...) | Stop here and send the output to your developer. |
 | Nothing on 80 / 443 | Good. nginx will use them. |
@@ -146,6 +146,7 @@ The code is public on GitHub, so anyone can know the default passwords. Change t
 4. **Settings → Shop**: name, phone, address, **Instagram** and **WhatsApp**. They show at the bottom of the website. Leave WhatsApp empty to use the shop phone.
 5. **Settings → Working hours and time slots**: opening hours (10:00 AM to midnight by default), closed days, and each barber's time between clients.
 6. **Barbers**: add each barber, **Add photo** (it shows big on the website), and **Create sign-in** so each barber can sign in on their own phone.
+7. **Settings → WhatsApp reminders**: press **Link WhatsApp**. On the shop's phone open WhatsApp → **Linked devices** → **Link a device** and scan the QR code. From then on, every waiting client with a phone number gets a WhatsApp message 20 minutes before their time (website bookings and clients added in the cashier). The link stays after restarts and updates. Keep the shop's phone connected to the internet now and then, or WhatsApp unlinks it after about two weeks.
 
 ### Move your current data
 
@@ -220,6 +221,7 @@ When you buy your domain (for example `xoshawi.com`):
 | "Today" or the free times are wrong by some hours | The time zone is in `/etc/systemd/system/xbarber.service` (`XBARBER_TZ=Asia/Baghdad`). Change it, then `systemctl daemon-reload && systemctl restart xbarber`. |
 | Forgot the owner password | Restore a backup from before the change, or ask a developer to reset the `admins` row. |
 | Customers cannot book | In the cashier: **Settings → Booking website** must say **Taking bookings**. |
+| WhatsApp reminders stopped | **Settings → WhatsApp reminders** must say **Linked**. If not, link it again. See what happened: `journalctl -u xbarber -n 100 | grep -i whatsapp`. |
 | The other project stopped working | `rm /etc/nginx/sites-enabled/xbarber && systemctl reload nginx` takes XBARBER out of nginx, then send the output of `nginx -t` to your developer. |
 
 ### Settings the server understands

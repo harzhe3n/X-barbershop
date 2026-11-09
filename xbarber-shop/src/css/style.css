@@ -3311,6 +3311,99 @@ body[data-signed-in] #offline-status[data-state="error"] {
     background: var(--waiting);
 }
 
+/* WhatsApp reminders (Settings) */
+
+.wa-qr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 16px 24px;
+    margin: 6px 0 14px;
+}
+
+.wa-qr img,
+.wa-qr-wait {
+    display: grid;
+    place-items: center;
+    width: 240px;
+    max-width: 100%;
+    height: auto;
+    aspect-ratio: 1;
+    padding: 10px;
+    border: 1px solid var(--line-2);
+    border-radius: 14px;
+    background: #fff;
+    color: #333;
+}
+
+.wa-steps {
+    flex: 1 1 220px;
+    margin: 0;
+    padding-inline-start: 20px;
+    color: var(--ink-2);
+    line-height: 1.7;
+}
+
+.wa-phone {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 12px;
+    font-size: 17px;
+    font-weight: 700;
+}
+
+.wa-message {
+    margin: 14px 0 0;
+    padding: 12px 14px;
+    border-radius: 14px;
+    border-start-start-radius: 4px;
+    background: var(--done-bg);
+    color: var(--done-ink);
+    font-weight: 600;
+    line-height: 1.6;
+}
+
+.wa-sub {
+    margin: 18px 0 8px;
+    font-size: 14px;
+}
+
+.wa-list {
+    display: grid;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.wa-list li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 12px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    background: var(--surface-3);
+    font-size: 13.5px;
+}
+
+.wa-list span {
+    color: var(--ink-2);
+}
+
+.wa-list em {
+    margin-inline-start: auto;
+    font-style: normal;
+    font-weight: 700;
+    color: var(--done-ink);
+}
+
+.wa-list li[data-state="no-whatsapp"] em,
+.wa-list li[data-state="bad-number"] em {
+    color: var(--danger-ink);
+}
+
 .switch-row {
     position: relative;
     display: flex;
