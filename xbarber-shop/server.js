@@ -1174,18 +1174,41 @@ async function handlePublicApi(req, res, url) {
 /* WhatsApp reminders                                                  */
 /*                                                                     */
 /* Once the owner links the shop's WhatsApp (Settings), every client   */
-/* still waiting, with a phone number, gets one message 20 minutes     */
-/* before their time: website bookings and clients added in the        */
-/* cashier alike. whatsapp_reminders keeps who was sent what, so       */
+/* still waiting, with a phone number, gets one message some minutes   */
+/* before their time (20 unless the owner changes it): website         */
+/* bookings and clients added in the cashier alike. The owner can also */
+/* change the message. whatsapp_reminders keeps who was sent what, so  */
 /* nobody gets it twice, even after a restart. A client moved to       */
 /* another time gets a new reminder for the new time.                  */
 /* ------------------------------------------------------------------ */
 
-const REMINDER_TEXT = 'بەڕێز ٢٠ دەقە ماوە بۆ کاتی سەرتاشیت دڵنیابە لەوەی لە کاتی خۆی لەوێ دەبیت';
-const REMINDER_BEFORE_MINUTES = 20;
-// Sent while 15 to 20 minutes are left. A booking made later than that gets no reminder.
-const REMINDER_LATEST_MINUTES = 15;
+const REMINDER_MESSAGE_KEY = 'whatsapp.message';
+const REMINDER_MINUTES_KEY = 'whatsapp.minutes';
+const REMINDER_DEFAULT_MINUTES = 20;
+// Sent up to 5 minutes late (the check runs every 30 seconds, and WhatsApp may reconnect).
+// A booking made after that gets no reminder.
+const REMINDER_WINDOW_MINUTES = 5;
 const REMINDER_CHECK_MS = 30 * 1000;
+
+function kurdishDigits(value) {
+  return String(value).replace(/\d/g, digit => '٠١٢٣٤٥٦٧٨٩'[digit]);
+}
+
+// The message when the owner has not written their own; it names the minutes.
+function defaultReminderText(minutes) {
+  return `بەڕێز ${kurdishDigits(minutes)} دەقە ماوە بۆ کاتی سەرتاشیت دڵنیابە لەوەی لە کاتی خۆی لەوێ دەبیت`;
+}
+
+// The owner's message and minutes from Settings (app_options).
+async function reminderSettings(connection) {
+  const rows = await dbAll(connection, 'SELECT key, value FROM app_options WHERE key IN (?, ?)',
+    [REMINDER_MESSAGE_KEY, REMINDER_MINUTES_KEY]);
+  const value = key => rows.find(row => row.key === key)?.value;
+  const number = Number(value(REMINDER_MINUTES_KEY));
+  const minutes = Number.isInteger(number) && number >= 1 && number <= 180 ? number : REMINDER_DEFAULT_MINUTES;
+  const custom = String(value(REMINDER_MESSAGE_KEY) || '').trim();
+  return { minutes, message: custom || defaultReminderText(minutes), custom: Boolean(custom), defaultMessage: defaultReminderText(minutes) };
+}
 let reminderRunning = false;
 let reminderCleanedAt = 0;
 
@@ -1195,9 +1218,13 @@ async function sendReminders() {
   try {
     const now = shopNow();
     const tomorrow = Slots.addDays(now.date, 1);
+    let message = '';
     // Claim the clients first, then send without holding the database.
     const due = await serialize(async () => {
       const connection = await openDatabase();
+      const settings = await reminderSettings(connection);
+      message = settings.message;
+      const latest = Math.max(0, settings.minutes - REMINDER_WINDOW_MINUTES);
       if (Date.now() - reminderCleanedAt > 60 * 60 * 1000) {
         reminderCleanedAt = Date.now();
         await dbRun(connection, "DELETE FROM whatsapp_reminders WHERE created_at < datetime('now', '-14 days')");
@@ -1217,7 +1244,7 @@ async function sendReminders() {
         const time = String(row.time).slice(0, 5);
         if (!/^\d{2}:\d{2}$/.test(time) || !String(row.phone || '').trim()) continue;
         const left = daysBetween(now.date, row.date) * 1440 + Slots.toMinutes(time) - now.minutes;
-        if (left > REMINDER_BEFORE_MINUTES || left <= REMINDER_LATEST_MINUTES) continue;
+        if (left > settings.minutes || left <= latest) continue;
         const digits = whatsappDigits(row.phone);
         await dbRun(connection,
           `INSERT OR IGNORE INTO whatsapp_reminders (order_id, date, time, name, phone, status)
@@ -1231,7 +1258,7 @@ async function sendReminders() {
     for (const item of due) {
       let result = null;
       try {
-        result = await WhatsApp.sendText(item.digits, REMINDER_TEXT);
+        result = await WhatsApp.sendText(item.digits, message);
       } catch (error) {
         console.error(`WhatsApp reminder to +${item.digits} failed:`, error.message);
       }
@@ -1242,7 +1269,7 @@ async function sendReminders() {
             'UPDATE whatsapp_reminders SET status = ?, sent_at = CURRENT_TIMESTAMP WHERE order_id = ? AND date = ? AND time = ?',
             [result, item.id, item.date, item.time]);
         } else {
-          // Not sent: try again on the next check, while it is still 15-20 minutes before.
+          // Not sent: try again on the next check, while it is still in time.
           await dbRun(connection,
             "DELETE FROM whatsapp_reminders WHERE order_id = ? AND date = ? AND time = ? AND status = 'sending'",
             [item.id, item.date, item.time]);
@@ -1256,16 +1283,37 @@ async function sendReminders() {
   }
 }
 
-// Owner only: link state, the QR code to scan, and the latest reminders.
+// Owner only: link state, the QR code or code to enter, the message, and the latest reminders.
+// link: no number shows a QR code; the shop's number gets a code to type in WhatsApp.
 async function handleWhatsApp(req, res, pathname) {
-  await readJson(req, 4096);
-  if (pathname === '/api/whatsapp/link') await WhatsApp.link();
-  else if (pathname === '/api/whatsapp/unlink') await WhatsApp.unlink();
-  else if (pathname !== '/api/whatsapp/status') throw httpError(404, 'API route not found.');
-  const recent = await serialize(async () => dbAll(await openDatabase(),
-    `SELECT name, phone, date, time, status, COALESCE(sent_at, created_at) AS at
-     FROM whatsapp_reminders ORDER BY created_at DESC, rowid DESC LIMIT 15`));
-  sendJson(res, 200, { ...WhatsApp.status(), message: REMINDER_TEXT, before: REMINDER_BEFORE_MINUTES, recent });
+  const body = await readJson(req, 4096);
+  if (pathname === '/api/whatsapp/link') {
+    const typed = String(body.phone || '').trim();
+    const digits = typed ? whatsappDigits(typed) : null;
+    if (typed && !digits) throw httpError(400, 'Check the phone number.');
+    await WhatsApp.link(digits);
+  } else if (pathname === '/api/whatsapp/unlink') {
+    await WhatsApp.unlink();
+  } else if (pathname !== '/api/whatsapp/status') {
+    throw httpError(404, 'API route not found.');
+  }
+  const { settings, recent } = await serialize(async () => {
+    const connection = await openDatabase();
+    return {
+      settings: await reminderSettings(connection),
+      recent: await dbAll(connection,
+        `SELECT name, phone, date, time, status, COALESCE(sent_at, created_at) AS at
+         FROM whatsapp_reminders ORDER BY created_at DESC, rowid DESC LIMIT 15`)
+    };
+  });
+  sendJson(res, 200, {
+    ...WhatsApp.status(),
+    message: settings.message,
+    customMessage: settings.custom,
+    defaultMessage: settings.defaultMessage,
+    before: settings.minutes,
+    recent
+  });
 }
 
 function serveAppMode(req, res) {

@@ -3353,6 +3353,69 @@ body[data-signed-in] #offline-status[data-state="error"] {
     font-weight: 700;
 }
 
+.wa-code {
+    display: inline-block;
+    margin: 4px 0 12px;
+    padding: 12px 20px;
+    border: 2px dashed var(--line-2);
+    border-radius: 14px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: clamp(26px, 8vw, 36px);
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    user-select: all;
+}
+
+.wa-code + .wa-steps {
+    margin-bottom: 14px;
+}
+
+.wa-warn {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 0 0 10px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: var(--waiting-bg);
+    color: var(--waiting-ink);
+    font-weight: 600;
+}
+
+.wa-warn .icon {
+    flex-shrink: 0;
+}
+
+.wa-link-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 10px;
+}
+
+.wa-link-row .field {
+    flex: 1 1 220px;
+    margin: 0;
+}
+
+.wa-link-row + .field-hint {
+    margin-bottom: 10px;
+}
+
+.wa-form {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line-2);
+}
+
+.wa-form .wa-sub {
+    margin-top: 0;
+}
+
+.wa-minutes input {
+    max-width: 140px;
+}
+
 .wa-message {
     margin: 14px 0 0;
     padding: 12px 14px;

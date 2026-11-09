@@ -4527,7 +4527,7 @@ async function renderSettings() {
             </section>
             ${renderHoursCard(booking, settingsBarbers, parseBarberSlots(settingsSlotRows))}
             ${renderSiteCard(booking, siteOpen, Number(upcomingRows[0]?.count || 0))}
-            ${renderWhatsappCard(whatsapp)}
+            ${renderWhatsappCard(whatsapp, social[WHATSAPP_KEY] || settings.phone || '')}
             <section class="card">
                 <h3 class="card-title">${icon('lock')}${escapeHtml(t('lock.settingsTitle'))}</h3>
                 <p class="card-text">${escapeHtml(t('lock.settingsText'))}</p>
@@ -4787,12 +4787,15 @@ async function saveSiteSettings(form) {
 /* WhatsApp reminders (online only)                                    */
 /*                                                                     */
 /* The owner links the shop's WhatsApp once by scanning a QR code.     */
-/* The server then sends every waiting client with a phone number a   */
-/* message 20 minutes before their time. See server.js.                */
+/* The server then sends every waiting client with a phone number the */
+/* owner's message, some minutes before their time. See server.js.     */
 /* ------------------------------------------------------------------ */
 
 const WHATSAPP_POLL_MS = 3000;
+const WHATSAPP_LIVE_STATES = ['qr', 'code', 'connecting'];
 let whatsappTimer = null;
+// The number put in the "shop's WhatsApp number" box: Settings → Shop (WhatsApp, or phone).
+let whatsappPhoneHint = '';
 
 async function loadWhatsappStatus() {
     if (!state.serverMode || typeof api.whatsapp !== 'function') return null;
@@ -4811,32 +4814,43 @@ const WHATSAPP_RESULT_KEYS = {
     'bad-number': 'wa.badNumber'
 };
 
-function renderWhatsappCard(info) {
-    if (!state.serverMode) {
-        return `
-            <section class="card card-wide wa-card">
-                <h3 class="card-title">${icon('bell')}${escapeHtml(t('wa.title'))}</h3>
-                <p class="card-text">${escapeHtml(t('wa.localText'))}</p>
-            </section>`;
-    }
+function waButton(action, iconName, labelKey, kind = 'btn-ghost') {
+    return `<button type="button" class="btn ${kind}" data-action="${action}">${icon(iconName)}<span>${escapeHtml(t(labelKey))}</span></button>`;
+}
+
+// The part of the card that changes while linking; it refreshes by itself.
+function renderWhatsappLive(info) {
     const current = info?.state || 'error';
     const pill = {
         ready: ['ok', 'wa.statusReady'],
         qr: ['waiting', 'wa.statusQr'],
+        code: ['waiting', 'wa.statusCode'],
         connecting: ['waiting', 'wa.statusConnecting'],
         off: ['off', 'wa.statusOff'],
         unavailable: ['error', 'wa.statusUnavailable'],
         error: ['error', 'wa.statusError']
     }[current] || ['error', 'wa.statusError'];
+    const minutes = info?.before || 20;
 
     let main = '';
     if (current === 'ready') {
         main = `
-            <p class="card-text">${escapeHtml(t('wa.readyText', { n: info.before || 20 }))}</p>
+            <p class="card-text">${escapeHtml(t('wa.readyText', { n: minutes }))}</p>
             ${info.phone ? `<p class="wa-phone">${icon('check')}<bdi dir="ltr">+${escapeHtml(info.phone)}</bdi></p>` : ''}
-            <div class="button-row"><button type="button" class="btn btn-ghost" data-action="wa-unlink">${icon('logout')}<span>${escapeHtml(t('wa.unlink'))}</span></button></div>`;
+            <div class="button-row">${waButton('wa-unlink', 'logout', 'wa.unlink')}</div>`;
+    } else if (current === 'code') {
+        main = `
+            <p class="card-text">${escapeHtml(t('wa.codeText'))}</p>
+            <div class="wa-code" dir="ltr">${escapeHtml(info.code || '')}</div>
+            <ol class="wa-steps">
+                <li>${escapeHtml(t('wa.step1'))}</li>
+                <li>${escapeHtml(t('wa.step2'))}</li>
+                <li>${escapeHtml(t('wa.codeStep3'))}</li>
+            </ol>
+            <div class="button-row">${waButton('wa-cancel', 'x', 'common.cancel')}</div>`;
     } else if (current === 'qr') {
         main = `
+            <p class="wa-warn">${icon('alert')}<span>${escapeHtml(t('wa.qrWarn'))}</span></p>
             <div class="wa-qr">
                 ${info.qr ? `<img src="${escapeHtml(info.qr)}" alt="${escapeHtml(t('wa.qrAlt'))}" width="240" height="240">` : `<span class="wa-qr-wait">${escapeHtml(t('wa.statusConnecting'))}</span>`}
                 <ol class="wa-steps">
@@ -4845,17 +4859,57 @@ function renderWhatsappCard(info) {
                     <li>${escapeHtml(t('wa.step3'))}</li>
                 </ol>
             </div>
-            <div class="button-row"><button type="button" class="btn btn-ghost" data-action="wa-unlink">${icon('x')}<span>${escapeHtml(t('common.cancel'))}</span></button></div>`;
+            <div class="button-row">${waButton('wa-cancel', 'x', 'common.cancel')}</div>`;
     } else if (current === 'connecting') {
         main = `<p class="card-text">${escapeHtml(t('wa.connectingText'))}</p>
-            <div class="button-row"><button type="button" class="btn btn-ghost" data-action="wa-unlink">${icon('logout')}<span>${escapeHtml(t('wa.unlink'))}</span></button></div>`;
+            <div class="button-row">${waButton('wa-unlink', 'logout', 'wa.unlink')}</div>`;
     } else if (current === 'off') {
         main = `
-            <p class="card-text">${escapeHtml(t('wa.offText', { n: info.before || 20 }))}</p>
-            <div class="button-row"><button type="button" class="btn btn-primary" data-action="wa-link">${icon('link')}<span>${escapeHtml(t('wa.link'))}</span></button></div>`;
+            <p class="card-text">${escapeHtml(t('wa.offText', { n: minutes }))}</p>
+            <div class="wa-link-row">
+                <label class="field"><span>${escapeHtml(t('wa.phoneLabel'))}</span>
+                    <input type="tel" data-wa-phone maxlength="30" dir="ltr" autocomplete="off" placeholder="0750 123 4567" value="${escapeHtml(whatsappPhoneHint)}">
+                </label>
+                ${waButton('wa-code', 'key', 'wa.getCode', 'btn-primary')}
+            </div>
+            <p class="field-hint">${escapeHtml(t('wa.codeHint'))}</p>
+            <div class="button-row">${waButton('wa-link', 'link', 'wa.showQr', 'btn-outline')}</div>`;
     } else {
         main = `<p class="card-text">${escapeHtml(t(current === 'unavailable' ? 'wa.unavailableText' : 'wa.errorText'))}</p>`;
     }
+
+    return `
+        <div class="wa-live" data-wa-state="${escapeHtml(current)}">
+            <div class="booking-head">
+                <h3 class="card-title">${icon('bell')}${escapeHtml(t('wa.title'))}</h3>
+                <span class="booking-status" data-state="${pill[0]}"><span class="status-dot"></span>${escapeHtml(t(pill[1]))}</span>
+            </div>
+            ${main}
+        </div>`;
+}
+
+function renderWhatsappCard(info, phoneHint = '') {
+    if (!state.serverMode) {
+        return `
+            <section class="card card-wide wa-card">
+                <h3 class="card-title">${icon('bell')}${escapeHtml(t('wa.title'))}</h3>
+                <p class="card-text">${escapeHtml(t('wa.localText'))}</p>
+            </section>`;
+    }
+    whatsappPhoneHint = phoneHint;
+    const ok = info && !['error', 'unavailable'].includes(info.state);
+    const form = ok ? `
+        <form class="stack wa-form" data-form="whatsapp" data-default="${escapeHtml(info.defaultMessage || '')}" autocomplete="off">
+            <h4 class="wa-sub">${escapeHtml(t('wa.settingsTitle'))}</h4>
+            <label class="field wa-minutes"><span>${escapeHtml(t('wa.minutes'))}</span>
+                <input type="number" name="minutes" min="1" max="180" step="1" inputmode="numeric" required value="${escapeHtml(info.before || 20)}">
+            </label>
+            <label class="field"><span>${escapeHtml(t('wa.message'))}</span>
+                <textarea name="message" rows="3" maxlength="1000" dir="auto" required>${escapeHtml(info.message || '')}</textarea>
+            </label>
+            <p class="field-hint">${escapeHtml(t('wa.messageHint'))}</p>
+            <div><button type="submit" class="btn btn-primary">${icon('check')}<span>${escapeHtml(t('common.save'))}</span></button></div>
+        </form>` : '';
 
     const recent = Array.isArray(info?.recent) ? info.recent : [];
     const list = recent.length ? `
@@ -4871,40 +4925,75 @@ function renderWhatsappCard(info) {
         </ul>` : '';
 
     return `
-        <section class="card card-wide wa-card" data-wa-state="${escapeHtml(current)}">
-            <div class="booking-head">
-                <h3 class="card-title">${icon('bell')}${escapeHtml(t('wa.title'))}</h3>
-                <span class="booking-status" data-state="${pill[0]}"><span class="status-dot"></span>${escapeHtml(t(pill[1]))}</span>
-            </div>
-            ${main}
-            ${info?.message ? `<p class="wa-message" lang="ckb" dir="rtl">${escapeHtml(info.message)}</p>` : ''}
+        <section class="card card-wide wa-card">
+            ${renderWhatsappLive(info)}
+            ${form}
             ${list}
         </section>`;
 }
 
-// While a QR code is shown or WhatsApp is connecting, the card refreshes by itself.
+function replaceWhatsappLive(info) {
+    const live = dom.page.querySelector('.wa-live');
+    if (live) live.outerHTML = renderWhatsappLive(info);
+}
+
+// While a QR code or a code is shown, or WhatsApp is connecting, the top of the card refreshes by itself.
 function watchWhatsapp() {
     clearTimeout(whatsappTimer);
-    const card = dom.page.querySelector('.wa-card[data-wa-state]');
-    if (!card || !['qr', 'connecting'].includes(card.dataset.waState)) return;
+    const live = dom.page.querySelector('.wa-live');
+    if (!live || !WHATSAPP_LIVE_STATES.includes(live.dataset.waState)) return;
     whatsappTimer = setTimeout(async () => {
-        const live = dom.page.querySelector('.wa-card[data-wa-state]');
-        if (!live || state.page !== 'settings') return;
+        if (state.page !== 'settings' || !dom.page.querySelector('.wa-live')) return;
         const info = await loadWhatsappStatus();
-        const again = dom.page.querySelector('.wa-card[data-wa-state]');
-        if (!again) return;
-        again.outerHTML = renderWhatsappCard(info);
+        const before = dom.page.querySelector('.wa-live')?.dataset.waState;
+        replaceWhatsappLive(info);
+        // Just linked: show the whole card again (number, latest reminders).
+        if (info?.state === 'ready' && before !== 'ready') {
+            toast(t('wa.linked'));
+            if (!modalStack.length) await renderPage({ keepScroll: true });
+            return;
+        }
         watchWhatsapp();
     }, WHATSAPP_POLL_MS);
 }
 
-async function whatsappAction(action) {
+async function whatsappAction(action, payload = {}) {
     if (action === 'unlink' && !await confirmDialog(t('wa.confirmUnlink'), { okLabel: t('wa.unlink'), danger: true })) return;
-    const info = await api.whatsapp(action);
-    const card = dom.page.querySelector('.wa-card[data-wa-state]');
-    if (card) card.outerHTML = renderWhatsappCard(info);
+    const info = await api.whatsapp(action === 'cancel' ? 'unlink' : action, payload);
+    replaceWhatsappLive(info);
     if (action === 'unlink') toast(t('wa.unlinked'));
     watchWhatsapp();
+}
+
+// "Get code": WhatsApp sends the shop's phone a request; the code to type shows here.
+function whatsappCode() {
+    const input = dom.page.querySelector('[data-wa-phone]');
+    const phone = input?.value.trim() || '';
+    const digits = phone.replace(/\D+/g, '');
+    if (digits.length < 7 || digits.length > 15) {
+        toast(t('wa.badPhone'), 'error');
+        input?.focus();
+        return;
+    }
+    whatsappPhoneHint = phone;
+    return whatsappAction('link', { phone });
+}
+
+// The owner's minutes and message. Left as the ready-made message, it follows the minutes.
+async function saveWhatsappSettings(form) {
+    const minutes = clampInt(form.elements.minutes.value, 1, 180, 20);
+    const message = form.elements.message.value.trim();
+    if (!message) {
+        toast(t('wa.emptyMessage'), 'error');
+        form.elements.message.focus();
+        return;
+    }
+    await runStatements([
+        setOption('whatsapp.minutes', String(minutes)),
+        setOption('whatsapp.message', message === (form.dataset.default || '').trim() ? '' : message)
+    ]);
+    toast(t('toast.saved'));
+    if (state.page === 'settings' && !modalStack.length) await renderPage({ keepScroll: true });
 }
 
 // Online cashier: bookings made on the website show up by themselves, with a message.
@@ -5272,6 +5361,8 @@ const actions = {
     'edit-product': element => openProductModal(Number(element.dataset.id)),
     backup: () => backupDatabase(),
     'wa-link': () => whatsappAction('link'),
+    'wa-code': () => whatsappCode(),
+    'wa-cancel': () => whatsappAction('cancel'),
     'wa-unlink': () => whatsappAction('unlink'),
     restore: () => restoreDatabase(),
     'clear-history': () => clearHistory()
@@ -5279,7 +5370,7 @@ const actions = {
 
 const busyActions = new Set([
     'take-client', 'back-to-waiting', 'undo-pay', 'done-client', 'slot-add', 'slot-edit', 'slot-remove', 'slot-length', 'toggle-work', 'toggle-online', 'remove-extra-slot', 'skip-slot', 'add-slot-pick',
-    'edit-finished', 'delete-finished', 'delete-sale', 'expense-delete', 'sell-done', 'barber-account', 'clear-history', 'remove-photo', 'wa-link', 'wa-unlink'
+    'edit-finished', 'delete-finished', 'delete-sale', 'expense-delete', 'sell-done', 'barber-account', 'clear-history', 'remove-photo', 'wa-link', 'wa-code', 'wa-cancel', 'wa-unlink'
 ]);
 
 document.addEventListener('click', event => {
@@ -5408,10 +5499,10 @@ document.addEventListener('submit', event => {
         saveShop(form).catch(handleError);
     } else if (form.dataset.form === 'history-password') {
         saveHistoryPassword(form).catch(handleError);
-    } else if (['hours', 'site', 'admin-password'].includes(form.dataset.form)) {
+    } else if (['hours', 'site', 'admin-password', 'whatsapp'].includes(form.dataset.form)) {
         const button = form.querySelector('button[type="submit"]');
         if (button) button.disabled = true;
-        const save = { hours: saveHours, site: saveSiteSettings, 'admin-password': saveAdminPassword }[form.dataset.form];
+        const save = { hours: saveHours, site: saveSiteSettings, 'admin-password': saveAdminPassword, whatsapp: saveWhatsappSettings }[form.dataset.form];
         save(form)
             .catch(handleError)
             .finally(() => {

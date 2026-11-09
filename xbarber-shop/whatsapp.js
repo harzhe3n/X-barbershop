@@ -1,9 +1,11 @@
 'use strict';
 
 /*
- * The shop's WhatsApp, linked like WhatsApp Web: the owner scans a QR code once
- * (Cashier → Settings → WhatsApp reminders) with the shop's phone. After that the
- * server can send messages from that number (see the reminders in server.js).
+ * The shop's WhatsApp, linked like WhatsApp Web (Cashier → Settings → WhatsApp reminders).
+ * The owner links it once, either by scanning a QR code inside WhatsApp, or by typing
+ * the shop's number and entering the 8-letter code WhatsApp asks for (for when the
+ * cashier is open on the shop's phone itself). After that the server can send
+ * messages from that number (see the reminders in server.js).
  *
  * The link is saved in <data folder>/whatsapp-auth, so it survives restarts.
  * Uses @whiskeysockets/baileys (no browser needed). Set XBARBER_WHATSAPP_DEBUG=1
@@ -23,11 +25,15 @@ let socket = null;
 let starting = false;
 let retryTimer = null;
 let retryDelay = 3000;
+// Linking by code: the shop's number, and whether the code was asked for yet.
+let pairPhone = null;
+let pairRequested = false;
 
 const status = {
-  // unavailable | off | connecting | qr | ready
+  // unavailable | off | connecting | qr | code | ready
   state: 'off',
   qr: null,
+  code: null,
   phone: null,
   error: null
 };
@@ -64,12 +70,13 @@ async function loadLibraries() {
   }
 }
 
-// Linked once a QR code was scanned: the saved sign-in then names the shop's number.
+// Linked once WhatsApp accepted this device (QR code or code): the saved sign-in then has
+// the account WhatsApp signed. (With a code, the number is saved before it is entered.)
 function isLinked() {
   if (!authDir) return false;
   try {
     const creds = JSON.parse(fs.readFileSync(path.join(authDir, 'creds.json'), 'utf8'));
-    return Boolean(creds?.me?.id);
+    return Boolean(creds?.account);
   } catch (error) {
     return false;
   }
@@ -93,7 +100,9 @@ async function connect() {
   clearTimeout(retryTimer);
   status.state = 'connecting';
   status.qr = null;
+  status.code = null;
   status.error = null;
+  pairRequested = false;
 
   try {
     fs.mkdirSync(authDir, { recursive: true });
@@ -120,7 +129,23 @@ async function connect() {
     current.ev.on('creds.update', saveCreds);
     current.ev.on('connection.update', update => {
       if (socket !== current) return;
-      if (update.qr) {
+      if (update.qr && pairPhone && !auth.creds?.account) {
+        // Linking by code: ask WhatsApp for it once the connection is ready.
+        if (!pairRequested) {
+          pairRequested = true;
+          current.requestPairingCode(pairPhone)
+            .then(code => {
+              if (socket !== current) return;
+              const text = String(code || '').toUpperCase();
+              status.code = text.length === 8 ? `${text.slice(0, 4)}-${text.slice(4)}` : text;
+              status.state = 'code';
+            })
+            .catch(error => {
+              console.error('WhatsApp code:', error.message);
+              status.error = error.message;
+            });
+        }
+      } else if (update.qr) {
         status.state = 'qr';
         QRCode.toDataURL(update.qr, { margin: 1, width: 280 })
           .then(image => {
@@ -131,7 +156,9 @@ async function connect() {
       if (update.connection === 'open') {
         status.state = 'ready';
         status.qr = null;
+        status.code = null;
         status.error = null;
+        pairPhone = null;
         status.phone = String(current.user?.id || '').split(/[:@]/)[0] || null;
         retryDelay = 3000;
         console.log(`WhatsApp linked${status.phone ? ` (+${status.phone})` : ''}.`);
@@ -143,16 +170,18 @@ async function connect() {
         if (code === reasons.loggedOut) {
           // Unlinked from the phone (Linked devices → Log out).
           clearAuth();
-          Object.assign(status, { state: 'off', qr: null, phone: null, error: null });
+          pairPhone = null;
+          Object.assign(status, { state: 'off', qr: null, code: null, phone: null, error: null });
           console.log('WhatsApp was unlinked.');
         } else if (code === reasons.restartRequired) {
           // Normal right after the QR code is scanned.
           retryDelay = 1000;
           scheduleRetry();
-        } else if (!auth.creds?.me?.id) {
-          // The QR code was not scanned in time. The owner can press Link again.
+        } else if (!auth.creds?.account) {
+          // The QR code or the code was not used in time. The owner can try again.
           clearAuth();
-          Object.assign(status, { state: 'off', qr: null });
+          pairPhone = null;
+          Object.assign(status, { state: 'off', qr: null, code: null });
         } else {
           status.state = 'connecting';
           status.error = update.lastDisconnect?.error?.message || null;
@@ -186,9 +215,12 @@ module.exports = {
     return status.state === 'ready' && Boolean(socket);
   },
 
-  // The owner pressed "Link WhatsApp": show a new QR code.
-  async link() {
-    if (socket || starting) return;
+  // The owner pressed "Show QR code" (no number) or "Get code" (the shop's number, digits
+  // with the country code).
+  async link(phoneDigits = null) {
+    if (socket || starting || isLinked()) return;
+    clearAuth();
+    pairPhone = phoneDigits || null;
     retryDelay = 3000;
     await connect();
   },
@@ -196,6 +228,7 @@ module.exports = {
   // The owner pressed "Unlink": log out on WhatsApp too, then forget the link.
   async unlink() {
     clearTimeout(retryTimer);
+    pairPhone = null;
     const current = socket;
     socket = null;
     if (current) {
@@ -206,7 +239,7 @@ module.exports = {
       }
     }
     clearAuth();
-    Object.assign(status, { state: baileys ? 'off' : status.state, qr: null, phone: null, error: null });
+    Object.assign(status, { state: baileys ? 'off' : status.state, qr: null, code: null, phone: null, error: null });
   },
 
   /*

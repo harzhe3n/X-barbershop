@@ -146,7 +146,10 @@ The code is public on GitHub, so anyone can know the default passwords. Change t
 4. **Settings → Shop**: name, phone, address, **Instagram** and **WhatsApp**. They show at the bottom of the website. Leave WhatsApp empty to use the shop phone.
 5. **Settings → Working hours and time slots**: opening hours (10:00 AM to midnight by default), closed days, and each barber's time between clients.
 6. **Barbers**: add each barber, **Add photo** (it shows big on the website), and **Create sign-in** so each barber can sign in on their own phone.
-7. **Settings → WhatsApp reminders**: press **Link WhatsApp**. On the shop's phone open WhatsApp → **Linked devices** → **Link a device** and scan the QR code. From then on, every waiting client with a phone number gets a WhatsApp message 20 minutes before their time (website bookings and clients added in the cashier). The link stays after restarts and updates. Keep the shop's phone connected to the internet now and then, or WhatsApp unlinks it after about two weeks.
+7. **Settings → WhatsApp reminders**: link the shop's WhatsApp once. From then on, every waiting client with a phone number gets a WhatsApp message before their time (website bookings and clients added in the cashier). The link stays after restarts and updates. Keep the shop's phone connected to the internet now and then, or WhatsApp unlinks it after about two weeks.
+   - **Cashier open on the shop's phone itself:** type the shop's WhatsApp number and press **Get code**. In WhatsApp: **Linked devices** → **Link a device** → **Link with phone number instead**, and type the code.
+   - **Cashier open on another phone, iPad or computer:** press **Show QR code instead**, then in WhatsApp on the shop's phone: **Linked devices** → **Link a device**, and scan it. Scan it from inside WhatsApp: the phone camera or Google only shows a long text.
+   - Under **Message and time** you can change the message and how many minutes before (20 by default).
 
 ### Move your current data
 
