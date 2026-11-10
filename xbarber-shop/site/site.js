@@ -584,29 +584,43 @@
         settle();
     }
 
+    // The photos stand in a stack: the barber in the middle in front, the ones next to it
+    // smaller and tucked half behind it, the next ones only just showing behind those.
+    const STACK = {
+        near: 0.5, // how far the next photo sits from the middle one (part of a photo's width)
+        far: 0.26, // how much further each photo after that
+        nearScale: 0.84,
+        farScale: 0.72
+    };
+
     function measureSlider() {
         const card = stage.querySelector('.card');
         if (!card) return;
-        const gap = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--gap')) || 20;
-        slider.step = card.offsetWidth + gap;
+        slider.width = card.offsetWidth;
+        // Dragging by this many pixels moves one barber.
+        slider.step = card.offsetWidth * STACK.near;
     }
 
     // Puts every photo in its place for the slider's position right now.
     function layoutSlider() {
         if (!slider.total) return;
         const dir = isRtl() ? -1 : 1;
+        const width = slider.width || slider.step / STACK.near;
         const speed = slider.target - slider.current;
-        const skew = Math.max(-6, Math.min(6, speed * -9)) * dir;
+        const skew = Math.max(-3, Math.min(3, speed * -5)) * dir;
         slider.cards.forEach((card, virtual) => {
             const offset = virtual - slider.current;
             const distance = Math.abs(offset);
-            const scale = 1 - Math.min(distance, 1) * 0.12;
-            card.style.transform = `translate3d(${(offset * slider.step * dir).toFixed(2)}px, 0, 0) scale(${scale.toFixed(4)}) skewX(${skew.toFixed(2)}deg)`;
-            card.style.opacity = String(Math.max(0, 1 - Math.min(distance, 3) * 0.24).toFixed(3));
+            const near = Math.min(distance, 1);
+            const far = Math.max(distance - 1, 0);
+            const x = Math.sign(offset) * width * (near * STACK.near + far * STACK.far);
+            const scale = 1 - near * (1 - STACK.nearScale) - Math.min(far, 1) * (STACK.nearScale - STACK.farScale);
+            card.style.transform = `translate3d(${(x * dir).toFixed(2)}px, 0, 0) scale(${scale.toFixed(4)}) skewX(${skew.toFixed(2)}deg)`;
+            // Full in the middle, a little darker behind, gone after the second one.
+            card.style.opacity = String(distance <= 1 ? 1 : Math.max(0, 1 - (distance - 1) * 0.6).toFixed(3));
+            card.style.setProperty('--shade', (Math.min(distance, 2) * 0.22).toFixed(3));
             card.style.zIndex = String(100 - Math.round(distance * 10));
-            // The photo moves a little slower than its frame.
-            const media = card.firstElementChild;
-            if (media) media.style.transform = `translate3d(${(-offset * 9 * dir).toFixed(2)}%, 0, 0)`;
+            card.style.visibility = distance > 2.7 ? 'hidden' : '';
             const active = distance < 0.5;
             card.classList.toggle('is-active', active);
             card.tabIndex = active ? 0 : -1;
