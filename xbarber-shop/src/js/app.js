@@ -54,6 +54,19 @@ const PAGE_ICONS = {
 };
 const MAX_TRANSACTION_STATEMENTS = 100;
 const REFRESH_INTERVAL_MS = 30000;
+const HOURS_STORAGE_KEY = 'xbarber-hours';
+
+// The opening hours last loaded (also kept on this device, so "today" is right before they load).
+// When the shop is open past midnight, the night belongs to the day the shop opened.
+let knownHours = savedHours();
+
+function savedHours() {
+    try {
+        return XSlots.shopHours(JSON.parse(localStorage.getItem(HOURS_STORAGE_KEY) || '{}'));
+    } catch (error) {
+        return XSlots.shopHours({});
+    }
+}
 
 const state = {
     signedIn: false,
@@ -186,8 +199,15 @@ function toDateString(date) {
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
+// The shop day and its minute right now (see XSlots.shopDay): at 01:30 after a night that
+// started yesterday, today is still yesterday, at minute 25 × 60 + 30.
+function shopClock() {
+    const now = new Date();
+    return XSlots.shopDay(knownHours, toDateString(now), now.getHours() * 60 + now.getMinutes());
+}
+
 function todayString() {
-    return toDateString(new Date());
+    return shopClock().date;
 }
 
 function parseDate(value) {
@@ -566,7 +586,13 @@ async function handleLogin(event) {
     state.signedIn = true;
     state.user = user;
     state.editUnlockedUntil = 0;
+    try {
+        await loadBookingOptions();
+    } catch (error) {
+        console.warn('Could not load the opening hours:', error);
+    }
     state.boardDate = todayString();
+    state.historyDay = todayString();
     if (!allowedPages().includes(state.page)) state.page = 'cashier';
     document.body.dataset.signedIn = 'true';
     document.body.dataset.role = user.role;
@@ -737,7 +763,7 @@ function ticketMoney(ticket) {
 const SLOT_PRESETS = [10, 20, 30];
 
 const {
-    toMinutes, fromMinutes, closingMinutes, slotGrid, parseBarberSlots, barberStep,
+    toMinutes, fromMinutes, closingMinutes, dayMinute, dayMinutes, slotGrid, parseBarberSlots, barberStep,
     offKey, extraKey, skipKey, parseExtraSlots, parseSkippedSlots, daySlots, parseOffDays, clampInt, parseWeekdays,
     parseBarberDays, barberDaysAhead
 } = XSlots;
@@ -751,9 +777,16 @@ function daysAheadLabel(value) {
     return t('booking.days', { n: value });
 }
 
+// Minutes into the shop day (more than 24 × 60 after midnight when the shop is open late).
 function nowMinutes() {
-    const now = new Date();
-    return now.getHours() * 60 + now.getMinutes();
+    return shopClock().minutes;
+}
+
+// SQL to sort by a time column the shop-day way: times after midnight come after the evening.
+function timeOrder(column, direction = '') {
+    const { cutoff } = XSlots.dayBounds(knownHours);
+    const dir = direction ? ` ${direction}` : '';
+    return cutoff ? `(CASE WHEN ${column} < '${fromMinutes(cutoff)}' THEN 1 ELSE 0 END)${dir}, ${column}${dir}` : `${column}${dir}`;
 }
 
 // Opening hours and the shop's default time between clients.
@@ -952,16 +985,17 @@ function renderSlotBar(hours, pastFree) {
 // slots, the barber's own steps after closing and before opening, plus every 5 minutes in "Other time". Slots that already
 // exist, and on today times that are already over, are left out.
 function addSlotChoices(hours, step, existing, isPast, deleted = []) {
-    const open = toMinutes(hours.open);
-    const close = closingMinutes(hours.close);
+    // The shop day runs from cutoff to cutoff + 24 hours (see XSlots.dayBounds).
+    const { start: open, end: close, cutoff } = XSlots.dayBounds(hours);
+    const last = cutoff + 24 * 60;
     const taken = new Set(existing);
-    const usable = minutes => minutes >= 0 && minutes < 24 * 60 && !taken.has(minutes) && !isPast(minutes);
+    const usable = minutes => minutes >= cutoff && minutes < last && !taken.has(minutes) && !isPast(minutes);
     const after = [];
-    for (let minutes = open + Math.floor((close - open) / step) * step; minutes < 24 * 60 && after.length < 16; minutes += step) {
+    for (let minutes = open + Math.floor((close - open) / step) * step; minutes < last && after.length < 16; minutes += step) {
         if (usable(minutes)) after.push(minutes);
     }
     const before = [];
-    for (let minutes = open - step; minutes >= Math.max(open - 180, 0) && before.length < 12; minutes -= step) {
+    for (let minutes = open - step; minutes >= Math.max(open - 180, cutoff) && before.length < 12; minutes -= step) {
         if (usable(minutes)) before.unshift(minutes);
     }
     // Halfway between two regular slots (rounded to 5 minutes), the next ones that are still to come.
@@ -973,11 +1007,11 @@ function addSlotChoices(hours, step, existing, isPast, deleted = []) {
         }
     }
     const other = [];
-    for (let minutes = 0; minutes < 24 * 60; minutes += 5) {
+    for (let minutes = Math.ceil(cutoff / 5) * 5; minutes < last; minutes += 5) {
         if (usable(minutes)) other.push(minutes);
     }
     // Regular slots deleted on this day come first, so they are easy to put back.
-    const removed = deleted.filter(usable);
+    const removed = deleted.map(minutes => dayMinute(hours, minutes)).filter(usable);
     return { removed, between, after, before, other };
 }
 
@@ -1052,7 +1086,7 @@ async function addExtraSlot(barberId, time) {
         return;
     }
     const saved = await changeExtraSlots(barberId, before => {
-        if (daySlots(hours, step, before, skipped).includes(minutes)) {
+        if (daySlots(hours, step, before, skipped).includes(dayMinute(hours, minutes))) {
             toast(t('slots.slotExists', { time: I18N.formatTime(fromMinutes(minutes)) }), 'error');
             return null;
         }
@@ -1250,13 +1284,13 @@ function cashierAfterRender({ keepScroll }) {
 
 // Rows of a column, sorted by time: free slots, and clients (in their slot, or at their own time).
 // A slot is taken when a client's time is inside it (from its start up to the next slot).
-function columnRows(column, slots, step, extra = []) {
+function columnRows(column, slots, step, extra = [], hours = knownHours) {
     const withSlots = Boolean(column.barber && Number(column.barber.is_active));
-    const added = new Set(extra);
+    const added = new Set(extra.map(minutes => dayMinute(hours, minutes)));
     const rows = [];
     const clientTimes = [];
     column.tickets.forEach(ticket => {
-        const minutes = toMinutes(ticket.time);
+        const minutes = dayMinutes(hours, ticket.time);
         if (minutes != null) clientTimes.push(minutes);
         rows.push({ kind: 'ticket', minutes: minutes == null ? -1 : minutes, ticket });
     });
@@ -1303,7 +1337,7 @@ function renderColumn(column, ctx) {
         return 'data-now';
     };
 
-    const rowsHtml = columnRows(column, grid, step, extra).map(row => {
+    const rowsHtml = columnRows(column, grid, step, extra, ctx.hours).map(row => {
         if (row.kind === 'ticket') {
             const now = markNow(row.minutes, true);
             if (form && form.ticketId === row.ticket.id) return renderSlotForm(form, ctx, now);
@@ -3123,7 +3157,7 @@ async function renderHistory() {
     const salesQueries = own ? [] : [
         {
             query: `SELECT id, date, time, total, payment_method FROM product_sales
-                    WHERE date BETWEEN ? AND ? ORDER BY date DESC, time DESC, id DESC LIMIT ${limit}`,
+                    WHERE date BETWEEN ? AND ? ORDER BY date DESC, ${timeOrder('time', 'DESC')}, id DESC LIMIT ${limit}`,
             params: [start, end]
         },
         {
@@ -3134,7 +3168,7 @@ async function renderHistory() {
         },
         {
             query: `SELECT ${EXPENSE_COLUMNS} FROM expenses WHERE date BETWEEN ? AND ?
-                    ORDER BY date DESC, time DESC, id DESC LIMIT ${limit}`,
+                    ORDER BY date DESC, ${timeOrder('time', 'DESC')}, id DESC LIMIT ${limit}`,
             params: [start, end]
         }
     ];
@@ -3142,7 +3176,7 @@ async function renderHistory() {
         { query: 'SELECT id, name, is_active FROM barbers ORDER BY id' },
         {
             query: `SELECT ${TICKET_COLUMNS} FROM orders o LEFT JOIN customers c ON c.id = o.customer_id
-                    WHERE ${where} ORDER BY o.date DESC, o.time DESC, o.id DESC LIMIT ${limit}`,
+                    WHERE ${where} ORDER BY o.date DESC, ${timeOrder('o.time', 'DESC')}, o.id DESC LIMIT ${limit}`,
             params
         },
         {
@@ -3354,7 +3388,7 @@ async function renderSell() {
                     WHERE ps.date = ? GROUP BY i.product_id ORDER BY quantity DESC, money DESC`,
             params: [today]
         },
-        { query: 'SELECT id, time, total, payment_method FROM product_sales WHERE date = ? ORDER BY time DESC, id DESC LIMIT 50', params: [today] },
+        { query: `SELECT id, time, total, payment_method FROM product_sales WHERE date = ? ORDER BY ${timeOrder('time', 'DESC')}, id DESC LIMIT 50`, params: [today] },
         {
             query: `SELECT i.sale_id, i.quantity, p.name FROM product_sale_items i
                     JOIN product_sales ps ON ps.id = i.sale_id LEFT JOIN products p ON p.id = i.product_id
@@ -3706,7 +3740,7 @@ async function renderExpenses() {
     const [rows, totals] = await queryMany([
         {
             query: `SELECT ${EXPENSE_COLUMNS} FROM expenses WHERE date BETWEEN ? AND ?
-                    ORDER BY date DESC, time DESC, id DESC LIMIT 1000`,
+                    ORDER BY date DESC, ${timeOrder('time', 'DESC')}, id DESC LIMIT 1000`,
             params: [start, end]
         },
         { query: 'SELECT COUNT(*) AS count, COALESCE(SUM(amount), 0) AS total FROM expenses WHERE date BETWEEN ? AND ?', params: [start, end] }
@@ -4715,6 +4749,12 @@ async function loadBookingOptions() {
         if (name in options) options[name] = row.value == null ? '' : String(row.value);
     });
     state.booking = options;
+    knownHours = XSlots.shopHours(options);
+    try {
+        localStorage.setItem(HOURS_STORAGE_KEY, JSON.stringify({ open: options.open, close: options.close }));
+    } catch (error) {
+        // Private mode: the hours are loaded again next time.
+    }
     return options;
 }
 
@@ -5118,23 +5158,37 @@ function renderHoursCard(options, barbers = [], barberSlots = new Map()) {
 }
 
 // Ready-made opening and closing times every 30 minutes, so nothing has to be typed.
-// Closing times end with midnight (12:00 AM).
+// Closing times run from the morning to midnight (12:00 AM), then on after midnight up to
+// 8:00 AM, for a shop that stays open all night (a closing time before the opening time).
+const NIGHT_CLOSE_UNTIL = 8 * 60;
+
 function hourChoices(selected, closing) {
     const times = [];
-    for (let minutes = closing ? 30 : 0; minutes < 24 * 60; minutes += 30) times.push(fromMinutes(minutes));
-    if (closing) times.push('00:00');
+    if (closing) {
+        for (let minutes = NIGHT_CLOSE_UNTIL + 30; minutes < 24 * 60; minutes += 30) times.push(fromMinutes(minutes));
+        for (let minutes = 0; minutes <= NIGHT_CLOSE_UNTIL; minutes += 30) times.push(fromMinutes(minutes));
+    } else {
+        for (let minutes = 0; minutes < 24 * 60; minutes += 30) times.push(fromMinutes(minutes));
+    }
     const current = String(selected || '').slice(0, 5);
     if (isValidTime(current) && !times.includes(current)) {
         times.push(current);
-        times.sort((a, b) => (closing ? closingMinutes(a) - closingMinutes(b) : toMinutes(a) - toMinutes(b)));
+        const order = time => (closing && toMinutes(time) <= NIGHT_CLOSE_UNTIL ? toMinutes(time) + 24 * 60 : toMinutes(time));
+        times.sort((a, b) => order(a) - order(b));
     }
-    return times.map(time => `<option value="${time}" ${time === current ? 'selected' : ''}>${escapeHtml(closing ? closingLabel(time) : I18N.formatTime(time))}</option>`).join('');
+    const label = time => {
+        if (!closing) return I18N.formatTime(time);
+        if (time === '00:00') return closingLabel(time);
+        return toMinutes(time) <= NIGHT_CLOSE_UNTIL ? t('hours.afterMidnight', { time: I18N.formatTime(time) }) : I18N.formatTime(time);
+    };
+    return times.map(time => `<option value="${time}" ${time === current ? 'selected' : ''}>${escapeHtml(label(time))}</option>`).join('');
 }
 
 async function saveHours(form) {
     const open = isValidTime(form.elements.open.value) ? form.elements.open.value.slice(0, 5) : BOOKING_DEFAULTS.open;
     const close = isValidTime(form.elements.close.value) ? form.elements.close.value.slice(0, 5) : BOOKING_DEFAULTS.close;
-    if (closingMinutes(close) <= toMinutes(open)) {
+    // Closing before opening is after midnight; only the same time for both is wrong.
+    if (close === open) {
         toast(t('booking.badHours'), 'error');
         form.elements.close.focus();
         return false;

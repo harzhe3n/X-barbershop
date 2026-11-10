@@ -57,6 +57,44 @@
         return minutes === 0 ? DAY : minutes;
     }
 
+    /*
+     * The shop may stay open past midnight, for example 10:00 to 04:00. Then the hours after
+     * midnight belong to the day the shop opened: a client at 01:00 is saved on that day, and
+     * history counts the whole night as one day. Inside a shop day, times are counted in
+     * minutes from that day's midnight, so 01:00 after midnight is 25 × 60 = 1500.
+     *
+     *   start    opening time (minutes)
+     *   end      closing time; more than 1440 when the shop closes after midnight
+     *   cutoff   a time of day before this belongs to the night before (halfway through the
+     *            closed hours, so slots added a little after closing still count as night)
+     *   rollover the clock time when "today" moves on to the next shop day (closing time)
+     */
+    function dayBounds(hours) {
+        const start = toMinutes(hours.open) ?? toMinutes(DEFAULTS.open);
+        let end = toMinutes(hours.close) ?? 0;
+        if (end <= start) end += DAY;
+        if (end <= DAY) return { start, end, cutoff: 0, rollover: 0 };
+        const rollover = end - DAY;
+        return { start, end, cutoff: Math.round((rollover + start) / 2), rollover };
+    }
+
+    // A time of day (minutes) as minutes in the shop day: after-midnight times get 24 hours added.
+    function dayMinute(hours, minutes) {
+        if (minutes == null) return null;
+        return minutes < dayBounds(hours).cutoff ? minutes + DAY : minutes;
+    }
+
+    function dayMinutes(hours, time) {
+        return dayMinute(hours, toMinutes(time));
+    }
+
+    // The shop day and its minute for a clock date and time: at 01:30 after a night that
+    // started yesterday, it is still yesterday's shop day, at minute 1530.
+    function shopDay(hours, date, minutes) {
+        const { rollover } = dayBounds(hours);
+        return minutes < rollover ? { date: addDays(date, -1), minutes: minutes + DAY } : { date, minutes };
+    }
+
     function weekday(date) {
         const [year, month, day] = String(date).split('-').map(Number);
         return new Date(Date.UTC(year, (month || 1) - 1, day || 1)).getUTCDay();
@@ -68,11 +106,12 @@
         return `${value.getUTCFullYear()}-${pad(value.getUTCMonth() + 1)}-${pad(value.getUTCDate())}`;
     }
 
-    // Opening hours and the shop's default time between clients.
+    // Opening hours and the shop's default time between clients. A closing time earlier than
+    // the opening time is after midnight (10:00 to 04:00).
     function shopHours(options = {}) {
         let open = isValidTime(options.open) ? String(options.open).slice(0, 5) : DEFAULTS.open;
         let close = isValidTime(options.close) ? String(options.close).slice(0, 5) : DEFAULTS.close;
-        if (closingMinutes(close) <= toMinutes(open)) {
+        if (open === close) {
             open = DEFAULTS.open;
             close = DEFAULTS.close;
         }
@@ -87,8 +126,7 @@
 
     // Start times (in minutes) of every regular slot. The last slot ends by closing time.
     function slotGrid(hours, step = hours.slot) {
-        const start = toMinutes(hours.open);
-        const end = closingMinutes(hours.close);
+        const { start, end } = dayBounds(hours);
         const list = [];
         for (let minutes = start; minutes + step <= end && list.length < 300; minutes += step) list.push(minutes);
         return list;
@@ -176,11 +214,11 @@
     }
 
     // The barber's slots for a day: the regular ones (minus the ones the barber deleted)
-    // plus the ones added by hand.
+    // plus the ones added by hand. In shop-day minutes (after midnight is more than 1440).
     function daySlots(hours, step, extra = [], skip = []) {
-        const deleted = new Set(skip);
+        const deleted = new Set(skip.map(minutes => dayMinute(hours, minutes)));
         const regular = slotGrid(hours, step).filter(minutes => !deleted.has(minutes));
-        return [...new Set([...regular, ...extra])].sort((a, b) => a - b);
+        return [...new Set([...regular, ...extra.map(minutes => dayMinute(hours, minutes))])].sort((a, b) => a - b);
     }
 
     // A slot is taken when a client's time is inside it (from its start up to the next slot).
@@ -191,6 +229,7 @@
     /*
      * One barber on one day, for the website: which slots are free and which are taken.
      * Slots that are already over (today) are left out of both lists.
+     * clientMinutes and nowMinutes are shop-day minutes (see dayMinutes and shopDay).
      */
     function barberDay({ hours, step, extra = [], skip = [], off = false, clientMinutes = [], isToday = false, nowMinutes = 0, closedDay = false }) {
         if (closedDay) return { status: 'closed', free: [], taken: [] };
@@ -215,6 +254,10 @@
         toMinutes,
         fromMinutes,
         closingMinutes,
+        dayBounds,
+        dayMinute,
+        dayMinutes,
+        shopDay,
         weekday,
         addDays,
         shopHours,

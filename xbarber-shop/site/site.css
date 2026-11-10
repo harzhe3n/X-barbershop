@@ -1219,19 +1219,7 @@ body.is-ready .picker {
     transform: scaleX(1);
 }
 
-.carousel-playing .pick[aria-current="true"] .pick-progress {
-    animation: progress 5s linear forwards;
-}
 
-.carousel-paused .pick[aria-current="true"] .pick-progress {
-    animation: progress 5s linear forwards;
-    animation-play-state: paused;
-}
-
-@keyframes progress {
-    from { transform: scaleX(0); }
-    to { transform: scaleX(1); }
-}
 
 .retry-row {
     margin-top: 6px;
@@ -1883,8 +1871,14 @@ body.is-ready .picker {
 }
 
 .time {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    min-width: 0;
     min-height: 50px;
-    padding: 0 6px;
+    padding: 4px 6px;
     border: 1px solid var(--line-2);
     border-radius: 10px;
     background: var(--paper);
@@ -1909,9 +1903,34 @@ body.is-ready .picker {
     border-style: dashed;
     background: transparent;
     color: var(--muted);
-    text-decoration: line-through;
     cursor: not-allowed;
-    opacity: 0.5;
+}
+
+.time.is-taken .time-at {
+    text-decoration: line-through;
+    opacity: 0.6;
+}
+
+/* Who booked the time. */
+.time-who {
+    max-width: 100%;
+    overflow: hidden;
+    color: var(--ink);
+    font-size: 12px;
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* "After midnight", above the first time after 12:00 AM. */
+.times-night {
+    grid-column: 1 / -1;
+    margin-top: 6px;
+    padding-top: 10px;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 700;
 }
 
 .time-legend {

@@ -15,7 +15,8 @@ The booking website is part of this project. `server.js` serves it at `/` and th
 ## What the customer does
 
 1. **Loading screen**: the two halves of the X logo slide together, then "XBARBER" appears letter by letter.
-2. **Barbers**: black-and-white photos in a row (set in the cashier on the Barbers page). Drag or swipe them: they follow, glide on and settle on the nearest barber; the row never ends. The next barber comes every 5 seconds; the arrows and the button with each barber's name work too. It waits while the mouse is on it or the booking window is open. Under the photos: the name, the next free time and **Book with ...** (tapping the photo in the middle also opens booking).
+2. **Barbers**: photos in a stack (set in the cashier on the Barbers page). The barber with the most free times today stands in the middle, then the next most free, and so on; a barber who closed themselves comes last. The photos do not move by themselves: drag or swipe them, or use the arrows or the button with each barber's name. Under the photos: the name, the next free time and **Book with ...** (tapping the photo in the middle also opens booking).
+   Taken times in the booking window show the name of the client who has them.
 3. **Pick a time**: days from today up to "Book up to" (Settings → Booking website). Free times can be tapped; taken times are shown crossed out. Closed days and days the barber is "Not at work" cannot be picked.
 4. **Your details**: name and phone number only. No sign-up.
 5. **Done**: the day and time, and the shop's phone number to change or cancel.
@@ -29,6 +30,7 @@ The page is in Kurdish until the visitor picks another language (remembered on t
 They are exactly the free slots of the cashier board:
 
 - Opening hours: Settings → Working hours (10:00 AM to midnight by default; closing at 00:00 means midnight).
+  The shop can stay open past midnight: pick a closing time marked "after midnight" (for example 10:00 AM to 4:00 AM). The night then belongs to the day the shop opened: a client at 1:00 AM is on that day's board, history counts the whole night as one day, and the website shows those times under "After midnight".
 - Each barber's own time between clients (10, 20, 30 minutes or any number).
 - How far ahead: Settings → Booking website → **Book up to** (today only up to 60 days). Each barber can choose their own in their column (app_options `days.barber.<id>`); "Shop setting" follows the shop's.
 - Slots added by hand with **Add slot** in the cashier.

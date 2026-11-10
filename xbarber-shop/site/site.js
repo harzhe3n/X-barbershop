@@ -21,8 +21,6 @@
     // The loading screen stays at least this long, so the logo animation can play in full.
     const MIN_LOADER_MS = 4900;
     const REFRESH_MS = 30000;
-    // The next barber comes to the middle every 5 seconds.
-    const SLIDE_MS = 5000;
 
     const TEXT = {
         en: {
@@ -60,6 +58,8 @@
             'sheet.legendFree': 'Free',
             'sheet.legendTaken': 'Taken',
             'sheet.taken': 'Taken',
+            'sheet.afterMidnight': 'After midnight',
+            'time.night': '{time} (after midnight)',
             'sheet.noneDay': 'No free times on this day. Try another day.',
             'sheet.offDay': '{name} is not working on this day.',
             'sheet.closedDay': 'The shop is closed on this day.',
@@ -147,6 +147,8 @@
             'sheet.legendFree': 'فارغ',
             'sheet.legendTaken': 'محجوز',
             'sheet.taken': 'محجوز',
+            'sheet.afterMidnight': 'بعد منتصف الليل',
+            'time.night': '{time} (بعد منتصف الليل)',
             'sheet.noneDay': 'لا توجد أوقات فارغة في هذا اليوم. جرّب يومًا آخر.',
             'sheet.offDay': '{name} لا يعمل في هذا اليوم.',
             'sheet.closedDay': 'المحل مغلق في هذا اليوم.',
@@ -234,6 +236,8 @@
             'sheet.legendFree': 'بەتاڵ',
             'sheet.legendTaken': 'گیراوە',
             'sheet.taken': 'گیراوە',
+            'sheet.afterMidnight': 'دوای نیوەشەو',
+            'time.night': '{time} (دوای نیوەشەو)',
             'sheet.noneDay': 'لەم ڕۆژەدا کاتی بەتاڵ نییە. ڕۆژێکی تر تاقی بکەرەوە.',
             'sheet.offDay': '{name} لەم ڕۆژەدا کار ناکات.',
             'sheet.closedDay': 'دوکان لەم ڕۆژەدا داخراوە.',
@@ -326,10 +330,8 @@
         info: null,
         loadError: false,
         ready: false,
-        // Barber slideshow: the barber in the middle, and whether the mouse or the keyboard holds it.
+        // Barber slider: the barber in the middle (the one with the most free times at first).
         slide: 0,
-        hoverHold: false,
-        focusHold: false,
         // Booking window
         barber: null,
         days: [],
@@ -350,7 +352,6 @@
     const $ = selector => document.querySelector(selector);
     const sheetRoot = $('#sheet');
     const sheet = sheetRoot.querySelector('.sheet');
-    const hero = $('.hero');
     const carousel = $('#carousel');
     const stage = $('#stage');
     const spotlight = $('#spotlight');
@@ -358,9 +359,6 @@
     const sliderCount = $('#slider-count');
     const loader = $('#loader');
     const cursor = $('#cursor');
-    let slideTimer = null;
-    let slideStarted = 0;
-    let slideLeft = SLIDE_MS;
 
     /* ---------------- Language and formatting ---------------- */
 
@@ -403,6 +401,11 @@
         const hours = Number(match[1]);
         const hour12 = hours % 12 === 0 ? 12 : hours % 12;
         return `${hour12}:${match[2]} ${DAY_PERIOD[state.lang][hours >= 12 ? 1 : 0]}`;
+    }
+
+    // A time after midnight on a night the shop stays open: "1:00 AM (after midnight)".
+    function slotTime(value, night) {
+        return night ? t('time.night', { time: formatTime(value) }) : formatTime(value);
     }
 
     function closingTime(value) {
@@ -471,8 +474,8 @@
     /*
      * The photos sit in a row. Drag them (or swipe, or use the arrows); they glide with momentum and
      * settle on the nearest barber, who is the one shown under the photos. Each barber has one photo;
-     * the row stops at the first and the last. Every 5 seconds it moves on by itself, and after the
-     * last barber it goes back to the first.
+     * the row stops at the first and the last. It does not move by itself: the barber with the most
+     * free times stands in the middle (the server sends the barbers in that order).
      */
 
     const slider = {
@@ -515,42 +518,8 @@
         return String(value).padStart(size, '0');
     }
 
-    // Runs while nothing holds it: not dragged or hovered, no booking window open, page visible.
-    // People who ask their phone for less motion move between barbers themselves.
-    function playing() {
-        return state.ready && !reducedMotion && barberList().length > 1 && !state.hoverHold && !state.focusHold
-            && !slider.drag && sheetRoot.hidden && !document.hidden;
-    }
-
-    // The 5-second timer. A pause keeps the time that was left, so the line below continues where it stopped.
-    function syncTimer() {
-        const run = playing();
-        if (run && !slideTimer) {
-            slideStarted = Date.now();
-            slideTimer = setTimeout(() => {
-                slideTimer = null;
-                moveBy(1, { auto: true });
-            }, slideLeft);
-        } else if (!run && slideTimer) {
-            clearTimeout(slideTimer);
-            slideTimer = null;
-            slideLeft = Math.max(0, slideLeft - (Date.now() - slideStarted));
-        }
-        hero.classList.toggle('carousel-playing', run);
-        hero.classList.toggle('carousel-paused', !run);
-        // Screen readers hear the new barber only when it was chosen, not every 5 seconds.
-        spotlight.setAttribute('aria-live', run ? 'off' : 'polite');
-    }
-
-    function restartTimer() {
-        clearTimeout(slideTimer);
-        slideTimer = null;
-        slideLeft = SLIDE_MS;
-        syncTimer();
-    }
-
     // The slider has come to rest on a barber (or is on its way): show their name and button.
-    function settle({ auto = false } = {}) {
+    function settle() {
         const count = barberList().length;
         if (!count) return;
         const before = state.slide;
@@ -561,21 +530,20 @@
             renderSpotlight(true);
             renderPicker();
             renderCount();
-            if (pickerHadFocus && !auto) picker.querySelector('.pick[aria-current="true"]')?.focus({ preventScroll: true });
+            if (pickerHadFocus) picker.querySelector('.pick[aria-current="true"]')?.focus({ preventScroll: true });
         }
-        restartTimer();
         kick();
     }
 
-    function moveBy(delta, options = {}) {
+    function moveBy(delta) {
         const count = barberList().length;
         if (count < 2) return;
         let next = Math.round(slider.target) + delta;
-        // The timer and the arrows go round: after the last barber comes the first again.
+        // The arrows go round: after the last barber comes the first again.
         if (next > count - 1) next = 0;
         else if (next < 0) next = count - 1;
         slider.target = next;
-        settle(options);
+        settle();
     }
 
     function goTo(index) {
@@ -713,7 +681,7 @@
         if (!isOpen(barber)) {
             status = `<span class="dot"></span><span>${esc(t('barbers.closedNow'))}</span>`;
         } else if (barber.next) {
-            status = `<span class="dot dot-on"></span><span>${esc(t('barbers.next', { when: '' }))}<strong>${esc(`${relativeDay(barber.next.date)} · ${formatTime(barber.next.time)}`)}</strong></span>`;
+            status = `<span class="dot dot-on"></span><span>${esc(t('barbers.next', { when: '' }))}<strong>${esc(`${relativeDay(barber.next.date)} · ${slotTime(barber.next.time, barber.next.night)}`)}</strong></span>`;
         } else if (barber.today === 'off') {
             status = `<span class="dot"></span><span>${esc(t('barbers.offToday'))}</span>`;
         } else {
@@ -772,7 +740,6 @@
             arrow.setAttribute('aria-label', t(next ? 'carousel.next' : 'carousel.prev'));
             arrow.innerHTML = icon(next ? 'next' : 'prev', 'flip-rtl');
         });
-        syncTimer();
     }
 
     /* ---------------- Barber tools ---------------- */
@@ -898,7 +865,6 @@
         state.ready = true;
         measureSlider();
         layoutSlider();
-        restartTimer();
     }
 
     /* ---------------- Mouse ring ---------------- */
@@ -978,16 +944,12 @@
         if (!sheetRoot.hidden) renderSheet();
     }
 
+    // Whether the shop is open now comes from the server, in the shop's time zone (a night that
+    // runs past midnight still belongs to the day the shop opened).
     function todayOpenText(info) {
         const today = parseDate(info.today);
         if (info.hours.closed_weekdays.includes(today.weekday)) return { open: false, text: t('hours.closedToday') };
-        const now = new Date();
-        const minutes = now.getHours() * 60 + now.getMinutes();
-        const [openH, openM] = info.hours.open.split(':').map(Number);
-        const [closeH, closeM] = info.hours.close.split(':').map(Number);
-        const start = openH * 60 + openM;
-        const end = closeH * 60 + closeM || 24 * 60;
-        if (minutes >= start && minutes < end) return { open: true, text: t('hours.openNow', { close: closingTime(info.hours.close) }) };
+        if (info.open_now) return { open: true, text: t('hours.openNow', { close: closingTime(info.hours.close) }) };
         return { open: false, text: t('hours.today', { open: formatTime(info.hours.open), close: closingTime(info.hours.close) }) };
     }
 
@@ -1061,8 +1023,6 @@
             // Let the logo finish its animation before the page shows, then start the slider.
             const wait = Math.max(0, LOADER_MS - (Date.now() - startedAt));
             setTimeout(finishLoader, wait);
-        } else {
-            restartTimer();
         }
     }
 
@@ -1077,7 +1037,6 @@
         state.lastFocus = document.activeElement;
         sheetRoot.hidden = false;
         document.body.classList.add('sheet-open');
-        syncTimer();
         requestAnimationFrame(() => sheetRoot.classList.add('show'));
         renderSheet();
         sheet.focus({ preventScroll: true });
@@ -1095,7 +1054,6 @@
         setTimeout(() => {
             sheetRoot.hidden = true;
             sheet.innerHTML = '';
-            syncTimer();
         }, 250);
         if (state.booked) loadInfo();
         if (state.lastFocus && document.contains(state.lastFocus)) state.lastFocus.focus({ preventScroll: true });
@@ -1177,13 +1135,26 @@
         } else if (!day.free.length && !day.taken.length) {
             times = `<p class="empty-day">${esc(t('sheet.noneDay'))}</p>`;
         } else {
-            const all = [...day.free.map(time => ({ time, free: true })), ...day.taken.map(time => ({ time, free: false }))]
+            // The server sends the times in order, after-midnight ones last, taken ones with the name.
+            const all = day.slots || [...day.free.map(time => ({ time, free: true })), ...day.taken.map(time => ({ time, free: false }))]
                 .sort((a, b) => a.time.localeCompare(b.time));
+            let nightShown = false;
+            const timeButton = slot => {
+                // A line before the first time after midnight.
+                const divider = slot.night && !nightShown ? `<p class="times-night">${esc(t('sheet.afterMidnight'))}</p>` : '';
+                if (slot.night) nightShown = true;
+                if (slot.free) {
+                    return `${divider}<button type="button" class="time" data-time="${esc(slot.time)}" aria-pressed="${slot.time === state.time}">${esc(formatTime(slot.time))}</button>`;
+                }
+                const who = String(slot.name || '').trim();
+                return `${divider}<button type="button" class="time is-taken" disabled aria-label="${esc([formatTime(slot.time), t('sheet.taken'), who].filter(Boolean).join(' · '))}">
+                        <span class="time-at">${esc(formatTime(slot.time))}</span>
+                        ${who ? `<span class="time-who" dir="auto">${esc(who)}</span>` : ''}
+                    </button>`;
+            };
             times = `
                 <div class="times" role="group" aria-label="${esc(t('sheet.pickTime'))}">
-                    ${all.map(slot => slot.free
-                        ? `<button type="button" class="time" data-time="${esc(slot.time)}" aria-pressed="${slot.time === state.time}">${esc(formatTime(slot.time))}</button>`
-                        : `<button type="button" class="time is-taken" disabled aria-label="${esc(`${formatTime(slot.time)} · ${t('sheet.taken')}`)}">${esc(formatTime(slot.time))}</button>`).join('')}
+                    ${all.map(timeButton).join('')}
                 </div>
                 <div class="time-legend">
                     <span><i></i>${esc(t('sheet.legendFree'))}</span>
@@ -1200,9 +1171,13 @@
             ${times}`;
     }
 
+    function isNight(day, time) {
+        return Boolean(day?.slots?.find(slot => slot.time === time)?.night);
+    }
+
     function chosenText() {
         const day = state.days[state.dayIndex];
-        return t('sheet.chosen', { day: relativeDay(day.date), time: formatTime(state.time) });
+        return t('sheet.chosen', { day: relativeDay(day.date), time: slotTime(state.time, isNight(day, state.time)) });
     }
 
     function detailsStep() {
@@ -1240,7 +1215,7 @@
                     <path d="M27 45 39 57 62 32"/>
                 </svg>
                 <h2 class="display">${esc(t('done.title'))}</h2>
-                <p class="done-when">${esc(t('done.when', { day: formatDateLong(booked.date), time: formatTime(booked.time) }))}</p>
+                <p class="done-when">${esc(t('done.when', { day: formatDateLong(booked.date), time: slotTime(booked.time, isNight(state.days.find(day => day.date === booked.date), booked.time)) }))}</p>
                 <p>${esc(booked.barber)}</p>
                 <p class="done-note">${esc(t('done.note'))}</p>
                 ${phone ? `<a class="btn btn-ghost btn-small" href="tel:${esc(String(phone).replace(/[^\d+]/g, ''))}" dir="ltr">${esc(t('done.call'))} · ${esc(phone)}</a>` : ''}
@@ -1454,7 +1429,6 @@
             } catch (error) {
                 // Not every browser allows it here; dragging still works.
             }
-            syncTimer();
         }
         const dir = isRtl() ? -1 : 1;
         const raw = drag.start - (dx / slider.step) * dir;
@@ -1510,18 +1484,6 @@
         layoutSlider();
     });
 
-    // The slider waits while the mouse is on a photo, an arrow or a barber button
-    // (not the empty space beside them), and while the keyboard is in them.
-    function setHoverHold(on) {
-        if (state.hoverHold === on) return;
-        state.hoverHold = on;
-        syncTimer();
-    }
-    document.addEventListener('pointerover', event => {
-        if (event.pointerType !== 'mouse') return;
-        setHoverHold(Boolean(event.target.closest?.('.card[data-virtual], .arrow, .pick')));
-    });
-    document.documentElement.addEventListener('pointerleave', () => setHoverHold(false));
     [carousel, picker].forEach(element => {
         element.addEventListener('keydown', event => {
             if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
@@ -1530,17 +1492,6 @@
             moveBy(isRtl() ? -forward : forward);
         });
     });
-    hero.addEventListener('focusin', event => {
-        if (!event.target.matches(':focus-visible') || !event.target.closest('#carousel, #picker')) return;
-        state.focusHold = true;
-        syncTimer();
-    });
-    hero.addEventListener('focusout', event => {
-        if (event.relatedTarget && event.relatedTarget.closest?.('#carousel, #picker')) return;
-        state.focusHold = false;
-        syncTimer();
-    });
-    document.addEventListener('visibilitychange', syncTimer);
 
     document.addEventListener('input', event => {
         const input = event.target;

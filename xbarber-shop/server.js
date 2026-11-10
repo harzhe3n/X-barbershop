@@ -890,8 +890,19 @@ function daysBetween(from, to) {
   return Math.round((toUtc(to) - toUtc(from)) / 86400000);
 }
 
-// Everything the website needs, read in one go.
-async function siteSnapshot(connection, now) {
+// Opening hours and the shop's time between clients (app_options "booking.*").
+async function loadShopHours(connection) {
+  const rows = await dbAll(connection, "SELECT key, value FROM app_options WHERE key LIKE 'booking.%'");
+  const options = {};
+  rows.forEach(row => {
+    options[String(row.key).slice('booking.'.length)] = row.value;
+  });
+  return Slots.shopHours(options);
+}
+
+// Everything the website needs, read in one go. clock is shopNow(); when the shop is open past
+// midnight, the night still counts as the day the shop opened (Slots.shopDay).
+async function siteSnapshot(connection, clock) {
   const optionRows = await dbAll(connection,
     `SELECT key, value FROM app_options
      WHERE key LIKE 'booking.%' OR key LIKE 'slot.barber.%' OR key LIKE 'extra.%' OR key LIKE 'off.%' OR key LIKE 'online.%' OR key LIKE 'skip.%' OR key LIKE 'days.barber.%'
@@ -901,22 +912,29 @@ async function siteSnapshot(connection, now) {
     if (String(row.key).startsWith('booking.')) options[String(row.key).slice('booking.'.length)] = row.value;
   });
   const hours = Slots.shopHours(options);
+  const now = Slots.shopDay(hours, clock.date, clock.minutes);
   // Each barber can take bookings for more or fewer days than the shop setting.
   const barberDaysAhead = Slots.parseBarberDays(optionRows);
   const lastDay = Slots.addDays(now.date, Math.max(hours.days, ...barberDaysAhead.values()));
   const barbers = await dbAll(connection, 'SELECT id, name FROM barbers WHERE is_active = 1 ORDER BY id');
   const photos = await dbAll(connection, 'SELECT barber_id, updated_at FROM barber_photos WHERE image_data IS NOT NULL');
+  // The client's name is shown on their taken time on the website.
   const busyRows = await dbAll(connection,
-    `SELECT barber_id, date, time FROM orders
-     WHERE barber_id IS NOT NULL AND date BETWEEN ? AND ? AND time IS NOT NULL AND time <> ''
-       AND COALESCE(status, 'completed') IN ('waiting', 'in-service', 'completed')`,
+    `SELECT o.barber_id, o.date, o.time, COALESCE(NULLIF(TRIM(ob.customer_name), ''), c.name) AS name
+     FROM orders o
+     LEFT JOIN customers c ON c.id = o.customer_id
+     LEFT JOIN online_bookings ob ON ob.order_id = o.id
+     WHERE o.barber_id IS NOT NULL AND o.date BETWEEN ? AND ? AND o.time IS NOT NULL AND o.time <> ''
+       AND COALESCE(o.status, 'completed') IN ('waiting', 'in-service', 'completed')
+     ORDER BY o.id`,
     [now.date, lastDay]);
   const shop = await dbGet(connection, 'SELECT shop_name, phone, address FROM settings ORDER BY id DESC LIMIT 1') || {};
+  // "<barber id>|<date>" -> [{ minutes, name }], in shop-day minutes.
   const busy = new Map();
   busyRows.forEach(row => {
     const key = `${row.barber_id}|${row.date}`;
     const list = busy.get(key) || [];
-    list.push(Slots.toMinutes(row.time));
+    list.push({ minutes: Slots.dayMinutes(hours, row.time), name: cleanName(row.name).slice(0, 40) });
     busy.set(key, list);
   });
   const optionValue = key => optionRows.find(row => row.key === key)?.value;
@@ -986,18 +1004,33 @@ function barberDays(snapshot, barberId) {
   const days = [];
   for (let index = 0; index <= ahead; index += 1) {
     const date = Slots.addDays(now.date, index);
+    const clients = snapshot.busy.get(`${barberId}|${date}`) || [];
     const day = Slots.barberDay({
       hours,
       step,
       extra: snapshot.extras.get(`${barberId}|${date}`) || [],
       skip: snapshot.skips.get(`${barberId}|${date}`) || [],
       off: !online || snapshot.offs.has(`${barberId}|${date}`),
-      clientMinutes: snapshot.busy.get(`${barberId}|${date}`) || [],
+      clientMinutes: clients.map(client => client.minutes),
       isToday: index === 0,
       nowMinutes: now.minutes,
       closedDay: hours.closed.includes(Slots.weekday(date))
     });
-    days.push({ date, status: day.status, free: day.free.map(Slots.fromMinutes), taken: day.taken.map(Slots.fromMinutes) });
+    // Every time of the day in order (after midnight last), the taken ones with the client's name.
+    const slots = [
+      ...day.free.map(minutes => ({ minutes, free: true })),
+      ...day.taken.map(minutes => ({
+        minutes,
+        free: false,
+        name: clients.find(client => client.minutes >= minutes && client.minutes < minutes + step)?.name || ''
+      }))
+    ].sort((a, b) => a.minutes - b.minutes).map(slot => ({
+      time: Slots.fromMinutes(slot.minutes),
+      free: slot.free,
+      ...(slot.free ? {} : { name: slot.name }),
+      ...(slot.minutes >= 24 * 60 ? { night: true } : {})
+    }));
+    days.push({ date, status: day.status, free: day.free.map(Slots.fromMinutes), taken: day.taken.map(Slots.fromMinutes), slots });
   }
   return days;
 }
@@ -1018,17 +1051,31 @@ async function handlePublicInfo(req, res) {
       photo: photoUrl(snapshot, barber.id),
       online: barber.online,
       slot_minutes: Slots.barberStep(snapshot.hours, snapshot.barberSlots, barber.id),
-      next: next ? { date: next.date, time: next.free[0] } : null,
-      today: days[0].status
+      next: next ? { date: next.date, time: next.free[0], night: Boolean(next.slots.find(slot => slot.free)?.night) } : null,
+      today: days[0].status,
+      free_today: days[0].free.length,
+      free_total: days.reduce((total, day) => total + day.free.length, 0)
     };
   });
+  // The barber with the most free times comes first: today's, then all the days ahead.
+  // A barber who closed themselves goes last.
+  barbers.sort((a, b) => Number(b.online) - Number(a.online)
+    || b.free_today - a.free_today
+    || b.free_total - a.free_total
+    || a.id - b.id);
+  const { start, end } = Slots.dayBounds(snapshot.hours);
+  const openNow = !snapshot.hours.closed.includes(Slots.weekday(snapshot.now.date))
+    && snapshot.now.minutes >= start && snapshot.now.minutes < end;
   sendJson(res, 200, {
     shop: snapshot.shop,
     open: snapshot.open,
     today: snapshot.now.date,
+    open_now: openNow,
     hours: {
       open: snapshot.hours.open,
       close: snapshot.hours.close,
+      // Closes after midnight (the close time is on the next morning).
+      overnight: end > 24 * 60,
       closed_weekdays: snapshot.hours.closed,
       days_ahead: snapshot.hours.days
     },
@@ -1216,12 +1263,15 @@ async function sendReminders() {
   if (reminderRunning || !WhatsApp.isReady()) return;
   reminderRunning = true;
   try {
-    const now = shopNow();
-    const tomorrow = Slots.addDays(now.date, 1);
     let message = '';
     // Claim the clients first, then send without holding the database.
     const due = await serialize(async () => {
       const connection = await openDatabase();
+      // Shop days: a client at 01:00 after midnight is saved on the day the shop opened.
+      const hours = await loadShopHours(connection);
+      const clock = shopNow();
+      const now = Slots.shopDay(hours, clock.date, clock.minutes);
+      const tomorrow = Slots.addDays(now.date, 1);
       const settings = await reminderSettings(connection);
       message = settings.message;
       const latest = Math.max(0, settings.minutes - REMINDER_WINDOW_MINUTES);
@@ -1243,7 +1293,7 @@ async function sendReminders() {
       for (const row of rows) {
         const time = String(row.time).slice(0, 5);
         if (!/^\d{2}:\d{2}$/.test(time) || !String(row.phone || '').trim()) continue;
-        const left = daysBetween(now.date, row.date) * 1440 + Slots.toMinutes(time) - now.minutes;
+        const left = daysBetween(now.date, row.date) * 1440 + Slots.dayMinutes(hours, time) - now.minutes;
         if (left > settings.minutes || left <= latest) continue;
         const digits = whatsappDigits(row.phone);
         await dbRun(connection,
