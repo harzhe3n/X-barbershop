@@ -2373,6 +2373,109 @@ input[dir="ltr"] {
     white-space: normal;
 }
 
+/* Barber commission under a barber's totals in History. */
+.hcol-pay {
+    display: grid;
+    gap: 6px;
+    margin-top: 8px;
+    padding: 10px 12px;
+    border: 1px solid var(--line-2);
+    border-radius: 14px;
+    background: var(--surface);
+}
+
+.hcol-pay-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    color: var(--ink-2);
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.hcol-pay-row strong {
+    color: var(--ink);
+    font-size: 15px;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.hcol-pay-barber strong {
+    color: var(--done-ink);
+    font-size: 18px;
+}
+
+.hcol-pay-calc {
+    margin: 0;
+    color: var(--muted);
+    font-size: 12.5px;
+    font-weight: 700;
+    text-align: start;
+    font-variant-numeric: tabular-nums;
+}
+
+[dir="rtl"] .hcol-pay-calc {
+    text-align: end;
+}
+
+.hcol-pay-days summary {
+    color: var(--ink-2);
+    font-size: 12.5px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.hcol-pay-days ul {
+    display: grid;
+    gap: 6px;
+    margin: 8px 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+.hcol-pay-days li {
+    display: grid;
+    gap: 1px;
+    padding-top: 6px;
+    border-top: 1px dashed var(--line-2);
+    font-size: 12.5px;
+}
+
+.hcol-pay-days li > span:first-child {
+    color: var(--ink-2);
+    font-weight: 700;
+}
+
+/* Settings → Barbers' share. */
+.commission-shop {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 8px 16px;
+}
+
+.commission-shop .field {
+    flex: 0 1 200px;
+    margin: 0;
+}
+
+.commission-split {
+    margin: 0 0 12px;
+    color: var(--ink-2);
+    font-weight: 700;
+}
+
+.commission-input {
+    flex: 1;
+    min-width: 96px;
+}
+
+.money-input.commission-input input {
+    width: 100%;
+    padding-inline-end: 34px;
+}
+
 .hlist {
     display: flex;
     flex-direction: column;
@@ -3386,6 +3489,114 @@ body[data-signed-in] #offline-status[data-state="error"] {
     flex-shrink: 0;
 }
 
+.wa-warn-danger {
+    background: var(--danger-bg);
+    color: var(--danger-ink);
+}
+
+/* "Send a test message to" (when linked). */
+.wa-test {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 10px;
+    margin-top: 14px;
+}
+
+.wa-test .field {
+    flex: 1 1 220px;
+    margin: 0;
+}
+
+.wa-test + .field-hint {
+    margin-bottom: 12px;
+}
+
+/* On the Cashier page, for the owner: WhatsApp reminders stopped. */
+.wa-alert {
+    margin-bottom: 14px;
+    padding: 14px 16px;
+    border: 1px solid #f1b9b9;
+    border-radius: 16px;
+    background: var(--danger-bg);
+    color: var(--danger-ink);
+}
+
+.wa-alert-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+}
+
+.wa-alert-icon {
+    display: inline-grid;
+    width: 38px;
+    height: 38px;
+    flex-shrink: 0;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--danger);
+    color: #fff;
+}
+
+.wa-alert-text {
+    display: grid;
+    flex: 1 1 260px;
+    gap: 2px;
+    min-width: 0;
+}
+
+.wa-alert-text span {
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.wa-alert-due {
+    margin: 12px 0 8px;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.wa-due {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.wa-due li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 12px;
+    background: var(--surface);
+    color: var(--ink);
+}
+
+.wa-due-who {
+    display: grid;
+    min-width: 0;
+}
+
+.wa-due-who span {
+    color: var(--muted);
+    font-size: 13px;
+}
+
+.wa-due-done {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--done-ink);
+    font-style: normal;
+    font-weight: 700;
+}
+
 .wa-link-row {
     display: flex;
     flex-wrap: wrap;
@@ -4316,6 +4527,41 @@ button.work-pill:hover {
 }
 
 /* "Add slot": a free time at any hour, for the barber of this column. */
+/* "Walk-in client": a client who came in without a booking. */
+.btn-walk-in {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    min-height: 44px;
+    padding: 0 12px;
+    border: 0;
+    border-radius: 12px;
+    background: var(--ink);
+    color: #fff;
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.btn-walk-in .icon {
+    width: 18px;
+    height: 18px;
+}
+
+.btn-walk-in:hover {
+    background: #2a2a2a;
+}
+
+.badge-walkin {
+    margin-inline-end: auto;
+    background: var(--waiting-bg);
+    color: var(--waiting-ink);
+}
+
 .btn-add-slot {
     display: inline-flex;
     flex-shrink: 0;
@@ -4495,6 +4741,11 @@ button.work-pill:hover {
     flex: none;
 }
 
+.barber-time .commission-input {
+    width: 110px;
+    flex: none;
+}
+
 @media (max-width: 600px) {
     .barber-time {
         grid-template-columns: auto minmax(0, 1fr);
@@ -4502,6 +4753,15 @@ button.work-pill:hover {
 
     .barber-time .hours-slot {
         grid-column: 1 / -1;
+    }
+
+    /* The commission box stays on the barber's row. */
+    .barber-time:has(.commission-input) {
+        grid-template-columns: auto minmax(0, 1fr) auto;
+    }
+
+    .barber-time .commission-input {
+        width: 100px;
     }
 }
 
@@ -5419,6 +5679,10 @@ button.slot:focus-visible .slot-plus {
 .swatch-expenses {
     background: #4a4a4a;
     color: #fff;
+}
+
+.swatch-barbers {
+    background: var(--done);
 }
 
 .day-stat-net {

@@ -156,7 +156,10 @@ const ICONS = {
     key: '<path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L19 4"/><path d="m21 2-9.6 9.6"/><circle cx="7.5" cy="15.5" r="5.5"/>',
     refresh: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
     bell: '<path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/>',
-    link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>'
+    link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+    send: '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
+    percent: '<line x1="19" x2="5" y1="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/>',
+    door: '<path d="M13 4h3a2 2 0 0 1 2 2v14"/><path d="M2 20h3"/><path d="M13 20h9"/><path d="M10 12v.01"/><path d="M13 4.562v16.157a1 1 0 0 1-1.242.97L5 20V5.562a2 2 0 0 1 1.515-1.94l4-1A2 2 0 0 1 13 4.561Z"/>'
 };
 
 function icon(name, className = '') {
@@ -724,7 +727,8 @@ function periodOptions() {
 const TICKET_COLUMNS = `
     o.id, o.date, o.time, COALESCE(o.status, 'completed') AS status, o.total, o.payment_method,
     o.barber_id, o.customer_id, c.name AS customer_name, c.phone AS customer_phone,
-    (SELECT ob.booking_id FROM online_bookings ob WHERE ob.order_id = o.id LIMIT 1) AS online_id`;
+    (SELECT ob.booking_id FROM online_bookings ob WHERE ob.order_id = o.id LIMIT 1) AS online_id,
+    EXISTS (SELECT 1 FROM walk_ins w WHERE w.order_id = o.id) AS walk_in`;
 
 const ITEM_COLUMNS = `
     oi.order_id, oi.item_type, oi.item_id, oi.quantity, oi.price,
@@ -803,6 +807,8 @@ const BARBER_SLOT_QUERY = { query: "SELECT key, value FROM app_options WHERE key
 /* ------------------------------------------------------------------ */
 
 async function renderCashier() {
+    // The owner is warned on the board when WhatsApp reminders stop (read while the board loads).
+    const whatsappLoad = isAdmin() ? loadWhatsappStatus() : Promise.resolve(null);
     const date = state.boardDate;
     const today = todayString();
     const options = await loadBookingOptions();
@@ -939,8 +945,10 @@ async function renderCashier() {
     // The slot was taken meanwhile (for example by an online booking): the form closes.
     if (state.slotForm && !ctx.formShown) state.slotForm = null;
     const closedDay = hours.closed.includes(parseDate(date).getDay());
+    const whatsappInfo = await whatsappLoad;
 
     const body = `
+        ${renderWhatsappAlert(whatsappInfo)}
         ${renderMyOnlineCard(activeBarbers, ctx)}
         <div class="day-strip">
             <div class="day-stat"><span class="status-dot status-dot-waiting"></span><span>${escapeHtml(t('status.waiting'))}</span><strong>${waiting}</strong></div>
@@ -1345,7 +1353,7 @@ function renderColumn(column, ctx) {
         }
         const time = fromMinutes(row.minutes);
         const past = ctx.isPast(row.minutes, step);
-        if (form && !form.ticketId && form.barberId === barberId && form.time === time) {
+        if (form && !form.ticketId && !form.walkIn && form.barberId === barberId && form.time === time) {
             return renderSlotForm(form, ctx, markNow(row.minutes, false));
         }
         if (past) {
@@ -1386,6 +1394,10 @@ function renderColumn(column, ctx) {
     const emptyText = column.barber
         ? (off ? '' : grid.length ? t('slots.noneLeft') : t('slots.noHours'))
         : t('cashier.emptyColumn');
+    // "Walk-in client" open for this barber: its form sits at the top of the column.
+    const walkInForm = form && form.walkIn && !form.ticketId && form.barberId === barberId && !off
+        ? renderSlotForm(form, ctx)
+        : '';
     const offNote = off ? `<p class="col-off-note">${icon('alert')}<span>${escapeHtml(t('work.offNote'))}</span></p>` : '';
 
     return `
@@ -1413,11 +1425,13 @@ function renderColumn(column, ctx) {
             </div>
             ${column.barber && !removed && !off ? renderColumnSlot(column, step, editable) : ''}
             ${column.barber && !removed ? renderColumnDays(column, ctx.daysFor(column.barber.id), ctx.hours.days, editable) : ''}
+            ${column.barber && !removed && !off && editable && ctx.today && !walkInForm ? renderWalkInButton(column.barber) : ''}
             ${column.barber && !removed && !off && editable
                 ? renderAddSlot(column.barber, state.addSlot === barberId ? addSlotChoices(ctx.hours, step, grid, minutes => ctx.isPast(minutes, step), skip) : null)
                 : ''}
             <div class="col-body" data-scroll-key="${column.key}">
                 ${offNote}
+                ${walkInForm}
                 ${rowsHtml || (emptyText ? `<p class="col-empty">${escapeHtml(emptyText)}</p>` : '')}
             </div>
         </section>`;
@@ -1463,7 +1477,9 @@ function renderTicket(ticket, access = { editable: true, takeable: false }, nowM
     const clock = ticket.time
         ? `<span class="ticket-clock">${timeLabel(ticket.time)}</span>`
         : `<span class="ticket-clock ticket-clock-none">${escapeHtml(t('slots.noTime'))}</span>`;
-    const online = ticket.online_id ? `<span class="badge badge-online" title="${escapeHtml(t('booking.badgeTitle'))}">${icon('globe')}${escapeHtml(t('booking.badge'))}</span>` : '';
+    const online = ticket.online_id
+        ? `<span class="badge badge-online" title="${escapeHtml(t('booking.badgeTitle'))}">${icon('globe')}${escapeHtml(t('booking.badge'))}</span>`
+        : Number(ticket.walk_in) ? `<span class="badge badge-walkin">${icon('door')}${escapeHtml(t('walkin.tag'))}</span>` : '';
 
     // Finished clients are a short green row in their slot.
     if (ticket.status === 'completed') {
@@ -1572,6 +1588,46 @@ async function openSlotForm(barberId, time) {
     await renderPage({ keepScroll: true });
 }
 
+/*
+ * "Walk-in client" (کڕیاری لەناکاو): a client who came into the shop without a booking. The
+ * client form opens at the top of the barber's column for right now; name, phone and service
+ * are optional. Saved, the client is with the barber at once, or waiting when the barber is
+ * busy with someone else, and is marked "Walk-in".
+ */
+async function openWalkIn(barberId) {
+    if (!isAdmin() && !isMine(barberId)) {
+        denyNotYours();
+        return;
+    }
+    await loadSlotCustomers();
+    state.boardDate = todayString();
+    state.addSlot = null;
+    state.slotForm = {
+        ticketId: null,
+        walkIn: true,
+        barberId: Number(barberId),
+        date: state.boardDate,
+        time: nowTime(),
+        name: '',
+        phone: '',
+        customerId: null,
+        services: [],
+        prices: {},
+        extra: [],
+        amount: '',
+        products: 0,
+        focus: true
+    };
+    await renderPage({ keepScroll: true });
+}
+
+function renderWalkInButton(barber) {
+    return `
+        <button type="button" class="btn-walk-in" data-action="walk-in" data-barber="${barber.id}" title="${escapeHtml(t('walkin.title', { name: barber.name }))}">
+            ${icon('door')}<span>${escapeHtml(t('walkin.button'))}</span>
+        </button>`;
+}
+
 async function openSlotEdit(id) {
     const ticket = await loadTicket(id);
     if (!ticket || !OPEN_STATUSES.includes(ticket.status)) {
@@ -1667,7 +1723,7 @@ function renderSlotForm(form, ctx, nowMark = '') {
         <form class="slot-form" data-form="slot" autocomplete="off" ${nowMark}>
             <div class="slot-form-head">
                 <span class="ticket-clock">${form.time ? timeLabel(form.time) : escapeHtml(t('slots.noTime'))}</span>
-                <strong>${escapeHtml(t(editing ? 'slotForm.edit' : 'slotForm.new'))}</strong>
+                <strong>${escapeHtml(t(editing ? 'slotForm.edit' : form.walkIn ? 'walkin.button' : 'slotForm.new'))}</strong>
                 <button type="button" class="btn-icon btn-icon-sm" data-action="slot-cancel" aria-label="${escapeHtml(t('common.cancel'))}">${icon('x')}</button>
             </div>
             <input type="text" name="name" maxlength="80" autocomplete="off" placeholder="${escapeHtml(t('slotForm.namePh'))}" aria-label="${escapeHtml(t('client.name'))}" value="${escapeHtml(form.name)}">
@@ -1704,7 +1760,7 @@ function renderSlotForm(form, ctx, nowMark = '') {
                 ${editing ? `<button type="button" class="btn btn-ghost-danger btn-sm" data-action="slot-remove" data-id="${form.ticketId}">${icon('trash')}<span>${escapeHtml(t('client.remove'))}</span></button>` : ''}
                 <span class="spacer"></span>
                 <button type="button" class="btn btn-ghost btn-sm" data-action="slot-cancel">${escapeHtml(t('common.cancel'))}</button>
-                <button type="submit" class="btn btn-primary btn-sm">${icon(editing ? 'check' : 'plus')}<span>${escapeHtml(t(editing ? 'common.save' : 'client.addClient'))}</span></button>
+                <button type="submit" class="btn btn-primary btn-sm">${icon(editing ? 'check' : 'plus')}<span>${escapeHtml(t(editing ? 'common.save' : form.walkIn ? 'walkin.save' : 'client.addClient'))}</span></button>
             </div>
         </form>`;
 }
@@ -1785,6 +1841,7 @@ async function saveSlotForm() {
     }
 
     slotSaving = true;
+    let walkInStatus = null;
     try {
         const catalog = await api.dbQuery('SELECT id, price FROM services');
         let current = null;
@@ -1843,11 +1900,19 @@ async function saveSlotForm() {
             statements.push({ query: "DELETE FROM order_items WHERE order_id = ? AND item_type = 'service'", params: [current.id] });
             orderRef = current.id;
         } else {
+            // A walk-in sits down with the barber at once, unless the barber is with someone else.
+            let status = 'waiting';
+            if (form.walkIn) {
+                const busy = await queryOne("SELECT id FROM orders WHERE barber_id = ? AND date = ? AND status = 'in-service' LIMIT 1", [form.barberId, form.date]);
+                if (!busy) status = 'in-service';
+                walkInStatus = status;
+            }
             statements.push({
-                query: "INSERT INTO orders (customer_id, date, time, total, discount, status, payment_method, barber_id) VALUES (?, ?, ?, ?, 0, 'waiting', NULL, ?)",
-                params: [customerRef, form.date, time, total, form.barberId]
+                query: 'INSERT INTO orders (customer_id, date, time, total, discount, status, payment_method, barber_id) VALUES (?, ?, ?, ?, 0, ?, NULL, ?)',
+                params: [customerRef, form.date, time, total, status, form.barberId]
             });
             orderRef = { lastIDFrom: statements.length - 1 };
+            if (form.walkIn) statements.push({ query: 'INSERT OR IGNORE INTO walk_ins (order_id) VALUES (?)', params: [orderRef] });
         }
         services.forEach(item => {
             statements.push({
@@ -1858,7 +1923,8 @@ async function saveSlotForm() {
 
         await runStatements(statements);
         state.slotForm = null;
-        toast(current ? t('toast.clientSaved') : t('toast.clientAddedAt', { time: I18N.formatTime(time) }));
+        if (walkInStatus) toast(t(walkInStatus === 'in-service' ? 'walkin.addedNow' : 'walkin.addedWaiting'));
+        else toast(current ? t('toast.clientSaved') : t('toast.clientAddedAt', { time: I18N.formatTime(time) }));
         await renderPage({ keepScroll: true });
     } catch (error) {
         handleError(error);
@@ -3142,6 +3208,136 @@ async function renderDashboard() {
 }
 
 /* ------------------------------------------------------------------ */
+/* Barber commission                                                   */
+/*                                                                     */
+/* Each barber gets a share of the money from the clients they         */
+/* finished (60% unless the owner changes it in Settings); the rest    */
+/* goes to the shop. The owner can give one barber a different share.  */
+/* Saved in app_options with the day the change counts from:           */
+/*   commission.shop.<YYYY-MM-DD>         = "60"                        */
+/*   commission.barber.<id>.<YYYY-MM-DD>  = "70", or "" = shop's share  */
+/* A change counts from the day it is made, so days already paid keep  */
+/* their share. What was set on the very first day also counts for     */
+/* all days before it.                                                 */
+/* ------------------------------------------------------------------ */
+
+const DEFAULT_COMMISSION = 60;
+const COMMISSION_QUERY = { query: "SELECT key, value FROM app_options WHERE key LIKE 'commission.%'" };
+const COMMISSION_START = '0000-01-01';
+
+function commissionValue(value) {
+    if (value == null || String(value).trim() === '') return null;
+    return clampInt(value, 0, 100, null);
+}
+
+// { shop: [{ from, percent }], barbers: Map(id -> [{ from, percent or null }]) }, oldest first.
+function parseCommission(rows) {
+    const shop = [];
+    const barbers = new Map();
+    rows.forEach(row => {
+        const key = String(row.key);
+        let match = /^commission\.shop\.(\d{4}-\d{2}-\d{2})$/.exec(key);
+        if (match) {
+            const percent = commissionValue(row.value);
+            if (percent != null) shop.push({ from: match[1], percent });
+            return;
+        }
+        match = /^commission\.barber\.(\d+)\.(\d{4}-\d{2}-\d{2})$/.exec(key);
+        if (match) {
+            const list = barbers.get(Number(match[1])) || [];
+            list.push({ from: match[2], percent: commissionValue(row.value) });
+            barbers.set(Number(match[1]), list);
+        }
+    });
+    const lists = [shop, ...barbers.values()];
+    const first = lists.flat().reduce((min, entry) => (min && min < entry.from ? min : entry.from), null);
+    lists.forEach(list => {
+        list.forEach(entry => {
+            if (entry.from === first) entry.from = COMMISSION_START;
+        });
+        list.sort((a, b) => a.from.localeCompare(b.from));
+    });
+    return { shop, barbers };
+}
+
+// The setting that counts on a day: the last one made on or before it.
+function commissionEntry(list, date) {
+    let found;
+    (list || []).forEach(entry => {
+        if (entry.from <= date) found = entry;
+    });
+    return found;
+}
+
+function shopCommission(rates, date) {
+    return commissionEntry(rates.shop, date)?.percent ?? DEFAULT_COMMISSION;
+}
+
+// The barber's share (%) on a day: their own, or the shop's.
+function commissionPercent(rates, barberId, date) {
+    const own = commissionEntry(rates.barbers.get(Number(barberId)), date);
+    return own && own.percent != null ? own.percent : shopCommission(rates, date);
+}
+
+// A barber's finished clients, day by day: money, share (%), the barber's part and the shop's.
+// Each day is worked out on its own and rounded to whole dinars; the shop gets the rest.
+function commissionDays(tickets, rates, barberId) {
+    const byDate = new Map();
+    tickets.forEach(ticket => byDate.set(ticket.date, (byDate.get(ticket.date) || 0) + Number(ticket.total || 0)));
+    const days = [...byDate.entries()]
+        .sort((a, b) => b[0].localeCompare(a[0]))
+        .map(([date, earned]) => {
+            const percent = commissionPercent(rates, barberId, date);
+            const barber = Math.round(earned * percent / 100);
+            return { date, earned, percent, barber, shop: earned - barber };
+        });
+    return {
+        days,
+        barber: sum(days, day => day.barber),
+        shop: sum(days, day => day.shop),
+        percents: [...new Set(days.map(day => day.percent))]
+    };
+}
+
+function percentLabel(value) {
+    return `${I18N.formatNumber(value)}%`;
+}
+
+// Under a barber's totals in History: what the barber takes, what the shop keeps, and how.
+function renderCommission(pay, fallbackPercent) {
+    const percent = pay.percents.length === 1 ? pay.percents[0] : pay.percents.length ? null : fallbackPercent;
+    const calc = day => `${money(day.earned)} × ${escapeHtml(percentLabel(day.percent))} = ${money(day.barber)}`;
+    let how = '';
+    if (pay.days.length === 1) {
+        how = `<p class="hcol-pay-calc" dir="ltr">${calc(pay.days[0])}</p>`;
+    } else if (pay.days.length > 1) {
+        how = `
+            <details class="hcol-pay-days" ${pay.days.length <= 7 ? 'open' : ''}>
+                <summary>${escapeHtml(t('pay.byDay'))}</summary>
+                <ul>
+                    ${pay.days.map(day => `
+                        <li>
+                            <span>${escapeHtml(I18N.formatDate(day.date, { weekday: true }))}</span>
+                            <span class="hcol-pay-calc" dir="ltr">${calc(day)}</span>
+                        </li>`).join('')}
+                </ul>
+            </details>`;
+    }
+    return `
+        <div class="hcol-pay">
+            <div class="hcol-pay-row hcol-pay-barber">
+                <span>${escapeHtml(t('pay.barberShare'))}${percent != null ? ` · ${escapeHtml(percentLabel(percent))}` : ''}</span>
+                <strong>${money(pay.barber)}</strong>
+            </div>
+            <div class="hcol-pay-row">
+                <span>${escapeHtml(t('pay.shopShare'))}${percent != null ? ` · ${escapeHtml(percentLabel(100 - percent))}` : ''}</span>
+                <strong>${money(pay.shop)}</strong>
+            </div>
+            ${how}
+        </div>`;
+}
+
+/* ------------------------------------------------------------------ */
 /* History                                                             */
 /* ------------------------------------------------------------------ */
 
@@ -3172,7 +3368,8 @@ async function renderHistory() {
             params: [start, end]
         }
     ];
-    const [allBarbers, ticketRows, itemRows, saleRows = [], saleItemRows = [], expenseRows = []] = await queryMany([
+    const [commissionRows, allBarbers, ticketRows, itemRows, saleRows = [], saleItemRows = [], expenseRows = []] = await queryMany([
+        COMMISSION_QUERY,
         { query: 'SELECT id, name, is_active FROM barbers ORDER BY id' },
         {
             query: `SELECT ${TICKET_COLUMNS} FROM orders o LEFT JOIN customers c ON c.id = o.customer_id
@@ -3207,6 +3404,15 @@ async function renderHistory() {
     });
     const orphaned = [...byKey.entries()].filter(([key]) => key === 'none' || !knownBarbers.has(key)).flatMap(([, list]) => list);
     if (orphaned.length) columns.push({ key: 'none', name: t('history.noBarber'), noBarber: true, tickets: orphaned });
+
+    // Each barber's share of their clients' money, day by day (clients without a barber: all the shop's).
+    const rates = parseCommission(commissionRows);
+    columns.forEach(column => {
+        if (column.noBarber) return;
+        column.barberId = Number(column.key.slice(1));
+        column.pay = commissionDays(column.tickets, rates, column.barberId);
+    });
+    const toBarbers = sum(columns, column => (column.pay ? column.pay.barber : 0));
 
     const salesMoney = sum(saleRows, sale => sale.total);
     const totalMoney = sum(tickets, ticket => ticket.total) + salesMoney;
@@ -3246,9 +3452,10 @@ async function renderHistory() {
             <div class="day-stat"><span>${escapeHtml(t('dash.clientsDone'))}</span><strong>${escapeHtml(I18N.formatNumber(tickets.length))}</strong></div>
             ${!own ? `<div class="day-stat"><span class="swatch swatch-products"></span><span>${escapeHtml(t('history.productSales'))}</span><strong>${money(salesMoney)}</strong></div>` : ''}
             <div class="day-stat day-stat-money"><span>${escapeHtml(t('dash.totalMoney'))}</span><strong>${money(totalMoney)}</strong></div>
-            ${!own ? `
+            ${own ? `<div class="day-stat day-stat-net"><span>${escapeHtml(t('pay.yourShare'))}</span><strong>${money(toBarbers)}</strong></div>` : `
+                <div class="day-stat"><span class="swatch swatch-barbers"></span><span>${escapeHtml(t('pay.toBarbers'))}</span><strong>${money(toBarbers)}</strong></div>
                 <div class="day-stat"><span class="swatch swatch-expenses"></span><span>${escapeHtml(t('history.expenses'))}</span><strong>${money(expensesMoney)}</strong></div>
-                <div class="day-stat day-stat-net"><span>${escapeHtml(t('history.afterExpenses'))}</span><strong>${money(totalMoney - expensesMoney)}</strong></div>` : ''}
+                <div class="day-stat day-stat-net"><span>${escapeHtml(t('pay.leftForShop'))}</span><strong>${money(totalMoney - toBarbers - expensesMoney)}</strong></div>`}
         </div>
         ${ticketRows.length >= limit ? `<p class="notice">${escapeHtml(t('history.limited', { n: limit }))}</p>` : ''}
         ${columns.length || saleRows.length || expenseRows.length ? `
@@ -3270,6 +3477,7 @@ async function renderHistory() {
                                 <div><span>${escapeHtml(t('history.earned'))}</span><strong>${money(earned)}</strong></div>
                                 <div><span>${escapeHtml(t('history.clientsFinished'))}</span><strong>${escapeHtml(I18N.formatNumber(column.tickets.length))}</strong></div>
                             </div>
+                            ${column.pay ? renderCommission(column.pay, commissionPercent(rates, column.barberId, end)) : ''}
                             <div class="col-body" data-scroll-key="h-${column.key}">
                                 ${column.tickets.length ? `
                                     <ol class="hlist">
@@ -4505,7 +4713,7 @@ async function renderSettings() {
     const isLocal = typeof api.isLocalDatabase === 'function' ? await api.isLocalDatabase() : false;
     const current = I18N.getLanguage();
     const booking = await loadBookingOptions();
-    const [settingsBarbers, settingsSlotRows, siteRows, upcomingRows, socialRows] = await queryMany([
+    const [settingsBarbers, settingsSlotRows, siteRows, upcomingRows, socialRows, commissionRows] = await queryMany([
         { query: 'SELECT id, name FROM barbers WHERE is_active = 1 ORDER BY id' },
         BARBER_SLOT_QUERY,
         { query: 'SELECT value FROM app_options WHERE key = ?', params: [SITE_OPEN_KEY] },
@@ -4514,7 +4722,8 @@ async function renderSettings() {
                     WHERE o.status = 'waiting' AND o.date >= ?`,
             params: [todayString()]
         },
-        { query: 'SELECT key, value FROM app_options WHERE key IN (?, ?)', params: [INSTAGRAM_KEY, WHATSAPP_KEY] }
+        { query: 'SELECT key, value FROM app_options WHERE key IN (?, ?)', params: [INSTAGRAM_KEY, WHATSAPP_KEY] },
+        COMMISSION_QUERY
     ]);
     const siteOpen = String(siteRows[0]?.value ?? '1') !== '0';
     const whatsapp = await loadWhatsappStatus();
@@ -4560,6 +4769,7 @@ async function renderSettings() {
                 </form>
             </section>
             ${renderHoursCard(booking, settingsBarbers, parseBarberSlots(settingsSlotRows))}
+            ${renderCommissionCard(parseCommission(commissionRows), settingsBarbers)}
             ${renderSiteCard(booking, siteOpen, Number(upcomingRows[0]?.count || 0))}
             ${renderWhatsappCard(whatsapp, social[WHATSAPP_KEY] || settings.phone || '')}
             <section class="card">
@@ -4850,9 +5060,78 @@ async function loadWhatsappStatus() {
 const WHATSAPP_RESULT_KEYS = {
     sent: 'wa.sent',
     sending: 'wa.sending',
+    manual: 'wa.manual',
     'no-whatsapp': 'wa.noWhatsapp',
     'bad-number': 'wa.badNumber'
 };
+
+// Phone numbers typed with Kurdish or Arabic digits (٠٧٥٠ or ۰۷۵۰) as 0-9.
+function latinDigits(value) {
+    return String(value || '')
+        .replace(/[\u0660-\u0669]/g, digit => String(digit.charCodeAt(0) - 0x0660))
+        .replace(/[\u06F0-\u06F9]/g, digit => String(digit.charCodeAt(0) - 0x06F0));
+}
+
+// A time the server sent (ISO), as "12 Nov 3:40 PM" on this device.
+function whenLabel(iso) {
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return '';
+    return `${I18N.formatDateShort(toDateString(date))} ${I18N.formatTime(`${pad(date.getHours())}:${pad(date.getMinutes())}`)}`;
+}
+
+const WHATSAPP_PROBLEM_KEYS = {
+    'logged-out': 'wa.alertLoggedOut',
+    disconnected: 'wa.alertDisconnected',
+    unavailable: 'wa.alertUnavailable'
+};
+
+/*
+ * On the Cashier page, for the owner, while reminders are wanted but WhatsApp does not work:
+ * what is wrong, a button to fix it, and the clients whose reminder is due now. "Send" opens
+ * WhatsApp on this device with the message ready, and marks the client as reminded, so the
+ * server does not send it again once WhatsApp is back.
+ */
+function renderWhatsappAlert(info) {
+    if (!info?.problem) return '';
+    const due = Array.isArray(info.due) ? info.due : [];
+    return `
+        <section class="wa-alert" role="alert">
+            <div class="wa-alert-head">
+                <span class="wa-alert-icon">${icon('bell')}</span>
+                <div class="wa-alert-text">
+                    <strong>${escapeHtml(t('wa.alertTitle'))}</strong>
+                    <span>${escapeHtml(t(WHATSAPP_PROBLEM_KEYS[info.problem] || 'wa.alertDisconnected'))}</span>
+                </div>
+                <button type="button" class="btn btn-primary btn-sm" data-action="go" data-page="settings">${icon('link')}<span>${escapeHtml(t('wa.alertFix'))}</span></button>
+            </div>
+            ${due.length ? `
+                <p class="wa-alert-due">${escapeHtml(t('wa.alertDue'))}</p>
+                <ul class="wa-due">
+                    ${due.map(item => `
+                        <li>
+                            <span class="wa-due-who"><strong>${escapeHtml(item.name || t('cashier.walkIn'))}</strong><span>${timeLabel(item.time)} · ${escapeHtml(t('wa.minutesLeft', { n: item.left }))}</span></span>
+                            ${item.url
+                                ? `<a class="btn btn-outline btn-sm" href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer"
+                                    data-wa-manual data-order="${Number(item.order_id)}" data-date="${escapeHtml(item.date)}" data-time="${escapeHtml(item.time)}" data-name="${escapeHtml(item.name || '')}">${icon('send')}<span>${escapeHtml(t('wa.sendByHand'))}</span></a>`
+                                : `<em>${escapeHtml(t('wa.badNumber'))}</em>`}
+                        </li>`).join('')}
+                </ul>` : ''}
+        </section>`;
+}
+
+// "Send" in the warning: WhatsApp opens with the message, and the client is marked as reminded.
+document.addEventListener('click', event => {
+    const link = event.target.closest('a[data-wa-manual]');
+    if (!link || typeof api.whatsapp !== 'function') return;
+    const payload = { order_id: Number(link.dataset.order), date: link.dataset.date, time: link.dataset.time };
+    const name = link.dataset.name || t('cashier.walkIn');
+    api.whatsapp('manual', payload)
+        .then(() => {
+            if (document.contains(link)) link.outerHTML = `<em class="wa-due-done">${icon('check')}${escapeHtml(t('wa.manual'))}</em>`;
+            toast(t('wa.manualSaved', { name }));
+        })
+        .catch(handleError);
+});
 
 function waButton(action, iconName, labelKey, kind = 'btn-ghost') {
     return `<button type="button" class="btn ${kind}" data-action="${action}">${icon(iconName)}<span>${escapeHtml(t(labelKey))}</span></button>`;
@@ -4873,10 +5152,24 @@ function renderWhatsappLive(info) {
     const minutes = info?.before || 20;
 
     let main = '';
+    // WhatsApp ended the link, or cannot be reached for a while: say so first.
+    let problem = '';
+    if (info?.problem === 'logged-out') {
+        problem = `<p class="wa-warn wa-warn-danger">${icon('alert')}<span>${escapeHtml(info.lostAt ? t('wa.lostText', { when: whenLabel(info.lostAt) }) : t('wa.alertLoggedOut'))}</span></p>`;
+    } else if (info?.problem === 'disconnected') {
+        problem = `<p class="wa-warn wa-warn-danger">${icon('alert')}<span>${escapeHtml(t('wa.alertDisconnected'))}${info.error ? ` (${escapeHtml(info.error)})` : ''}</span></p>`;
+    }
     if (current === 'ready') {
         main = `
             <p class="card-text">${escapeHtml(t('wa.readyText', { n: minutes }))}</p>
             ${info.phone ? `<p class="wa-phone">${icon('check')}<bdi dir="ltr">+${escapeHtml(info.phone)}</bdi></p>` : ''}
+            <form class="wa-test" data-form="wa-test" autocomplete="off">
+                <label class="field"><span>${escapeHtml(t('wa.testTitle'))}</span>
+                    <input type="tel" name="phone" maxlength="30" dir="ltr" placeholder="0750 123 4567" required>
+                </label>
+                <button type="submit" class="btn btn-outline">${icon('send')}<span>${escapeHtml(t('wa.testSend'))}</span></button>
+            </form>
+            <p class="field-hint">${escapeHtml(t('wa.testHint'))}</p>
             <div class="button-row">${waButton('wa-unlink', 'logout', 'wa.unlink')}</div>`;
     } else if (current === 'code') {
         main = `
@@ -4924,6 +5217,7 @@ function renderWhatsappLive(info) {
                 <h3 class="card-title">${icon('bell')}${escapeHtml(t('wa.title'))}</h3>
                 <span class="booking-status" data-state="${pill[0]}"><span class="status-dot"></span>${escapeHtml(t(pill[1]))}</span>
             </div>
+            ${problem}
             ${main}
         </div>`;
 }
@@ -4999,7 +5293,7 @@ function watchWhatsapp() {
 
 async function whatsappAction(action, payload = {}) {
     if (action === 'unlink' && !await confirmDialog(t('wa.confirmUnlink'), { okLabel: t('wa.unlink'), danger: true })) return;
-    const info = await api.whatsapp(action === 'cancel' ? 'unlink' : action, payload);
+    const info = await api.whatsapp(action, payload);
     replaceWhatsappLive(info);
     if (action === 'unlink') toast(t('wa.unlinked'));
     watchWhatsapp();
@@ -5009,7 +5303,7 @@ async function whatsappAction(action, payload = {}) {
 function whatsappCode() {
     const input = dom.page.querySelector('[data-wa-phone]');
     const phone = input?.value.trim() || '';
-    const digits = phone.replace(/\D+/g, '');
+    const digits = latinDigits(phone).replace(/\D+/g, '');
     if (digits.length < 7 || digits.length > 15) {
         toast(t('wa.badPhone'), 'error');
         input?.focus();
@@ -5017,6 +5311,25 @@ function whatsappCode() {
     }
     whatsappPhoneHint = phone;
     return whatsappAction('link', { phone });
+}
+
+// "Send test": the reminder message goes to one number now, to see that it arrives.
+async function sendWhatsappTest(form) {
+    const phone = form.elements.phone.value.trim();
+    const digits = latinDigits(phone).replace(/\D+/g, '');
+    if (digits.length < 7 || digits.length > 15) {
+        toast(t('wa.testBadPhone'), 'error');
+        form.elements.phone.focus();
+        return;
+    }
+    try {
+        const info = await api.whatsapp('test', { phone });
+        const shown = `+${info.test?.phone || digits}`;
+        if (info.test?.result === 'sent') toast(t('wa.testSent', { phone: shown }));
+        else toast(t('wa.testNoWhatsapp', { phone: shown }), 'error');
+    } catch (error) {
+        toast(t('wa.testFailed', { message: error.message }), 'error');
+    }
 }
 
 // The owner's minutes and message. Left as the ready-made message, it follows the minutes.
@@ -5103,6 +5416,84 @@ async function migrateHoursToMidnight() {
 
 // Opening hours, time between clients and closed days. The cashier makes its time slots from
 // these, and the website shows the same free times.
+// Settings → Barber commission: the shop's share for barbers, and a different one for a barber.
+function renderCommissionCard(rates, barbers = []) {
+    const today = todayString();
+    const shopPercent = shopCommission(rates, today);
+    const rows = barbers.map(barber => {
+        const own = commissionEntry(rates.barbers.get(Number(barber.id)), today);
+        const value = own && own.percent != null ? own.percent : '';
+        return `
+            <div class="barber-time">
+                <span class="avatar avatar-sm">${escapeHtml(initials(barber.name))}</span>
+                <strong>${escapeHtml(barber.name)}</strong>
+                <span class="money-input commission-input">
+                    <input type="number" min="0" max="100" step="1" inputmode="numeric" value="${value}" placeholder="${shopPercent}"
+                        data-commission-barber="${barber.id}" aria-label="${escapeHtml(t('pay.barberLabel', { name: barber.name }))}">
+                    <span>%</span>
+                </span>
+            </div>`;
+    }).join('');
+    return `
+        <section class="card card-wide commission-card">
+            <h3 class="card-title">${icon('percent')}${escapeHtml(t('pay.title'))}</h3>
+            <p class="card-text">${escapeHtml(t('pay.text'))}</p>
+            <form class="stack" data-form="commission" autocomplete="off">
+                <div class="commission-shop">
+                    <label class="field"><span>${escapeHtml(t('pay.shopPercent'))}</span>
+                        <span class="money-input commission-input">
+                            <input type="number" name="percent" min="0" max="100" step="1" inputmode="numeric" required value="${shopPercent}">
+                            <span>%</span>
+                        </span>
+                    </label>
+                    <p class="commission-split" data-commission-split>${escapeHtml(t('pay.split', { barber: percentLabel(shopPercent), shop: percentLabel(100 - shopPercent) }))}</p>
+                </div>
+                ${rows ? `
+                    <div class="field">
+                        <span>${escapeHtml(t('pay.perBarber'))}</span>
+                        <div class="barber-times">${rows}</div>
+                        <small class="field-hint">${escapeHtml(t('pay.perBarberHint'))}</small>
+                    </div>` : ''}
+                <p class="field-hint">${escapeHtml(t('pay.fromToday'))}</p>
+                <div><button type="submit" class="btn btn-primary">${icon('check')}<span>${escapeHtml(t('common.save'))}</span></button></div>
+            </form>
+        </section>`;
+}
+
+// Saves only what changed, dated today, so the days before keep the share they had.
+async function saveCommission(form) {
+    const today = todayString();
+    const rates = parseCommission(await api.dbQuery(COMMISSION_QUERY.query));
+    const percent = commissionValue(form.elements.percent.value);
+    if (percent == null || String(form.elements.percent.value).trim() !== String(percent)) {
+        toast(t('pay.badPercent'), 'error');
+        form.elements.percent.focus();
+        return false;
+    }
+    const statements = [];
+    if (percent !== shopCommission(rates, today) || !rates.shop.length) {
+        statements.push(setOption(`commission.shop.${today}`, String(percent)));
+    }
+    for (const input of form.querySelectorAll('[data-commission-barber]')) {
+        const id = Number(input.dataset.commissionBarber);
+        const typed = input.value.trim();
+        const value = commissionValue(typed);
+        if (typed !== '' && (value == null || typed !== String(value))) {
+            toast(t('pay.badPercent'), 'error');
+            input.focus();
+            return false;
+        }
+        const own = commissionEntry(rates.barbers.get(id), today);
+        if (value !== (own ? own.percent : null)) {
+            statements.push(setOption(`commission.barber.${id}.${today}`, value == null ? '' : String(value)));
+        }
+    }
+    if (statements.length) await runStatements(statements);
+    toast(t('toast.saved'));
+    if (state.page === 'settings' && !modalStack.length) await renderPage({ keepScroll: true });
+    return true;
+}
+
 function renderHoursCard(options, barbers = [], barberSlots = new Map()) {
     const hours = shopHours(options);
     const barberRows = barbers.map(barber => {
@@ -5317,6 +5708,7 @@ const actions = {
         return renderPage();
     },
     'slot-add': element => openSlotForm(Number(element.dataset.barber), element.dataset.time),
+    'walk-in': element => openWalkIn(Number(element.dataset.barber)),
     'slot-edit': element => openSlotEdit(Number(element.dataset.id)),
     'slot-cancel': () => closeSlotForm(),
     'slot-remove': element => removeOpenClient(Number(element.dataset.id)),
@@ -5399,7 +5791,12 @@ const actions = {
         state.historyPeriod = element.dataset.value;
         return renderPage();
     },
-    print: () => window.print(),
+    print: () => {
+        dom.page.querySelectorAll('details.hcol-pay-days').forEach(details => {
+            details.open = true;
+        });
+        window.print();
+    },
     'catalog-tab': element => {
         state.catalogTab = element.dataset.value;
         return renderPage();
@@ -5470,6 +5867,18 @@ document.addEventListener('click', event => {
 document.addEventListener('input', event => {
     if (event.target.closest('[data-form="slot"]')) {
         onSlotFormInput(event.target);
+        return;
+    }
+    if (event.target.matches('[data-form="commission"] [name="percent"]')) {
+        const percent = commissionValue(event.target.value);
+        const form = event.target.form;
+        const split = form.querySelector('[data-commission-split]');
+        if (percent != null && split) {
+            split.textContent = t('pay.split', { barber: percentLabel(percent), shop: percentLabel(100 - percent) });
+            form.querySelectorAll('[data-commission-barber]').forEach(input => {
+                input.placeholder = String(percent);
+            });
+        }
         return;
     }
     if (event.target.matches('[data-sell-search]')) {
@@ -5553,10 +5962,10 @@ document.addEventListener('submit', event => {
         saveShop(form).catch(handleError);
     } else if (form.dataset.form === 'history-password') {
         saveHistoryPassword(form).catch(handleError);
-    } else if (['hours', 'site', 'admin-password', 'whatsapp'].includes(form.dataset.form)) {
+    } else if (['hours', 'site', 'admin-password', 'whatsapp', 'wa-test', 'commission'].includes(form.dataset.form)) {
         const button = form.querySelector('button[type="submit"]');
         if (button) button.disabled = true;
-        const save = { hours: saveHours, site: saveSiteSettings, 'admin-password': saveAdminPassword, whatsapp: saveWhatsappSettings }[form.dataset.form];
+        const save = { hours: saveHours, site: saveSiteSettings, 'admin-password': saveAdminPassword, whatsapp: saveWhatsappSettings, 'wa-test': sendWhatsappTest, commission: saveCommission }[form.dataset.form];
         save(form)
             .catch(handleError)
             .finally(() => {

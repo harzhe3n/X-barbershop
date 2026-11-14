@@ -15,7 +15,7 @@ The booking website is part of this project. `server.js` serves it at `/` and th
 ## What the customer does
 
 1. **Loading screen**: the two halves of the X logo slide together, then "XBARBER" appears letter by letter.
-2. **Barbers**: photos in a stack (set in the cashier on the Barbers page). The barber with the most free times today stands in the middle, then the next most free, and so on; a barber who closed themselves comes last. The photos do not move by themselves: drag or swipe them, or use the arrows or the button with each barber's name. Under the photos: the name, the next free time and **Book with ...** (tapping the photo in the middle also opens booking).
+2. **Barbers**: every barber's photo, all the same size, side by side (set in the cashier on the Barbers page). Nothing moves. The barber with the most free times today comes first, then the next most free, and so on; a barber who closed themselves comes last. The customer taps the barber they want: that photo gets an outline, and under the photos come the name, the next free time and **Book with ...** (tapping the chosen photo again also opens booking).
    Taken times in the booking window show the name of the client who has them.
 3. **Pick a time**: days from today up to "Book up to" (Settings → Booking website). Free times can be tapped; taken times are shown crossed out. Closed days and days the barber is "Not at work" cannot be picked.
 4. **Your details**: name and phone number only. No sign-up.

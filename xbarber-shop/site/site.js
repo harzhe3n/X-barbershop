@@ -3,8 +3,8 @@
 /*
  * XOSHAWIS STUDIO booking website.
  * Black and white. A long loading screen (the X is drawn, scissors cut a line, a counter runs to 100),
- * then the barbers in a slider you can drag, with momentum, that never ends and moves on every
- * 5 seconds. Barber tools (scissors, razor, comb, clipper) move in the background and in a black band.
+ * then every barber's photo, all the same size and still; the visitor taps the barber they want.
+ * Barber tools (scissors, razor, comb, clipper) move in the background and in a black band.
  * Booking: 1. pick a day and a free time.  2. type name and phone number.  3. done.
  * Free times come from the cashier (GET /api/public/availability); a booking becomes a waiting
  * client in that barber's slot (POST /api/public/book). No sign-in for customers.
@@ -109,8 +109,9 @@
             'carousel.next': 'Next barber',
             'carousel.slide': '{n} of {total}',
             'barbers.bookWith': 'Book with {name}',
-            'cursor.drag': 'Drag',
-            'cursor.book': 'Book'
+            'cursor.choose': 'Choose',
+            'cursor.book': 'Book',
+            'barbers.choose': 'Tap a barber to choose them'
         },
         ar: {
             'nav.book': 'احجز الآن',
@@ -198,8 +199,9 @@
             'carousel.next': 'الحلاق التالي',
             'carousel.slide': '{n} من {total}',
             'barbers.bookWith': 'احجز مع {name}',
-            'cursor.drag': 'اسحب',
-            'cursor.book': 'احجز'
+            'cursor.choose': 'اختر',
+            'cursor.book': 'احجز',
+            'barbers.choose': 'اضغط على حلاق لاختياره'
         },
         ckb: {
             'nav.book': 'ئێستا نۆرە بگرە',
@@ -287,8 +289,9 @@
             'carousel.next': 'باربەری دواتر',
             'carousel.slide': '{n} لە {total}',
             'barbers.bookWith': 'نۆرە لای {name} بگرە',
-            'cursor.drag': 'ڕایبکێشە',
-            'cursor.book': 'نۆرە بگرە'
+            'cursor.choose': 'هەڵبژێرە',
+            'cursor.book': 'نۆرە بگرە',
+            'barbers.choose': 'دەست لە باربەرێک بدە بۆ هەڵبژاردنی'
         }
     };
 
@@ -330,8 +333,8 @@
         info: null,
         loadError: false,
         ready: false,
-        // Barber slider: the barber in the middle (the one with the most free times at first).
-        slide: 0,
+        // The barber the visitor tapped (their id), or null before they choose.
+        selectedId: null,
         // Booking window
         barber: null,
         days: [],
@@ -355,8 +358,6 @@
     const carousel = $('#carousel');
     const stage = $('#stage');
     const spotlight = $('#spotlight');
-    const picker = $('#picker');
-    const sliderCount = $('#slider-count');
     const loader = $('#loader');
     const cursor = $('#cursor');
 
@@ -470,34 +471,23 @@
         return data;
     }
 
-    /* ---------------- Barber slider ---------------- */
+    /* ---------------- Barbers ---------------- */
     /*
-     * The photos sit in a row. Drag them (or swipe, or use the arrows); they glide with momentum and
-     * settle on the nearest barber, who is the one shown under the photos. Each barber has one photo;
-     * the row stops at the first and the last. It does not move by itself: the barber with the most
-     * free times stands in the middle (the server sends the barbers in that order).
+     * Every barber's photo, all the same size, side by side. Nothing moves. The visitor taps the
+     * barber they want: that photo gets an outline, and the barber's next free time and booking
+     * button show under the photos. Tapping the chosen photo again opens the booking too.
+     * The barber with the most free times comes first (the server sends them in that order).
      */
 
-    const slider = {
-        cards: [],
-        count: 0,
-        total: 0,
-        current: 0,
-        target: 0,
-        step: 300,
-        raf: 0,
-        last: 0,
-        drag: null,
-        wheelTimer: 0,
-        key: ''
-    };
+    let gridKey = '';
 
     function barberList() {
         return state.info?.barbers || [];
     }
 
+    // The barber the visitor chose, or null before they choose.
     function activeBarber() {
-        return barberList()[state.slide] || null;
+        return barberList().find(barber => barber.id === state.selectedId) || null;
     }
 
     // Open unless the barber closed themselves in the cashier.
@@ -505,115 +495,8 @@
         return Boolean(barber) && barber.online !== false;
     }
 
-    function mod(value, size) {
-        return ((value % size) + size) % size;
-    }
-
-    // A position on the row, kept between the first and the last barber.
-    function clampSlide(value) {
-        return Math.max(0, Math.min(barberList().length - 1, value));
-    }
-
     function pad(value, size) {
         return String(value).padStart(size, '0');
-    }
-
-    // The slider has come to rest on a barber (or is on its way): show their name and button.
-    function settle() {
-        const count = barberList().length;
-        if (!count) return;
-        const before = state.slide;
-        slider.target = clampSlide(Math.round(slider.target));
-        state.slide = slider.target;
-        const pickerHadFocus = picker.contains(document.activeElement);
-        if (state.slide !== before) {
-            renderSpotlight(true);
-            renderPicker();
-            renderCount();
-            if (pickerHadFocus) picker.querySelector('.pick[aria-current="true"]')?.focus({ preventScroll: true });
-        }
-        kick();
-    }
-
-    function moveBy(delta) {
-        const count = barberList().length;
-        if (count < 2) return;
-        let next = Math.round(slider.target) + delta;
-        // The arrows go round: after the last barber comes the first again.
-        if (next > count - 1) next = 0;
-        else if (next < 0) next = count - 1;
-        slider.target = next;
-        settle();
-    }
-
-    function goTo(index) {
-        if (barberList().length < 2) return;
-        slider.target = clampSlide(index);
-        settle();
-    }
-
-    // The photos stand in a stack: the barber in the middle in front, the ones next to it
-    // smaller and tucked half behind it, the next ones only just showing behind those.
-    const STACK = {
-        near: 0.5, // how far the next photo sits from the middle one (part of a photo's width)
-        far: 0.26, // how much further each photo after that
-        nearScale: 0.84,
-        farScale: 0.72
-    };
-
-    function measureSlider() {
-        const card = stage.querySelector('.card');
-        if (!card) return;
-        slider.width = card.offsetWidth;
-        // Dragging by this many pixels moves one barber.
-        slider.step = card.offsetWidth * STACK.near;
-    }
-
-    // Puts every photo in its place for the slider's position right now.
-    function layoutSlider() {
-        if (!slider.total) return;
-        const dir = isRtl() ? -1 : 1;
-        const width = slider.width || slider.step / STACK.near;
-        const speed = slider.target - slider.current;
-        const skew = Math.max(-3, Math.min(3, speed * -5)) * dir;
-        slider.cards.forEach((card, virtual) => {
-            const offset = virtual - slider.current;
-            const distance = Math.abs(offset);
-            const near = Math.min(distance, 1);
-            const far = Math.max(distance - 1, 0);
-            const x = Math.sign(offset) * width * (near * STACK.near + far * STACK.far);
-            const scale = 1 - near * (1 - STACK.nearScale) - Math.min(far, 1) * (STACK.nearScale - STACK.farScale);
-            card.style.transform = `translate3d(${(x * dir).toFixed(2)}px, 0, 0) scale(${scale.toFixed(4)}) skewX(${skew.toFixed(2)}deg)`;
-            // Full in the middle, a little darker behind, gone after the second one.
-            card.style.opacity = String(distance <= 1 ? 1 : Math.max(0, 1 - (distance - 1) * 0.6).toFixed(3));
-            card.style.setProperty('--shade', (Math.min(distance, 2) * 0.22).toFixed(3));
-            card.style.zIndex = String(100 - Math.round(distance * 10));
-            card.style.visibility = distance > 2.7 ? 'hidden' : '';
-            const active = distance < 0.5;
-            card.classList.toggle('is-active', active);
-            card.tabIndex = active ? 0 : -1;
-        });
-    }
-
-    function tick(now) {
-        const elapsed = slider.last ? Math.min(64, now - slider.last) : 16.7;
-        slider.last = now;
-        const ease = reducedMotion ? 1 : 1 - Math.pow(1 - 0.075, elapsed / 16.7);
-        slider.current += (slider.target - slider.current) * ease;
-        if (!slider.drag && Math.abs(slider.target - slider.current) < 0.0005) slider.current = slider.target;
-        layoutSlider();
-        if (slider.drag || slider.current !== slider.target) {
-            slider.raf = requestAnimationFrame(tick);
-        } else {
-            slider.raf = 0;
-            slider.last = 0;
-        }
-    }
-
-    function kick() {
-        if (slider.raf) return;
-        slider.last = 0;
-        slider.raf = requestAnimationFrame(tick);
     }
 
     function photoMarkup(barber) {
@@ -630,51 +513,50 @@
         else if (!list.length) placeholder = `<div class="card card-empty">${MARK}<p>${esc(t('barbers.empty'))}</p></div>`;
         if (placeholder) {
             const key = state.loadError ? 'error' : state.info ? 'empty' : 'loading';
-            if (slider.key !== key) {
-                slider.key = key;
+            if (gridKey !== key) {
+                gridKey = key;
                 stage.innerHTML = placeholder;
             }
-            slider.cards = [];
-            slider.count = 0;
-            slider.total = 0;
             return;
         }
-        // The photos are only rebuilt when the barbers change, so moving between them stays smooth.
+        // The photos are only rebuilt when the barbers change.
         const key = `${state.lang}|${list.map(barber => `${barber.id}:${barber.name}:${barber.photo || ''}:${isOpen(barber)}`).join('|')}`;
-        if (key !== slider.key) {
-            slider.key = key;
-            const count = list.length;
-            // One photo for each barber.
-            const total = count;
-            let html = '';
-            for (let index = 0; index < count; index += 1) {
-                const barber = list[index];
-                html += `
-                    <button type="button" class="card ${isOpen(barber) ? '' : 'is-closed'}" data-index="${index}" data-virtual="${index}"
-                        aria-roledescription="slide" aria-label="${esc(`${barber.name} · ${t('carousel.slide', { n: index + 1, total: count })}`)}">
-                        <span class="card-media">${photoMarkup(barber)}</span>
-                        <span class="card-num" dir="ltr">NO ${pad(index + 1, 3)}</span>
-                        <span class="card-name">${esc(barber.name)}</span>
-                    </button>`;
-            }
-            stage.innerHTML = html;
-            slider.cards = [...stage.querySelectorAll('.card[data-virtual]')];
-            slider.count = count;
-            slider.total = total;
-            slider.current = slider.target = state.slide;
-            measureSlider();
+        if (key !== gridKey) {
+            gridKey = key;
+            stage.innerHTML = list.map((barber, index) => `
+                <button type="button" class="card ${isOpen(barber) ? '' : 'is-closed'}" data-barber="${barber.id}" aria-pressed="false" aria-label="${esc(barber.name)}">
+                    <span class="card-media">${photoMarkup(barber)}</span>
+                    <span class="card-num" dir="ltr">NO ${pad(index + 1, 3)}</span>
+                    <span class="card-name">${esc(barber.name)}</span>
+                </button>`).join('');
         }
-        layoutSlider();
+        stage.querySelectorAll('.card[data-barber]').forEach(card => {
+            card.setAttribute('aria-pressed', String(Number(card.dataset.barber) === state.selectedId));
+        });
     }
 
-    function renderSpotlight(animate) {
+    // The visitor tapped a barber: outline their photo and show their booking button.
+    function chooseBarber(id) {
+        state.selectedId = id;
+        renderStage();
+        renderSpotlight();
+        // On a phone the button can be below the screen.
+        const box = spotlight.getBoundingClientRect();
+        if (box.bottom > window.innerHeight) spotlight.scrollIntoView({ block: 'nearest' });
+    }
+
+    function renderSpotlight() {
         const barber = activeBarber();
         if (state.loadError) {
             spotlight.innerHTML = `<p class="retry-row"><button type="button" class="btn btn-ghost btn-small" data-retry>${esc(t('err.retry'))}</button></p>`;
             return;
         }
-        if (!barber) {
+        if (!state.info || !barberList().length) {
             spotlight.innerHTML = '';
+            return;
+        }
+        if (!barber) {
+            spotlight.innerHTML = `<p class="spot-choose">${esc(t('barbers.choose'))}</p>`;
             return;
         }
         let status;
@@ -691,55 +573,14 @@
             <h2 class="spot-name">${esc(barber.name)}</h2>
             <p class="spot-status">${status}</p>
             <button type="button" class="btn btn-ink" data-book="${barber.id}" ${state.info.open && isOpen(barber) ? '' : 'disabled'}>${esc(t('barbers.bookWith', { name: barber.name }))}</button>`;
-        if (animate) {
-            spotlight.classList.remove('spot-in');
-            void spotlight.offsetWidth;
-            spotlight.classList.add('spot-in');
-        }
     }
 
-    // A button for every barber, so any barber can be shown straight away.
-    function renderPicker() {
-        const list = barberList();
-        if (list.length < 2) {
-            picker.innerHTML = '';
-            return;
-        }
-        picker.setAttribute('aria-label', t('carousel.label'));
-        picker.innerHTML = list.map((barber, index) => `
-            <button type="button" class="pick ${isOpen(barber) ? '' : 'is-closed'}" data-index="${index}" aria-current="${index === state.slide}">
-                <span class="pick-num" dir="ltr">${pad(index + 1, 3)}</span>
-                <span class="pick-name">${esc(barber.name)}</span>
-                <span class="pick-progress" aria-hidden="true"></span>
-            </button>`).join('');
-        // On phones, keep the current barber's button in view. Only the row of buttons scrolls.
-        const active = picker.querySelector('.pick[aria-current="true"]');
-        if (active && picker.scrollWidth > picker.clientWidth) {
-            const row = picker.getBoundingClientRect();
-            const button = active.getBoundingClientRect();
-            picker.scrollBy({ left: (button.left + button.width / 2) - (row.left + row.width / 2), behavior: 'smooth' });
-        }
-    }
-
-    function renderCount() {
-        const count = barberList().length;
-        sliderCount.textContent = count ? `${pad(state.slide + 1, 2)} / ${pad(count, 2)}` : '';
-    }
-
-    function renderCarousel(animate = false) {
-        const count = barberList().length;
-        if (state.slide >= count) state.slide = 0;
+    function renderCarousel() {
+        // A barber who is gone is no longer chosen.
+        if (state.selectedId != null && !activeBarber()) state.selectedId = null;
         carousel.setAttribute('aria-label', t('carousel.label'));
         renderStage();
-        renderSpotlight(animate);
-        renderPicker();
-        renderCount();
-        document.querySelectorAll('[data-slide]').forEach(arrow => {
-            const next = arrow.dataset.slide === 'next';
-            arrow.hidden = count < 2;
-            arrow.setAttribute('aria-label', t(next ? 'carousel.next' : 'carousel.prev'));
-            arrow.innerHTML = icon(next ? 'next' : 'prev', 'flip-rtl');
-        });
+        renderSpotlight();
     }
 
     /* ---------------- Barber tools ---------------- */
@@ -863,8 +704,6 @@
         document.body.classList.remove('is-loading');
         document.body.classList.add('is-ready');
         state.ready = true;
-        measureSlider();
-        layoutSlider();
     }
 
     /* ---------------- Mouse ring ---------------- */
@@ -889,12 +728,12 @@
             if (event.pointerType !== 'mouse') return;
             tx = event.clientX;
             ty = event.clientY;
-            const overTrack = Boolean(event.target.closest?.('.slider-track')) && sheetRoot.hidden && barberList().length > 0;
-            const card = event.target.closest?.('.card[data-virtual]');
+            // Over a photo: "Choose", or "Book" over the chosen one.
+            const card = sheetRoot.hidden ? event.target.closest?.('.card[data-barber]') : null;
             let text = '';
-            if (overTrack) {
-                const bookable = card && card.classList.contains('is-active') && isOpen(activeBarber()) && state.info?.open;
-                text = bookable && !slider.drag ? t('cursor.book') : t('cursor.drag');
+            if (card) {
+                const chosen = Number(card.dataset.barber) === state.selectedId;
+                text = chosen && isOpen(activeBarber()) && state.info?.open ? t('cursor.book') : t('cursor.choose');
             }
             if (label.textContent !== text) label.textContent = text;
             cursor.classList.toggle('is-on', Boolean(text));
@@ -1009,18 +848,15 @@
 
     // Loads (or reloads) the shop and its barbers, keeping the same barber in the middle.
     async function loadInfo() {
-        const shownId = activeBarber()?.id;
         state.loadError = false;
         try {
             state.info = await request('/api/public/info');
         } catch (error) {
             if (!state.info) state.loadError = true;
         }
-        const index = barberList().findIndex(barber => barber.id === shownId);
-        state.slide = index >= 0 ? index : Math.min(state.slide, Math.max(barberList().length - 1, 0));
         renderPage();
         if (!state.ready) {
-            // Let the logo finish its animation before the page shows, then start the slider.
+            // Let the logo finish its animation before the page shows.
             const wait = Math.max(0, LOADER_MS - (Date.now() - startedAt));
             setTimeout(finishLoader, wait);
         }
@@ -1318,7 +1154,6 @@
 
     /* ---------------- Events ---------------- */
 
-    let ignoreClick = false;
 
     document.addEventListener('click', event => {
         const lang = event.target.closest('[data-lang]');
@@ -1336,10 +1171,10 @@
             loadInfo();
             return;
         }
-        // "Book now" in the header books with the barber in the middle.
+        // "Book now" books with the chosen barber; before one is chosen it shows the barbers.
         if (event.target.closest('[data-book-active]')) {
             const barber = activeBarber();
-            if (isOpen(barber) && state.info?.open) openSheet(barber.id);
+            if (barber && isOpen(barber) && state.info?.open) openSheet(barber.id);
             else carousel.scrollIntoView({ behavior: 'smooth', block: 'center' });
             return;
         }
@@ -1348,27 +1183,16 @@
             openSheet(Number(book.dataset.book));
             return;
         }
-        const arrow = event.target.closest('[data-slide]');
-        if (arrow) {
-            moveBy(arrow.dataset.slide === 'next' ? 1 : -1);
-            return;
-        }
-        const card = event.target.closest('.card[data-virtual]');
+        const card = event.target.closest('.card[data-barber]');
         if (card) {
-            if (ignoreClick) return;
-            // The photo in the middle opens the booking; another photo comes to the middle.
-            const offset = Math.round(Number(card.dataset.virtual) - slider.target);
-            if (offset === 0) {
+            const id = Number(card.dataset.barber);
+            // The chosen barber tapped again opens the booking.
+            if (id === state.selectedId) {
                 const barber = activeBarber();
                 if (isOpen(barber) && state.info?.open) openSheet(barber.id);
             } else {
-                moveBy(offset);
+                chooseBarber(id);
             }
-            return;
-        }
-        const pick = event.target.closest('.pick[data-index]');
-        if (pick) {
-            goTo(Number(pick.dataset.index));
             return;
         }
 
@@ -1403,94 +1227,6 @@
             return;
         }
         if (event.target.closest('[data-confirm]')) confirmBooking();
-    });
-
-    // Drag the photos with a finger or the mouse. They follow, glide on when let go, and settle
-    // on the nearest barber. Up-and-down moves still scroll the page.
-    stage.addEventListener('pointerdown', event => {
-        if (barberList().length < 2 || event.button > 0) return;
-        slider.drag = { id: event.pointerId, x: event.clientX, y: event.clientY, start: slider.target, lastX: event.clientX, lastT: performance.now(), speed: 0, axis: null };
-    });
-    window.addEventListener('pointermove', event => {
-        const drag = slider.drag;
-        if (!drag || event.pointerId !== drag.id) return;
-        const dx = event.clientX - drag.x;
-        const dy = event.clientY - drag.y;
-        if (!drag.axis) {
-            if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
-            drag.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
-            if (drag.axis === 'y') {
-                slider.drag = null;
-                return;
-            }
-            stage.classList.add('is-dragging');
-            try {
-                stage.setPointerCapture(event.pointerId);
-            } catch (error) {
-                // Not every browser allows it here; dragging still works.
-            }
-        }
-        const dir = isRtl() ? -1 : 1;
-        const raw = drag.start - (dx / slider.step) * dir;
-        const last = barberList().length - 1;
-        slider.target = raw < 0 ? raw * 0.3 : raw > last ? last + (raw - last) * 0.3 : raw;
-        const now = performance.now();
-        const elapsed = now - drag.lastT;
-        if (elapsed > 0) drag.speed = 0.8 * ((event.clientX - drag.lastX) / elapsed) + 0.2 * drag.speed;
-        drag.lastX = event.clientX;
-        drag.lastT = now;
-        kick();
-    });
-    const endDrag = event => {
-        const drag = slider.drag;
-        if (!drag || (event && event.pointerId !== drag.id)) return;
-        slider.drag = null;
-        stage.classList.remove('is-dragging');
-        if (drag.axis !== 'x') return;
-        const dir = isRtl() ? -1 : 1;
-        // A quick flick carries on a little (at most a barber or two); any clear swipe moves at
-        // least one barber, so a short swipe on a phone is never lost.
-        const speed = Math.max(-2.5, Math.min(2.5, drag.speed));
-        const fling = Math.max(-1.5, Math.min(1.5, (-speed * 220 / slider.step) * dir));
-        const from = Math.round(drag.start);
-        const moved = slider.target - drag.start;
-        let next = Math.round(slider.target + fling);
-        if (next === from && Math.abs(moved) > 0.12) next = from + Math.sign(moved);
-        slider.target = next;
-        settle();
-        ignoreClick = true;
-        setTimeout(() => {
-            ignoreClick = false;
-        }, 80);
-    };
-    window.addEventListener('pointerup', endDrag);
-    window.addEventListener('pointercancel', endDrag);
-
-    // Sideways on a trackpad moves the photos too.
-    stage.addEventListener('wheel', event => {
-        if (barberList().length < 2 || Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return;
-        event.preventDefault();
-        slider.target = Math.max(-0.3, Math.min(barberList().length - 0.7, slider.target + (event.deltaX / slider.step) * (isRtl() ? -1 : 1)));
-        kick();
-        clearTimeout(slider.wheelTimer);
-        slider.wheelTimer = setTimeout(() => {
-            slider.target = Math.round(slider.target);
-            settle();
-        }, 140);
-    }, { passive: false });
-
-    window.addEventListener('resize', () => {
-        measureSlider();
-        layoutSlider();
-    });
-
-    [carousel, picker].forEach(element => {
-        element.addEventListener('keydown', event => {
-            if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
-            event.preventDefault();
-            const forward = event.key === 'ArrowRight' ? 1 : -1;
-            moveBy(isRtl() ? -forward : forward);
-        });
     });
 
     document.addEventListener('input', event => {

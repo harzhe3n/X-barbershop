@@ -1,5 +1,5 @@
 /* XOSHAWIS STUDIO booking website. White and quiet: light page, black type, big serif titles,
-   small spaced capitals, numbered labels and a barber slider you can drag. Movement is kept slow
+   small spaced capitals, numbered labels and the barbers' photos side by side. Movement is kept slow
    and few. The booking window is at the end. */
 
 :root {
@@ -29,9 +29,6 @@
     --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
     --ease-io: cubic-bezier(0.76, 0, 0.24, 1);
     --pad: clamp(18px, 5vw, 64px);
-    /* One barber photo in the slider (its height is 4:3 of it). It follows the screen height, so the
-       title, the photos and the booking button fit on one screen. */
-    --card-w: clamp(190px, min(24vw, calc((100vh - 520px) * 0.75)), 330px);
     --gap: clamp(14px, 2vw, 28px);
 }
 
@@ -715,8 +712,7 @@ body.is-ready .badge:hover {
 .hero-top,
 .hero-title,
 .closed-banner,
-.slider-bar,
-.picker {
+.slider-bar {
     position: relative;
     z-index: 1;
 }
@@ -848,68 +844,51 @@ body.is-ready .hero-title .line-2 > * {
     text-align: center;
 }
 
-/* The slider: photos in a row, the barber in the middle is the one shown. */
+/* The barbers: every photo the same size, side by side, still. The chosen one has an outline. */
 .slider {
     position: relative;
     z-index: 1;
-    height: calc(var(--card-w) * 4 / 3);
-    opacity: 0;
-    transform: translateY(40px);
-    transition: opacity 1.4s var(--ease), transform 1.4s var(--ease);
-}
-
-body.is-ready .slider {
-    opacity: 1;
-    transform: none;
-    transition-delay: 0.95s;
+    padding: 0 var(--pad);
 }
 
 .slider-track {
-    position: absolute;
-    inset: 0;
-    touch-action: pan-y;
-    user-select: none;
-    -webkit-user-select: none;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 230px));
+    justify-content: center;
+    gap: clamp(14px, 2.2vw, 26px);
 }
 
 .card {
-    position: absolute;
-    top: 0;
-    left: 50%;
-    width: var(--card-w);
-    height: 100%;
-    margin-left: calc(var(--card-w) / -2);
+    position: relative;
+    display: block;
+    width: 100%;
+    aspect-ratio: 3 / 4;
     padding: 0;
     overflow: hidden;
     border: 0;
     border-radius: 14px;
+    outline: 3px solid transparent;
+    outline-offset: 4px;
     background: linear-gradient(160deg, #f2f2f2, #dadada);
-    box-shadow: 0 18px 44px rgba(0, 0, 0, 0.22), 0 2px 8px rgba(0, 0, 0, 0.12);
-    cursor: grab;
-    will-change: transform, opacity;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16), 0 2px 6px rgba(0, 0, 0, 0.1);
+    cursor: pointer;
     -webkit-tap-highlight-color: transparent;
 }
 
-.slider-track.is-dragging .card {
-    cursor: grabbing;
+.card[aria-pressed="true"] {
+    outline-color: var(--ink);
 }
 
-/* The whole photo fits its frame; faces sit near the top, so the top is kept. */
+.card:focus-visible:not([aria-pressed="true"]) {
+    outline: 2px dashed var(--muted);
+}
+
+/* The whole photo fills its frame; faces sit near the top, so the top is kept. */
 .card-media {
     position: absolute;
     inset: 0;
     display: grid;
     place-items: center;
-}
-
-/* Photos behind the middle one are a little darker (--shade is set by site.js). */
-.card-media::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background: #000;
-    opacity: var(--shade, 0);
-    pointer-events: none;
 }
 
 .card-media img {
@@ -919,17 +898,12 @@ body.is-ready .slider {
     object-position: 50% 22%;
     -webkit-user-drag: none;
     pointer-events: none;
-    transition: scale 0.9s var(--ease);
-}
-
-.card.is-active:hover .card-media img {
-    scale: 1.07;
 }
 
 .card-initial {
     color: rgba(0, 0, 0, 0.7);
     font-family: var(--font-display);
-    font-size: calc(var(--card-w) * 0.5);
+    font-size: clamp(56px, 8vw, 110px);
     line-height: 1;
 }
 
@@ -945,21 +919,21 @@ body.is-ready .slider {
 .card-name {
     position: absolute;
     z-index: 1;
-    left: 16px;
-    right: 16px;
+    left: 14px;
+    right: 14px;
     color: #fff;
     text-align: left;
 }
 
 .card-num {
-    top: 14px;
+    top: 12px;
     font-family: var(--font-mono);
     font-size: 11px;
     letter-spacing: 0.22em;
 }
 
 .card-name {
-    bottom: 14px;
+    bottom: 12px;
     overflow: hidden;
     font-size: 13px;
     font-weight: 700;
@@ -967,6 +941,11 @@ body.is-ready .slider {
     text-overflow: ellipsis;
     text-transform: uppercase;
     white-space: nowrap;
+}
+
+[dir="rtl"] .card-name {
+    letter-spacing: 0.04em;
+    text-align: right;
 }
 
 .card.is-closed .card-name {
@@ -1000,9 +979,7 @@ body.is-ready .slider {
 }
 
 .card-loading {
-    background: linear-gradient(100deg, var(--surface) 30%, var(--surface-2) 50%, var(--surface) 70%);
-    background-size: 300% 100%;
-    animation: shimmer 1.4s ease-in-out infinite;
+    background: var(--surface-2);
     cursor: default;
 }
 
@@ -1010,11 +987,7 @@ body.is-ready .slider {
     display: none;
 }
 
-@keyframes shimmer {
-    to { background-position: -150% 0; }
-}
-
-/* Under the photos: arrows and the count, the barber's name, status and the booking button. */
+/* Under the photos: the chosen barber's name, next free time and the booking button. */
 .slider-bar {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
@@ -1025,45 +998,13 @@ body.is-ready .slider {
     transition: opacity 1.2s var(--ease);
 }
 
-body.is-ready .slider-bar,
-body.is-ready .picker {
+body.is-ready .slider-bar {
     opacity: 1;
     transition-delay: 1.15s;
 }
 
-.slider-nav {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-}
-
-.slider-count {
-    min-width: 72px;
-    font-family: var(--font-mono);
-    font-size: 13px;
-    letter-spacing: 0.16em;
-    text-align: center;
-}
-
-.arrow {
-    display: grid;
-    place-items: center;
-    width: 48px;
-    height: 48px;
-    border: 1px solid var(--line-2);
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.85);
-    cursor: pointer;
-    transition: background-color 0.25s, color 0.25s, border-color 0.25s;
-}
-
-.arrow:hover {
-    border-color: var(--ink);
-    background: var(--ink);
-    color: var(--on-ink);
-}
-
 .spotlight {
+    grid-column: 2;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -1072,21 +1013,10 @@ body.is-ready .picker {
     text-align: center;
 }
 
-.spotlight.spot-in > * {
-    animation: rise 0.7s var(--ease) both;
-}
-
-.spotlight.spot-in > :nth-child(2) {
-    animation-delay: 0.06s;
-}
-
-.spotlight.spot-in > :nth-child(3) {
-    animation-delay: 0.12s;
-}
-
-@keyframes rise {
-    from { opacity: 0; transform: translateY(14px); }
-    to { opacity: 1; transform: none; }
+.spot-choose {
+    color: var(--ink-2);
+    font-size: 15px;
+    font-weight: 700;
 }
 
 .spot-name {
@@ -1132,94 +1062,6 @@ body.is-ready .picker {
         margin-top: 0;
     }
 }
-
-/* A button for every barber, with a line that fills while the next one is coming. */
-.picker {
-    display: flex;
-    justify-content: center;
-    gap: clamp(14px, 3vw, 36px);
-    padding: 4px var(--pad) 2px;
-    overflow-x: auto;
-    opacity: 0;
-    scrollbar-width: none;
-    transition: opacity 1.2s var(--ease);
-}
-
-.picker::-webkit-scrollbar {
-    display: none;
-}
-
-.pick {
-    position: relative;
-    display: inline-flex;
-    flex-shrink: 0;
-    align-items: baseline;
-    gap: 10px;
-    padding: 8px 0 10px;
-    border: 0;
-    background: none;
-    color: var(--muted);
-    cursor: pointer;
-    transition: color 0.3s;
-}
-
-.pick:hover,
-.pick[aria-current="true"] {
-    color: var(--ink);
-}
-
-.pick-num {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    letter-spacing: 0.14em;
-}
-
-.pick-name {
-    font-size: 13px;
-    font-weight: 700;
-    letter-spacing: 0.2em;
-    text-transform: uppercase;
-    white-space: nowrap;
-}
-
-[dir="rtl"] .pick-name {
-    letter-spacing: 0.04em;
-}
-
-.pick.is-closed .pick-name {
-    text-decoration: line-through;
-}
-
-.pick::after,
-.pick-progress {
-    content: "";
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    height: 1px;
-}
-
-.pick::after {
-    background: var(--line);
-}
-
-.pick-progress {
-    z-index: 1;
-    background: var(--ink);
-    transform: scaleX(0);
-    transform-origin: left;
-}
-
-[dir="rtl"] .pick-progress {
-    transform-origin: right;
-}
-
-.pick[aria-current="true"] .pick-progress {
-    transform: scaleX(1);
-}
-
-
 
 .retry-row {
     margin-top: 6px;
@@ -1610,10 +1452,6 @@ body.is-ready .picker {
     font-family: var(--font-arabic);
     font-size: 13px;
     letter-spacing: 0;
-}
-
-.has-cursor .slider-track {
-    cursor: none;
 }
 
 .has-cursor .slider-track .card {
@@ -2142,17 +1980,13 @@ body.is-ready .picker {
 /* ---------------- Smaller screens ---------------- */
 
 @media (max-width: 900px) {
-    :root {
-        --card-w: clamp(180px, min(42vw, calc((100vh - 560px) * 0.75)), 320px);
-    }
-
     .slider-bar {
         grid-template-columns: minmax(0, 1fr);
         justify-items: center;
     }
 
-    .slider-nav {
-        order: 2;
+    .spotlight {
+        grid-column: auto;
     }
 
     .badge {
@@ -2181,10 +2015,6 @@ body.is-ready .picker {
 }
 
 @media (max-width: 640px) {
-    :root {
-        --card-w: clamp(170px, min(62vw, calc((100vh - 520px) * 0.75)), 300px);
-    }
-
     .header-book {
         display: none;
     }
@@ -2207,8 +2037,10 @@ body.is-ready .picker {
         font-size: 30vw;
     }
 
-    .picker {
-        justify-content: flex-start;
+    /* Two photos side by side on a phone. */
+    .slider-track {
+        grid-template-columns: repeat(auto-fit, minmax(120px, 155px));
+        gap: 12px;
     }
 
     .sheet-backdrop {

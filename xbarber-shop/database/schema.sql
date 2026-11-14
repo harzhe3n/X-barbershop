@@ -232,6 +232,12 @@ CREATE TABLE IF NOT EXISTS barber_photos (
 
 -- WhatsApp reminders sent by the server, 20 minutes before a waiting client's time (see server.js).
 -- status: sending, sent, no-whatsapp (the number has no WhatsApp), bad-number.
+-- Clients who came in without a booking, added with the "Walk-in client" button in the cashier.
+CREATE TABLE IF NOT EXISTS walk_ins (
+    order_id INTEGER PRIMARY KEY,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS whatsapp_reminders (
     order_id INTEGER NOT NULL,
     date DATE NOT NULL,

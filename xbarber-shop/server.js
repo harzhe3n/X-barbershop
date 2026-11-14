@@ -979,14 +979,23 @@ function instagramUrl(value) {
 // is used as it is; a number that starts with a single 0 (0750 123 4567), or a 10-digit
 // number that starts with 7 (750 123 4567), is an Iraqi number.
 function whatsappDigits(value) {
-  const text = String(value || '').trim();
+  const text = latinDigits(value).trim();
   let digits = text.replace(/\D+/g, '');
   if (!text.startsWith('+')) {
     if (digits.startsWith('00')) digits = digits.slice(2);
     else if (digits.startsWith('0')) digits = `964${digits.slice(1)}`;
     else if (digits.length === 10 && digits.startsWith('7')) digits = `964${digits}`;
   }
+  // "+964 0750 ..." has the 0 that is only dialled inside Iraq.
+  if (digits.startsWith('9640')) digits = `964${digits.slice(4)}`;
   return digits.length >= 8 && digits.length <= 15 ? digits : null;
+}
+
+// Phone numbers typed with Kurdish or Arabic digits (٠٧٥٠ or ۰۷۵۰) as 0-9.
+function latinDigits(value) {
+  return String(value || '')
+    .replace(/[\u0660-\u0669]/g, digit => String(digit.charCodeAt(0) - 0x0660))
+    .replace(/[\u06F0-\u06F9]/g, digit => String(digit.charCodeAt(0) - 0x06F0));
 }
 
 // WhatsApp from the cashier (shown on the website): its own number, or the shop phone.
@@ -1133,7 +1142,7 @@ function cleanName(value) {
 }
 
 function phoneDigits(value) {
-  return String(value || '').replace(/\D+/g, '');
+  return latinDigits(value).replace(/\D+/g, '');
 }
 
 // A booking from the website becomes a waiting client in the chosen barber's slot.
@@ -1145,7 +1154,7 @@ async function handlePublicBook(req, res) {
   const date = String(body.date || '');
   const time = String(body.time || '').slice(0, 5);
   const name = cleanName(body.name).slice(0, 60);
-  const phone = String(body.phone || '').replace(/[^\d+\s-]/g, '').trim().slice(0, 30);
+  const phone = latinDigits(body.phone).replace(/[^\d+\s-]/g, '').trim().slice(0, 30);
   if (!Number.isInteger(barberId) || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) throw httpError(400, 'slot');
   if (name.length < 2) throw httpError(400, 'name');
   const digits = phoneDigits(phone);
@@ -1223,18 +1232,17 @@ async function handlePublicApi(req, res, url) {
 /* Once the owner links the shop's WhatsApp (Settings), every client   */
 /* still waiting, with a phone number, gets one message some minutes   */
 /* before their time (20 unless the owner changes it): website         */
-/* bookings and clients added in the cashier alike. The owner can also */
-/* change the message. whatsapp_reminders keeps who was sent what, so  */
-/* nobody gets it twice, even after a restart. A client moved to       */
-/* another time gets a new reminder for the new time.                  */
+/* bookings and clients added in the cashier alike. A client who books */
+/* later than that, or whose message was held up, still gets it until  */
+/* their time. The owner can also change the message.                  */
+/* whatsapp_reminders keeps who was sent what, so nobody gets it       */
+/* twice, even after a restart. A client moved to another time gets a  */
+/* new reminder for the new time.                                      */
 /* ------------------------------------------------------------------ */
 
 const REMINDER_MESSAGE_KEY = 'whatsapp.message';
 const REMINDER_MINUTES_KEY = 'whatsapp.minutes';
 const REMINDER_DEFAULT_MINUTES = 20;
-// Sent up to 5 minutes late (the check runs every 30 seconds, and WhatsApp may reconnect).
-// A booking made after that gets no reminder.
-const REMINDER_WINDOW_MINUTES = 5;
 const REMINDER_CHECK_MS = 30 * 1000;
 
 function kurdishDigits(value) {
@@ -1244,6 +1252,25 @@ function kurdishDigits(value) {
 // The message when the owner has not written their own; it names the minutes.
 function defaultReminderText(minutes) {
   return `بەڕێز ${kurdishDigits(minutes)} دەقە ماوە بۆ کاتی سەرتاشیت دڵنیابە لەوەی لە کاتی خۆی لەوێ دەبیت`;
+}
+
+function persianDigits(value) {
+  return String(value).replace(/\d/g, digit => '۰۱۲۳۴۵۶۷۸۹'[digit]);
+}
+
+// The minutes written in the owner's message (as 20, ٢٠ or ۲۰) changed to other minutes.
+function replaceMinutes(text, from, to) {
+  const before = '(?<![0-9\u0660-\u0669\u06F0-\u06F9])';
+  const after = '(?![0-9\u0660-\u0669\u06F0-\u06F9])';
+  return [[String(from), String(to)], [kurdishDigits(from), kurdishDigits(to)], [persianDigits(from), persianDigits(to)]]
+    .reduce((result, [find, put]) => result.replace(new RegExp(`${before}${find}${after}`, 'g'), put), text);
+}
+
+// The message for a client with `left` minutes to go. On time it is the owner's message as it
+// is. Later (booked late, or WhatsApp was reconnecting) it says the minutes really left.
+function reminderText(settings, left) {
+  if (left >= settings.minutes - 1) return settings.message;
+  return settings.custom ? replaceMinutes(settings.message, settings.minutes, left) : defaultReminderText(left);
 }
 
 // The owner's message and minutes from Settings (app_options).
@@ -1259,48 +1286,68 @@ async function reminderSettings(connection) {
 let reminderRunning = false;
 let reminderCleanedAt = 0;
 
+/*
+ * Waiting clients with a phone number whose reminder is due now and was not sent yet: from
+ * the chosen minutes before their time until their time. A client who booked later than
+ * that, or whose reminder was held up (WhatsApp reconnecting, the server restarting), still
+ * gets it, with the minutes really left.
+ */
+async function dueReminders(connection, settings) {
+  // Shop days: a client at 01:00 after midnight is saved on the day the shop opened.
+  const hours = await loadShopHours(connection);
+  const clock = shopNow();
+  const now = Slots.shopDay(hours, clock.date, clock.minutes);
+  const tomorrow = Slots.addDays(now.date, 1);
+  const rows = await dbAll(connection,
+    `SELECT o.id, o.date, o.time, c.name,
+            COALESCE(NULLIF(TRIM(ob.phone), ''), c.phone) AS phone
+     FROM orders o
+     LEFT JOIN customers c ON c.id = o.customer_id
+     LEFT JOIN online_bookings ob ON ob.order_id = o.id
+     WHERE o.status = 'waiting' AND o.date IN (?, ?) AND o.time IS NOT NULL AND o.time <> ''
+       AND NOT EXISTS (SELECT 1 FROM whatsapp_reminders r
+                       WHERE r.order_id = o.id AND r.date = o.date AND r.time = substr(o.time, 1, 5))
+     ORDER BY o.date, o.time, o.id`,
+    [now.date, tomorrow]);
+  const due = [];
+  for (const row of rows) {
+    const time = String(row.time).slice(0, 5);
+    if (!/^\d{2}:\d{2}$/.test(time) || !String(row.phone || '').trim()) continue;
+    const left = daysBetween(now.date, row.date) * 1440 + Slots.dayMinutes(hours, time) - now.minutes;
+    if (left > settings.minutes || left < 1) continue;
+    due.push({
+      id: Number(row.id),
+      date: row.date,
+      time,
+      name: row.name || null,
+      phone: String(row.phone),
+      digits: whatsappDigits(row.phone),
+      left,
+      text: reminderText(settings, left)
+    });
+  }
+  return due;
+}
+
 async function sendReminders() {
   if (reminderRunning || !WhatsApp.isReady()) return;
   reminderRunning = true;
   try {
-    let message = '';
     // Claim the clients first, then send without holding the database.
     const due = await serialize(async () => {
       const connection = await openDatabase();
-      // Shop days: a client at 01:00 after midnight is saved on the day the shop opened.
-      const hours = await loadShopHours(connection);
-      const clock = shopNow();
-      const now = Slots.shopDay(hours, clock.date, clock.minutes);
-      const tomorrow = Slots.addDays(now.date, 1);
       const settings = await reminderSettings(connection);
-      message = settings.message;
-      const latest = Math.max(0, settings.minutes - REMINDER_WINDOW_MINUTES);
       if (Date.now() - reminderCleanedAt > 60 * 60 * 1000) {
         reminderCleanedAt = Date.now();
         await dbRun(connection, "DELETE FROM whatsapp_reminders WHERE created_at < datetime('now', '-14 days')");
       }
-      const rows = await dbAll(connection,
-        `SELECT o.id, o.date, o.time, c.name,
-                COALESCE(NULLIF(TRIM(ob.phone), ''), c.phone) AS phone
-         FROM orders o
-         LEFT JOIN customers c ON c.id = o.customer_id
-         LEFT JOIN online_bookings ob ON ob.order_id = o.id
-         WHERE o.status = 'waiting' AND o.date IN (?, ?) AND o.time IS NOT NULL AND o.time <> ''
-           AND NOT EXISTS (SELECT 1 FROM whatsapp_reminders r
-                           WHERE r.order_id = o.id AND r.date = o.date AND r.time = substr(o.time, 1, 5))`,
-        [now.date, tomorrow]);
       const claimed = [];
-      for (const row of rows) {
-        const time = String(row.time).slice(0, 5);
-        if (!/^\d{2}:\d{2}$/.test(time) || !String(row.phone || '').trim()) continue;
-        const left = daysBetween(now.date, row.date) * 1440 + Slots.dayMinutes(hours, time) - now.minutes;
-        if (left > settings.minutes || left <= latest) continue;
-        const digits = whatsappDigits(row.phone);
+      for (const item of await dueReminders(connection, settings)) {
         await dbRun(connection,
           `INSERT OR IGNORE INTO whatsapp_reminders (order_id, date, time, name, phone, status)
            VALUES (?, ?, ?, ?, ?, ?)`,
-          [row.id, row.date, time, row.name || null, String(row.phone), digits ? 'sending' : 'bad-number']);
-        if (digits) claimed.push({ id: Number(row.id), date: row.date, time, digits });
+          [item.id, item.date, item.time, item.name, item.phone, item.digits ? 'sending' : 'bad-number']);
+        if (item.digits) claimed.push(item);
       }
       return claimed;
     });
@@ -1308,7 +1355,7 @@ async function sendReminders() {
     for (const item of due) {
       let result = null;
       try {
-        result = await WhatsApp.sendText(item.digits, message);
+        result = await WhatsApp.sendText(item.digits, item.text);
       } catch (error) {
         console.error(`WhatsApp reminder to +${item.digits} failed:`, error.message);
       }
@@ -1333,36 +1380,91 @@ async function sendReminders() {
   }
 }
 
-// Owner only: link state, the QR code or code to enter, the message, and the latest reminders.
-// link: no number shows a QR code; the shop's number gets a code to type in WhatsApp.
+/*
+ * Owner only: link state, the QR code or code to enter, the message, and the latest reminders.
+ *   link     no number shows a QR code; the shop's number gets a code to type in WhatsApp
+ *   cancel   stop linking
+ *   unlink   no more reminders
+ *   test     send the reminder message to one number now
+ *   manual   the owner sent a client's reminder by hand (while WhatsApp was not linked)
+ * While reminders are wanted but WhatsApp does not work, `problem` says why and `due` lists
+ * the clients waiting for their reminder, with a link that opens WhatsApp with the message.
+ */
 async function handleWhatsApp(req, res, pathname) {
   const body = await readJson(req, 4096);
+  let test = null;
   if (pathname === '/api/whatsapp/link') {
     const typed = String(body.phone || '').trim();
     const digits = typed ? whatsappDigits(typed) : null;
     if (typed && !digits) throw httpError(400, 'Check the phone number.');
     await WhatsApp.link(digits);
+  } else if (pathname === '/api/whatsapp/cancel') {
+    await WhatsApp.cancel();
   } else if (pathname === '/api/whatsapp/unlink') {
     await WhatsApp.unlink();
+  } else if (pathname === '/api/whatsapp/test') {
+    const digits = whatsappDigits(body.phone);
+    if (!digits) throw httpError(400, 'Check the phone number.');
+    if (!WhatsApp.isReady()) throw httpError(409, 'WhatsApp is not connected.');
+    const settings = await serialize(async () => reminderSettings(await openDatabase()));
+    try {
+      test = { phone: digits, result: await WhatsApp.sendText(digits, settings.message) };
+    } catch (error) {
+      throw httpError(502, `WhatsApp could not send it: ${error.message}`);
+    }
+  } else if (pathname === '/api/whatsapp/manual') {
+    const orderId = Number(body.order_id);
+    const date = String(body.date || '');
+    const time = String(body.time || '').slice(0, 5);
+    if (!Number.isInteger(orderId) || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) {
+      throw httpError(400, 'Client not found.');
+    }
+    await serialize(async () => {
+      const connection = await openDatabase();
+      const order = await dbGet(connection,
+        `SELECT o.id, c.name, COALESCE(NULLIF(TRIM(ob.phone), ''), c.phone) AS phone
+         FROM orders o
+         LEFT JOIN customers c ON c.id = o.customer_id
+         LEFT JOIN online_bookings ob ON ob.order_id = o.id
+         WHERE o.id = ? AND o.date = ? AND substr(o.time, 1, 5) = ?`, [orderId, date, time]);
+      if (!order) throw httpError(404, 'Client not found.');
+      await dbRun(connection,
+        `INSERT OR REPLACE INTO whatsapp_reminders (order_id, date, time, name, phone, status, sent_at)
+         VALUES (?, ?, ?, ?, ?, 'manual', CURRENT_TIMESTAMP)`,
+        [orderId, date, time, order.name || null, order.phone || null]);
+    });
   } else if (pathname !== '/api/whatsapp/status') {
     throw httpError(404, 'API route not found.');
   }
-  const { settings, recent } = await serialize(async () => {
+  const whatsapp = WhatsApp.status();
+  const { settings, recent, due } = await serialize(async () => {
     const connection = await openDatabase();
+    const settings = await reminderSettings(connection);
     return {
-      settings: await reminderSettings(connection),
+      settings,
       recent: await dbAll(connection,
         `SELECT name, phone, date, time, status, COALESCE(sent_at, created_at) AS at
-         FROM whatsapp_reminders ORDER BY created_at DESC, rowid DESC LIMIT 15`)
+         FROM whatsapp_reminders ORDER BY created_at DESC, rowid DESC LIMIT 15`),
+      due: whatsapp.problem ? await dueReminders(connection, settings) : []
     };
   });
   sendJson(res, 200, {
-    ...WhatsApp.status(),
+    ...whatsapp,
     message: settings.message,
     customMessage: settings.custom,
     defaultMessage: settings.defaultMessage,
     before: settings.minutes,
-    recent
+    recent,
+    due: due.map(item => ({
+      order_id: item.id,
+      date: item.date,
+      time: item.time,
+      name: item.name,
+      phone: item.phone,
+      left: item.left,
+      url: item.digits ? `https://wa.me/${item.digits}?text=${encodeURIComponent(item.text)}` : null
+    })),
+    ...(test ? { test } : {})
   });
 }
 
@@ -1496,7 +1598,13 @@ server.on('error', error => {
 server.listen(PORT, HOST, () => {
   const addresses = lanAddresses();
   WhatsApp.init(DATA_DIR);
-  setInterval(() => sendReminders(), REMINDER_CHECK_MS).unref();
+  // Reminders the last run claimed but did not finish (the server stopped) are sent again.
+  serialize(async () => dbRun(await openDatabase(), "DELETE FROM whatsapp_reminders WHERE status = 'sending'"))
+    .catch(error => console.error('WhatsApp reminders:', error.message));
+  setInterval(() => {
+    WhatsApp.ensureConnected();
+    sendReminders();
+  }, REMINDER_CHECK_MS).unref();
   console.log('');
   console.log('XBARBER SHOP server');
   console.log(`Database:  ${DB_PATH}`);
@@ -1518,12 +1626,16 @@ server.listen(PORT, HOST, () => {
   console.log('');
 });
 
+let stopping = false;
+
+// WhatsApp finishes saving its sign-in before the server stops, so the link survives restarts.
 function shutdown() {
-  WhatsApp.close();
-  server.close(() => {
-    closeDatabase().finally(() => process.exit(0));
-  });
-  setTimeout(() => process.exit(0), 3000).unref();
+  if (stopping) return;
+  stopping = true;
+  setTimeout(() => process.exit(0), 8000).unref();
+  Promise.allSettled([WhatsApp.close(), new Promise(resolve => server.close(resolve))])
+    .then(() => closeDatabase())
+    .finally(() => process.exit(0));
 }
 
 process.on('SIGINT', shutdown);
