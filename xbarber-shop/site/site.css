@@ -606,47 +606,6 @@ body.is-ready .loader-panel-bottom {
     overflow: hidden;
 }
 
-/* A huge outlined XOSHAWIS STUDIO behind the photos that keeps sliding past, without end. */
-.hero-word {
-    position: absolute;
-    top: 58%;
-    left: 0;
-    width: 100%;
-    overflow: hidden;
-    font-family: var(--font-display);
-    font-size: 16vw;
-    font-weight: 500;
-    line-height: 1;
-    letter-spacing: -0.02em;
-    color: transparent;
-    -webkit-text-stroke: 1px rgba(0, 0, 0, 0.12);
-    white-space: nowrap;
-    transform: translateY(-50%);
-    pointer-events: none;
-    user-select: none;
-}
-
-/* Two equal halves: when the first half has moved out, the second is exactly in its place. */
-.hero-word-track {
-    display: flex;
-    width: max-content;
-    animation: word-slide 140s linear infinite;
-}
-
-.hero-word-track span {
-    padding-right: 0.35em;
-}
-
-.hero-word-track span:nth-child(even) {
-    color: rgba(0, 0, 0, 0.035);
-    -webkit-text-stroke: 0;
-}
-
-@keyframes word-slide {
-    from { transform: translateX(0); }
-    to { transform: translateX(-50%); }
-}
-
 /* A round badge that keeps turning, with scissors in the middle, beside the booking button.
    It opens the booking. */
 .badge {
@@ -2031,11 +1990,6 @@ body.is-ready .slider-bar {
 
 
 
-
-    .hero-word {
-        top: 52%;
-        font-size: 30vw;
-    }
 
     /* Two photos side by side on a phone. */
     .slider-track {

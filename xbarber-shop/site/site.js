@@ -643,7 +643,6 @@
     function startParallax() {
         if (reducedMotion) return;
         const items = [...document.querySelectorAll('[data-depth]')];
-        const word = $('.hero-word');
         let scroll = 0;
         let mx = 0;
         let my = 0;
@@ -655,7 +654,6 @@
                 const depth = Number(item.dataset.depth) || 0.2;
                 item.style.translate = `${(mx * depth * 60).toFixed(1)}px ${(-scroll * depth + my * depth * 60).toFixed(1)}px`;
             });
-            word.style.translate = `0 ${(scroll * 0.18).toFixed(1)}px`;
         };
         const queue = () => {
             if (queued) return;
