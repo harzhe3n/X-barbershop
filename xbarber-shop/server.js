@@ -48,7 +48,8 @@ const SHOP_TZ = process.env.XBARBER_TZ || 'Asia/Baghdad';
 const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
 const BOOKING_WINDOW_MS = 60 * 60 * 1000;
 const BOOKING_MAX_PER_WINDOW = 10;
-const BOOKINGS_PER_PHONE = 2;
+// One upcoming online booking per phone number; the client can cancel it to book another time.
+const BOOKINGS_PER_PHONE = 1;
 const PASSWORD_CHECK_MAX = 10;
 
 const DATA_DIR = process.env.XBARBER_DATA_DIR
@@ -378,13 +379,26 @@ async function findBarberAccount(username) {
   });
 }
 
+// The cashier (front desk) account the owner made in Settings.
+async function findStaffAccount(username) {
+  if (!username) return null;
+  return serialize(async () => dbGet(await openDatabase(),
+    `SELECT username, password_hash, role FROM staff_accounts
+     WHERE username = ? COLLATE NOCASE AND is_active = 1`, [username]));
+}
+
 function requireAdmin(session) {
   if (session.session.role !== 'admin') throw httpError(403, 'Only the admin can do this.');
 }
 
 // Barbers change their own clients. Sign-ins, photos, product sales, the catalog and shop settings
-// are for the owner only.
-const OWNER_ONLY_TABLES = /\b(admins|barber_accounts|barber_photos|product_sales|product_sale_items|expenses|settings|barbers|services|categories)\b/i;
+// are for the owner only. The cashier (front desk) runs every barber's clients, finishes them and
+// sells products, but cannot change sign-ins, barbers, prices, costs or settings.
+const OWNER_ONLY_TABLES = /\b(admins|barber_accounts|staff_accounts|booking_access|booking_blocks|barber_photos|product_sales|product_sale_items|expenses|settings|barbers|services|categories)\b/i;
+const CASHIER_BLOCKED_TABLES = /\b(admins|barber_accounts|staff_accounts|booking_access|booking_blocks|barber_photos|expenses|settings|barbers|services|categories)\b/i;
+// The day's board settings that staff change: time between clients, added and deleted slots,
+// days off, Open / Closed and "Book up to", each for one barber.
+const BOARD_OPTION = /^(?:slot\.barber\.(\d+)|extra\.(\d+)\.\d{4}-\d{2}-\d{2}|off\.(\d+)\.\d{4}-\d{2}-\d{2}|online\.(\d+)|skip\.(\d+)\.\d{4}-\d{2}-\d{2}|days\.barber\.(\d+))$/;
 // The only two ways the cashier writes app_options (see setOption in src/js/app.js).
 const OPTION_WRITES = new Set([
   'INSERT OR REPLACE INTO app_options (key, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)',
@@ -399,15 +413,17 @@ function finishesClient(query, params) {
 }
 
 function assertWriteAllowed(session, query, params = []) {
-  if (session.session.role === 'admin') return;
-  if (OWNER_ONLY_TABLES.test(query)) throw httpError(403, 'Only the owner can do this.');
-  if (finishesClient(query, params)) throw httpError(403, 'Only the owner can finish a client.');
+  const role = session.session.role;
+  if (role === 'admin') return;
+  const cashier = role === 'cashier';
+  if ((cashier ? CASHIER_BLOCKED_TABLES : OWNER_ONLY_TABLES).test(query)) throw httpError(403, 'Only the owner can do this.');
+  if (!cashier && finishesClient(query, params)) throw httpError(403, 'Only the owner can finish a client.');
   if (/\bapp_options\b/i.test(query)) {
-    // A barber may only set their own time between clients, added and deleted slots, days off and Open / Closed.
+    // A barber may only change their own board settings; the cashier those of any barber.
     const shape = query.replace(/\s+/g, ' ').trim();
-    const match = /^(?:slot\.barber\.(\d+)|extra\.(\d+)\.\d{4}-\d{2}-\d{2}|off\.(\d+)\.\d{4}-\d{2}-\d{2}|online\.(\d+)|skip\.(\d+)\.\d{4}-\d{2}-\d{2}|days\.barber\.(\d+))$/.exec(String(params[0] ?? ''));
+    const match = BOARD_OPTION.exec(String(params[0] ?? ''));
     const barberId = match ? Number(match.slice(1).find(Boolean)) : null;
-    if (!OPTION_WRITES.has(shape) || barberId == null || barberId !== Number(session.session.barberId)) {
+    if (!OPTION_WRITES.has(shape) || barberId == null || (!cashier && barberId !== Number(session.session.barberId))) {
       throw httpError(403, 'Only the owner can do this.');
     }
   }
@@ -415,8 +431,8 @@ function assertWriteAllowed(session, query, params = []) {
 
 function assertReadAllowed(session, query) {
   if (session.session.role === 'admin') return;
-  // Barbers do not see sign-ins, the history password or the shop's expenses.
-  if (/\b(admins|barber_accounts|expenses)\b/i.test(query) || /history_password/i.test(query)) {
+  // Staff do not see sign-ins, the history password, the shop's expenses, or where bookings came from.
+  if (/\b(admins|barber_accounts|staff_accounts|expenses|booking_access|booking_blocks)\b/i.test(query) || /history_password/i.test(query)) {
     throw httpError(403, 'Only the owner can do this.');
   }
 }
@@ -530,6 +546,11 @@ async function handleLogin(req, res) {
     const account = await findBarberAccount(username);
     if (account && verifyPassword(password, account.password_hash)) {
       user = { role: 'barber', username: account.username, barberId: Number(account.barber_id), name: account.name };
+    } else if (!account) {
+      const staff = await findStaffAccount(username);
+      if (staff && staff.role === 'cashier' && verifyPassword(password, staff.password_hash)) {
+        user = { role: 'cashier', username: staff.username };
+      }
     }
   }
 
@@ -852,6 +873,10 @@ async function handleApi(req, res, pathname) {
     requireAdmin(session);
     return handleWhatsApp(req, res, pathname);
   }
+  if (pathname.startsWith('/api/booking-blocks/')) {
+    requireAdmin(session);
+    return handleBookingBlocks(req, res, pathname);
+  }
 
   throw httpError(404, 'API route not found.');
 }
@@ -1145,6 +1170,11 @@ function phoneDigits(value) {
   return latinDigits(value).replace(/\D+/g, '');
 }
 
+// One phone however it is typed (0750…, +964 750…, ٠٧٥٠…): with the country code when it can tell.
+function samePhone(value) {
+  return whatsappDigits(value) || phoneDigits(value);
+}
+
 // A booking from the website becomes a waiting client in the chosen barber's slot.
 async function handlePublicBook(req, res) {
   if (!sameOrigin(req)) throw httpError(403, 'Request blocked.');
@@ -1159,11 +1189,19 @@ async function handlePublicBook(req, res) {
   if (name.length < 2) throw httpError(400, 'name');
   const digits = phoneDigits(phone);
   if (digits.length < 7 || digits.length > 15) throw httpError(400, 'phone');
+  const address = clientAddress(req);
+  // The secret that lets this phone cancel the booking later; only its hash is kept.
+  const token = crypto.randomBytes(24).toString('hex');
 
   const booking = await serialize(async () => {
     const connection = await openDatabase();
     await dbRun(connection, 'BEGIN IMMEDIATE');
     try {
+      const blocked = await dbAll(connection, 'SELECT kind, value FROM booking_blocks');
+      const caller = samePhone(phone);
+      if (blocked.some(row => (row.kind === 'ip' && row.value === address) || (row.kind === 'phone' && row.value === caller))) {
+        throw httpError(403, 'blocked');
+      }
       const snapshot = await siteSnapshot(connection, shopNow());
       if (!snapshot.open) throw httpError(403, 'closed');
       const barber = snapshot.barbers.find(item => item.id === barberId);
@@ -1177,7 +1215,7 @@ async function handlePublicBook(req, res) {
       const upcoming = await dbAll(connection,
         `SELECT ob.phone FROM online_bookings ob JOIN orders o ON o.id = ob.order_id
          WHERE o.status = 'waiting' AND o.date >= ?`, [snapshot.now.date]);
-      if (upcoming.filter(row => phoneDigits(row.phone) === digits).length >= BOOKINGS_PER_PHONE) throw httpError(429, 'limit');
+      if (upcoming.filter(row => samePhone(row.phone) === samePhone(phone)).length >= BOOKINGS_PER_PHONE) throw httpError(429, 'limit');
 
       const customers = await dbAll(connection, 'SELECT id, name, phone FROM customers WHERE is_active = 1 AND phone IS NOT NULL');
       const known = customers.find(customer => phoneDigits(customer.phone) === digits);
@@ -1199,8 +1237,11 @@ async function handlePublicBook(req, res) {
         `INSERT INTO online_bookings (booking_id, order_id, barber_id, customer_name, phone, date, time, status, reported_status)
          VALUES (?, ?, ?, ?, ?, ?, ?, 'received', 'received')`,
         [bookingId, order.lastID, barberId, name, phone, date, time]);
+      await dbRun(connection,
+        'INSERT INTO booking_access (booking_id, order_id, ip, token_hash) VALUES (?, ?, ?, ?)',
+        [bookingId, order.lastID, address, sha256Hex(token)]);
       await dbRun(connection, 'COMMIT');
-      return { id: bookingId, barber: barber.name, date, time };
+      return { id: bookingId, token, barber: barber.name, date, time };
     } catch (error) {
       try {
         await dbRun(connection, 'ROLLBACK');
@@ -1213,11 +1254,120 @@ async function handlePublicBook(req, res) {
   sendJson(res, 200, { ok: true, booking });
 }
 
+/*
+ * Owner only: people blocked from booking online (spam).
+ *   block-order { order_id }  block that website booking's phone number and internet address,
+ *                             and cancel their bookings that are still waiting
+ *   add-phone   { phone }     block a phone number
+ *   remove      { id }        unblock
+ *   list
+ */
+async function handleBookingBlocks(req, res, pathname) {
+  const body = await readJson(req, 4096);
+  const action = pathname.slice('/api/booking-blocks/'.length);
+  let cancelled = 0;
+  const list = await serialize(async () => {
+    const connection = await openDatabase();
+    if (action === 'block-order') {
+      const booking = await dbGet(connection,
+        `SELECT ob.customer_name, ob.phone, a.ip FROM online_bookings ob
+         LEFT JOIN booking_access a ON a.booking_id = ob.booking_id WHERE ob.order_id = ?`, [Number(body.order_id)]);
+      if (!booking) throw httpError(404, 'This is not a website booking.');
+      const phone = samePhone(booking.phone);
+      const name = cleanName(booking.customer_name).slice(0, 60) || null;
+      if (phone) await dbRun(connection, "INSERT OR IGNORE INTO booking_blocks (kind, value, name) VALUES ('phone', ?, ?)", [phone, name]);
+      if (booking.ip) await dbRun(connection, "INSERT OR IGNORE INTO booking_blocks (kind, value, name) VALUES ('ip', ?, ?)", [booking.ip, name]);
+      // Their website bookings still waiting (from that phone number or that address) are cancelled.
+      const waiting = await dbAll(connection,
+        `SELECT ob.order_id, ob.booking_id, ob.phone, a.ip FROM online_bookings ob
+         JOIN orders o ON o.id = ob.order_id LEFT JOIN booking_access a ON a.booking_id = ob.booking_id
+         WHERE o.status = 'waiting'`);
+      for (const row of waiting.filter(item => (phone && samePhone(item.phone) === phone) || (booking.ip && item.ip === booking.ip))) {
+        await dbRun(connection, "UPDATE orders SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'waiting'", [row.order_id]);
+        await dbRun(connection, "UPDATE online_bookings SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP WHERE booking_id = ?", [row.booking_id]);
+        cancelled += 1;
+      }
+    } else if (action === 'add-phone') {
+      const phone = samePhone(body.phone);
+      if (!phone || phone.length < 7) throw httpError(400, 'Check the phone number.');
+      await dbRun(connection, "INSERT OR IGNORE INTO booking_blocks (kind, value, name) VALUES ('phone', ?, NULL)", [phone]);
+    } else if (action === 'remove') {
+      await dbRun(connection, 'DELETE FROM booking_blocks WHERE id = ?', [Number(body.id)]);
+    } else if (action !== 'list') {
+      throw httpError(404, 'API route not found.');
+    }
+    return dbAll(connection, 'SELECT id, kind, value, name, created_at FROM booking_blocks ORDER BY id DESC LIMIT 200');
+  });
+  sendJson(res, 200, { blocks: list, cancelled });
+}
+
+/*
+ * The client's own bookings, without signing in: the website keeps each booking's id and secret
+ * on the phone that made it (see site.js). Only that phone can see and cancel it.
+ *   POST /api/public/mine    { items: [{ id, token }] }  -> the ones still coming
+ *   POST /api/public/cancel  { id, token }
+ */
+async function findOwnBooking(connection, id, token) {
+  if (!/^web-[a-z0-9-]{4,40}$/.test(String(id || '')) || !/^[a-f0-9]{48}$/.test(String(token || ''))) return null;
+  const row = await dbGet(connection,
+    `SELECT a.token_hash, ob.booking_id, ob.order_id, ob.date, ob.time, o.status, b.name AS barber
+     FROM booking_access a
+     JOIN online_bookings ob ON ob.booking_id = a.booking_id
+     JOIN orders o ON o.id = ob.order_id
+     LEFT JOIN barbers b ON b.id = o.barber_id
+     WHERE a.booking_id = ?`, [id]);
+  if (!row || !safeEqual(row.token_hash || '', sha256Hex(token))) return null;
+  return row;
+}
+
+async function handlePublicMine(req, res) {
+  if (!sameOrigin(req)) throw httpError(403, 'Request blocked.');
+  const body = await readJson(req, 8192);
+  const items = Array.isArray(body.items) ? body.items.slice(0, 5) : [];
+  const bookings = await serialize(async () => {
+    const connection = await openDatabase();
+    const hours = await loadShopHours(connection);
+    const clock = shopNow();
+    const now = Slots.shopDay(hours, clock.date, clock.minutes);
+    const list = [];
+    for (const item of items) {
+      const row = await findOwnBooking(connection, item?.id, item?.token);
+      if (!row || row.status !== 'waiting') continue;
+      const time = String(row.time || '').slice(0, 5);
+      const minutes = Slots.dayMinutes(hours, time);
+      // Already past: nothing left to cancel.
+      if (row.date < now.date || (row.date === now.date && minutes < now.minutes)) continue;
+      list.push({ id: row.booking_id, barber: row.barber || '', date: row.date, time, night: minutes >= 24 * 60 });
+    }
+    return list;
+  });
+  sendJson(res, 200, { bookings });
+}
+
+async function handlePublicCancel(req, res) {
+  if (!sameOrigin(req)) throw httpError(403, 'Request blocked.');
+  if (bookingBlocked(clientAddress(req))) throw httpError(429, 'busy');
+  const body = await readJson(req, 4096);
+  await serialize(async () => {
+    const connection = await openDatabase();
+    const row = await findOwnBooking(connection, body.id, body.token);
+    if (!row) throw httpError(404, 'gone');
+    if (row.status !== 'waiting') throw httpError(409, 'started');
+    await dbRun(connection, "UPDATE orders SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'waiting'", [row.order_id]);
+    await dbRun(connection, "UPDATE online_bookings SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP WHERE booking_id = ?", [row.booking_id]);
+  });
+  sendJson(res, 200, { ok: true });
+}
+
 async function handlePublicApi(req, res, url) {
   const pathname = url.pathname;
   if (pathname === '/api/public/book') {
     if (req.method !== 'POST') throw httpError(405, 'Method not allowed.');
     return handlePublicBook(req, res);
+  }
+  if (pathname === '/api/public/mine' || pathname === '/api/public/cancel') {
+    if (req.method !== 'POST') throw httpError(405, 'Method not allowed.');
+    return pathname === '/api/public/mine' ? handlePublicMine(req, res) : handlePublicCancel(req, res);
   }
   if (req.method !== 'GET' && req.method !== 'HEAD') throw httpError(405, 'Method not allowed.');
   if (pathname === '/api/public/info') return handlePublicInfo(req, res);

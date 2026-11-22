@@ -3489,6 +3489,41 @@ body[data-signed-in] #offline-status[data-state="error"] {
     flex-shrink: 0;
 }
 
+/* Settings → Blocked from booking online. */
+.blocks-list {
+    display: grid;
+    gap: 8px;
+    margin: 14px 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+.blocks-list li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 12px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--surface-2);
+}
+
+.blocks-what {
+    display: grid;
+    min-width: 0;
+}
+
+.blocks-what span {
+    color: var(--muted);
+    font-size: 13px;
+}
+
+.cashier-card .barber-account {
+    margin-top: 4px;
+}
+
 .wa-warn-danger {
     background: var(--danger-bg);
     color: var(--danger-ink);

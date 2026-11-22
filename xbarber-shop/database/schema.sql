@@ -232,6 +232,37 @@ CREATE TABLE IF NOT EXISTS barber_photos (
 
 -- WhatsApp reminders sent by the server, 20 minutes before a waiting client's time (see server.js).
 -- status: sending, sent, no-whatsapp (the number has no WhatsApp), bad-number.
+-- Staff accounts that are not a barber: the cashier (front desk). Made by the owner in Settings.
+CREATE TABLE IF NOT EXISTS staff_accounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    role TEXT NOT NULL DEFAULT 'cashier',
+    username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    password_hash TEXT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Each website booking: the internet address it came from, and the secret (hashed) that lets
+-- the same phone cancel it.
+CREATE TABLE IF NOT EXISTS booking_access (
+    booking_id TEXT PRIMARY KEY,
+    order_id INTEGER,
+    ip TEXT,
+    token_hash TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Phone numbers and internet addresses the owner blocked from booking online (spam).
+CREATE TABLE IF NOT EXISTS booking_blocks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL, -- phone, ip
+    value TEXT NOT NULL,
+    name TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (kind, value)
+);
+
 -- Clients who came in without a booking, added with the "Walk-in client" button in the cashier.
 CREATE TABLE IF NOT EXISTS walk_ins (
     order_id INTEGER PRIMARY KEY,

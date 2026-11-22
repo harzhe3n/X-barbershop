@@ -671,9 +671,58 @@ body.is-ready .badge:hover {
 .hero-top,
 .hero-title,
 .closed-banner,
+.my-bookings,
 .slider-bar {
     position: relative;
     z-index: 1;
+}
+
+/* The visitor's own booking, with "Cancel booking". */
+.my-bookings {
+    display: grid;
+    gap: 8px;
+    justify-items: center;
+    padding: 0 var(--pad);
+}
+
+.my-bookings[hidden] {
+    display: none;
+}
+
+.mine {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px 16px;
+    width: min(100%, 560px);
+    margin: 0;
+    padding: 10px 12px 10px 16px;
+    border: 1.5px solid var(--ink);
+    border-radius: 14px;
+    background: var(--paper);
+}
+
+.mine-text {
+    display: grid;
+    min-width: 0;
+}
+
+.mine-text small {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.mine-text strong {
+    font-size: 15px;
+}
+
+.mine-note {
+    justify-content: center;
+    border-style: dashed;
+    color: var(--ink-2);
+    font-weight: 700;
 }
 
 .hero-top {

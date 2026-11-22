@@ -37,6 +37,8 @@ const XSlots = window.XSlots;
 const OPEN_STATUSES = ['waiting', 'in-service'];
 const ADMIN_PAGES = ['cashier', 'sell', 'expenses', 'dashboard', 'history', 'catalog', 'barbers', 'settings'];
 const BARBER_PAGES = ['cashier', 'history'];
+// The cashier (front desk): the board and product sales, no money totals, history or settings.
+const CASHIER_PAGES = ['cashier', 'sell'];
 const ADMIN_USERNAME = 'admin';
 const ADMIN_PASSWORD = 'admin123';
 // Hash of the default password for editing finished clients. The admin can change it in Settings.
@@ -159,6 +161,7 @@ const ICONS = {
     link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
     send: '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
     percent: '<line x1="19" x2="5" y1="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/>',
+    ban: '<circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/>',
     door: '<path d="M13 4h3a2 2 0 0 1 2 2v14"/><path d="M2 20h3"/><path d="M13 20h9"/><path d="M10 12v.01"/><path d="M13 4.562v16.157a1 1 0 0 1-1.242.97L5 20V5.562a2 2 0 0 1 1.515-1.94l4-1A2 2 0 0 1 13 4.561Z"/>'
 };
 
@@ -316,12 +319,24 @@ function isAdmin() {
     return state.user?.role === 'admin';
 }
 
+// The cashier account (front desk): works every barber's clients and takes the money like the
+// owner, but never sees what each barber earned, the dashboard, history or settings.
+function isCashier() {
+    return state.user?.role === 'cashier';
+}
+
+// The owner or the cashier: every barber's column, finishing clients, typing the price.
+function runsBoard() {
+    return isAdmin() || isCashier();
+}
+
 function myBarberId() {
     return state.user?.role === 'barber' ? Number(state.user.barberId) : null;
 }
 
 function allowedPages() {
-    return isAdmin() ? ADMIN_PAGES : BARBER_PAGES;
+    if (isAdmin()) return ADMIN_PAGES;
+    return isCashier() ? CASHIER_PAGES : BARBER_PAGES;
 }
 
 function isMine(barberId) {
@@ -329,7 +344,12 @@ function isMine(barberId) {
 }
 
 function canManageTicket(ticket) {
-    return isAdmin() || isMine(ticket?.barber_id);
+    return runsBoard() || isMine(ticket?.barber_id);
+}
+
+// A client's money is shown to the owner and the cashier, and to a barber only for their own clients.
+function seesMoneyOf(ticket) {
+    return runsBoard() || isMine(ticket?.barber_id);
 }
 
 // Barbers may take a waiting client who has no barber yet; the client becomes theirs.
@@ -493,7 +513,7 @@ function renderLanguageSwitches() {
 
 function renderNav() {
     const user = state.user || {};
-    const userName = isAdmin() ? t('roles.admin') : (user.name || user.username || '');
+    const userName = isAdmin() ? t('roles.admin') : isCashier() ? t('roles.cashier') : (user.name || user.username || '');
     dom.nav.innerHTML = `
         <div class="nav-brand"><img src="../assets/logo/logo.png" alt="${escapeHtml(state.shopName)}"></div>
         <div class="nav-links">
@@ -504,7 +524,7 @@ function renderNav() {
                 </button>`).join('')}
         </div>
         <div class="nav-user" title="${escapeHtml(t('roles.signedInAs', { name: userName }))}">
-            <span class="avatar avatar-sm">${isAdmin() ? icon('key') : escapeHtml(initials(userName))}</span>
+            <span class="avatar avatar-sm">${isAdmin() ? icon('key') : isCashier() ? icon('wallet') : escapeHtml(initials(userName))}</span>
             <span class="nav-user-name">${escapeHtml(userName)}</span>
         </div>
         <button type="button" class="nav-link nav-signout" data-action="sign-out">
@@ -548,11 +568,18 @@ async function authenticate(username, password) {
         // The server checks the owner and barber accounts.
         const result = await api.login(username, password);
         if (!result || typeof result !== 'object') return null;
-        return result.role === 'barber'
-            ? { role: 'barber', username: result.username, barberId: Number(result.barberId), name: result.name }
-            : ADMIN_USER;
+        if (result.role === 'barber') return { role: 'barber', username: result.username, barberId: Number(result.barberId), name: result.name };
+        if (result.role === 'cashier') return { role: 'cashier', username: result.username };
+        return result.role === 'admin' ? ADMIN_USER : null;
     }
     if (isAdminName) return await verifyLocalAdmin(password) ? ADMIN_USER : null;
+
+    // The cashier account (Settings → Cashier account).
+    const staff = await queryOne(
+        "SELECT username, password_hash FROM staff_accounts WHERE username = ? COLLATE NOCASE AND is_active = 1 AND role = 'cashier'",
+        [username]
+    );
+    if (staff && XAuth.verifyPassword(password, staff.password_hash)) return { role: 'cashier', username: staff.username };
 
     // Offline and desktop modes: barber accounts are in the local database.
     const account = await queryOne(
@@ -813,7 +840,7 @@ async function renderCashier() {
     const today = todayString();
     const options = await loadBookingOptions();
     const hours = shopHours(options);
-    const mineOnly = isAdmin() ? '' : ' AND (o.barber_id = ? OR o.barber_id IS NULL)';
+    const mineOnly = runsBoard() ? '' : ' AND (o.barber_id = ? OR o.barber_id IS NULL)';
     const [barbers, ticketRows, itemRows, upcomingRows, services, slotRows, offRows, extraRows, onlineRows, skipRows] = await queryMany([
         { query: 'SELECT b.id, b.name, b.is_active, p.thumb_data FROM barbers b LEFT JOIN barber_photos p ON p.barber_id = b.id ORDER BY b.id' },
         {
@@ -835,7 +862,7 @@ async function renderCashier() {
             query: `SELECT o.date, COUNT(*) AS count FROM orders o JOIN online_bookings ob ON ob.order_id = o.id
                     WHERE o.status = 'waiting' AND o.date > ?${mineOnly}
                     GROUP BY o.date ORDER BY o.date LIMIT 1`,
-            params: isAdmin() ? [date] : [date, myBarberId()]
+            params: runsBoard() ? [date] : [date, myBarberId()]
         },
         { query: 'SELECT id, name, price FROM services WHERE is_active = 1 ORDER BY name' },
         BARBER_SLOT_QUERY,
@@ -873,13 +900,13 @@ async function renderCashier() {
         if (Number(barber.is_active) || list.length) columns.push({ key: `b${barber.id}`, barber, tickets: list });
     });
     // A barber sees their own column first.
-    if (!isAdmin()) {
+    if (!runsBoard()) {
         const mine = columns.findIndex(column => column.barber && isMine(column.barber.id));
         if (mine > 0) columns.unshift(...columns.splice(mine, 1));
     }
 
     // Barbers see their own numbers; the admin sees the whole shop.
-    const counted = isAdmin() ? tickets : tickets.filter(ticket => isMine(ticket.barber_id));
+    const counted = runsBoard() ? tickets : tickets.filter(ticket => isMine(ticket.barber_id));
     const waiting = counted.filter(ticket => ticket.status === 'waiting').length;
     const active = counted.filter(ticket => ticket.status === 'in-service').length;
     const done = counted.filter(ticket => ticket.status === 'completed');
@@ -954,7 +981,7 @@ async function renderCashier() {
             <div class="day-stat"><span class="status-dot status-dot-waiting"></span><span>${escapeHtml(t('status.waiting'))}</span><strong>${waiting}</strong></div>
             <div class="day-stat"><span class="status-dot status-dot-active"></span><span>${escapeHtml(t('status.in-service'))}</span><strong>${active}</strong></div>
             <div class="day-stat"><span class="status-dot status-dot-done"></span><span>${escapeHtml(t('status.completed'))}</span><strong>${done.length}</strong></div>
-            <div class="day-stat day-stat-money"><span>${escapeHtml(t(isAdmin() ? 'cashier.moneyToday' : 'cashier.myMoneyToday'))}</span><strong>${money(sum(done, ticket => ticket.total))}</strong></div>
+            ${isCashier() ? '' : `<div class="day-stat day-stat-money"><span>${escapeHtml(t(isAdmin() ? 'cashier.moneyToday' : 'cashier.myMoneyToday'))}</span><strong>${money(sum(done, ticket => ticket.total))}</strong></div>`}
         </div>
         ${renderSlotBar(hours, ctx.pastFree)}
         ${closedDay ? `<p class="notice notice-slim">${icon('calendar')}<span>${escapeHtml(t('slots.closedDay'))}</span></p>` : ''}
@@ -1059,7 +1086,7 @@ function renderAddSlot(barber, choices) {
 
 async function changeExtraSlots(barberId, change, keyFor = extraKey) {
     const id = Number(barberId);
-    if (!Number.isInteger(id) || (!isAdmin() && !isMine(id))) {
+    if (!Number.isInteger(id) || (!runsBoard() && !isMine(id))) {
         denyNotYours();
         return null;
     }
@@ -1148,7 +1175,7 @@ function renderOnlineButton(barber, online, editable) {
 
 // A barber who signs in sees their own status first, with one big button to change it.
 function renderMyOnlineCard(barbers, ctx) {
-    if (isAdmin()) return '';
+    if (runsBoard()) return '';
     const mine = barbers.find(barber => isMine(barber.id));
     if (!mine) return '';
     const online = ctx.isOnline(mine.id);
@@ -1167,7 +1194,7 @@ function renderMyOnlineCard(barbers, ctx) {
 
 async function toggleOnline(barberId, wasOnline) {
     const id = Number(barberId);
-    if (!Number.isInteger(id) || (!isAdmin() && !isMine(id))) {
+    if (!Number.isInteger(id) || (!runsBoard() && !isMine(id))) {
         denyNotYours();
         return;
     }
@@ -1192,7 +1219,7 @@ function renderWorkButton(barber, off, editable, date) {
 
 async function toggleWork(barberId, wasOff) {
     const id = Number(barberId);
-    if (!Number.isInteger(id) || (!isAdmin() && !isMine(id))) {
+    if (!Number.isInteger(id) || (!runsBoard() && !isMine(id))) {
         denyNotYours();
         return;
     }
@@ -1229,7 +1256,7 @@ function renderColumnDays(column, own, shopDays, editable) {
 
 async function saveBarberDays(barberId, value) {
     const id = Number(barberId);
-    if (!Number.isInteger(id) || (!isAdmin() && !isMine(id))) {
+    if (!Number.isInteger(id) || (!runsBoard() && !isMine(id))) {
         denyNotYours();
         return;
     }
@@ -1319,7 +1346,7 @@ function renderColumn(column, ctx) {
     const name = column.barber ? column.barber.name : t('cashier.anyBarber');
     const mine = column.barber && isMine(column.barber.id);
     // Admin: every column. Barber: only their own column (and taking clients who have no barber).
-    const editable = isAdmin() || mine;
+    const editable = runsBoard() || mine;
     const canAdd = Boolean(column.barber) && !removed && editable;
     const access = { editable, takeable: !column.barber && myBarberId() != null };
     const form = state.slotForm;
@@ -1416,7 +1443,7 @@ function renderColumn(column, ctx) {
                         ${!column.barber ? `<span class="col-note">${escapeHtml(t('cashier.anyBarberNote'))}</span>` : ''}
                     </div>
                 </div>
-                ${editable ? `<div class="col-money">${money(sum(doneTickets, ticket => ticket.total))}</div>` : ''}
+                ${editable && !isCashier() ? `<div class="col-money">${money(sum(doneTickets, ticket => ticket.total))}</div>` : ''}
             </header>
             <div class="col-stats">
                 <div class="stat-free"><strong>${column.barber && !removed && !off ? free : '–'}</strong><span>${escapeHtml(t('slots.free'))}</span></div>
@@ -1492,7 +1519,7 @@ function renderTicket(ticket, access = { editable: true, takeable: false }, nowM
                     ${ticket.items.length ? `<span>${escapeHtml(itemNames(ticket.items))}</span>` : ''}
                 </div>
                 <div class="ticket-compact-end">
-                    <span class="ticket-compact-money" title="${escapeHtml(t(`pay.${method}`))}">${icon('check')}${money(ticket.total)}</span>
+                    <span class="ticket-compact-money" title="${escapeHtml(t(`pay.${method}`))}">${icon('check')}${seesMoneyOf(ticket) ? money(ticket.total) : ''}</span>
                     ${canEdit ? `<button type="button" class="btn-icon btn-icon-sm" data-action="edit-finished" data-id="${ticket.id}" aria-label="${escapeHtml(t('history.editLocked'))}" title="${escapeHtml(t('history.editLocked'))}">${icon('pencil')}</button>` : ''}
                 </div>
             </article>`;
@@ -1518,11 +1545,15 @@ function renderTicket(ticket, access = { editable: true, takeable: false }, nowM
     if (ticket.status === 'waiting' && (canEdit || access.takeable)) {
         buttons.push(`<button type="button" class="btn btn-outline btn-sm" data-action="take-client" data-id="${ticket.id}" title="${escapeHtml(t('cashier.take'))}">${icon('scissors')}<span>${escapeHtml(t('cashier.start'))}</span></button>`);
     }
+    // The owner can block a website booking that is spam (its phone number and internet address).
+    if (ticket.online_id && ticket.status === 'waiting' && isAdmin() && state.serverMode) {
+        buttons.push(`<button type="button" class="btn-icon" data-action="block-booking" data-id="${ticket.id}" data-name="${escapeHtml(name)}" aria-label="${escapeHtml(t('block.button'))}" title="${escapeHtml(t('block.button'))}">${icon('ban')}</button>`);
+    }
     if (isActive && canEdit) {
         buttons.push(`<button type="button" class="btn-icon" data-action="back-to-waiting" data-id="${ticket.id}" aria-label="${escapeHtml(t('cashier.backToWaiting'))}" title="${escapeHtml(t('cashier.backToWaiting'))}">${icon('undo')}</button>`);
     }
     // Only the owner finishes a client (takes the money). Barbers add and edit their clients.
-    if (canEdit && isAdmin()) {
+    if (canEdit && runsBoard()) {
         buttons.push(`<button type="button" class="btn ${isActive ? 'btn-light' : 'btn-primary'} btn-sm btn-done" data-action="done-client" data-id="${ticket.id}">${icon('check')}<span>${escapeHtml(t('done.button'))}</span></button>`);
     }
 
@@ -1542,8 +1573,8 @@ function renderTicket(ticket, access = { editable: true, takeable: false }, nowM
             ${products.length ? line('products', products) : ''}
             <div class="ticket-foot">
                 <div class="ticket-money">
-                    <strong class="ticket-total">${money(ticket.total)}</strong>
-                    ${amounts.entered != null ? `<small class="money-tag">${escapeHtml(t('slotForm.enteredTag'))}</small>` : ''}
+                    ${seesMoneyOf(ticket) ? `<strong class="ticket-total">${money(ticket.total)}</strong>
+                    ${amounts.entered != null ? `<small class="money-tag">${escapeHtml(t('slotForm.enteredTag'))}</small>` : ''}` : ''}
                 </div>
                 ${buttons.length ? `<div class="ticket-actions">${buttons.join('')}</div>` : ''}
             </div>
@@ -1564,7 +1595,7 @@ async function loadSlotCustomers() {
 }
 
 async function openSlotForm(barberId, time) {
-    if (!isAdmin() && !isMine(barberId)) {
+    if (!runsBoard() && !isMine(barberId)) {
         denyNotYours();
         return;
     }
@@ -1595,7 +1626,7 @@ async function openSlotForm(barberId, time) {
  * busy with someone else, and is marked "Walk-in".
  */
 async function openWalkIn(barberId) {
-    if (!isAdmin() && !isMine(barberId)) {
+    if (!runsBoard() && !isMine(barberId)) {
         denyNotYours();
         return;
     }
@@ -1711,7 +1742,7 @@ function renderSlotForm(form, ctx, nowMark = '') {
     const services = slotServices(form, ctx.services);
     const selected = new Set(form.services);
     const servicesTotal = slotServicesTotal(form, ctx.services);
-    const barberOptions = editing && isAdmin() ? `
+    const barberOptions = editing && runsBoard() ? `
         <label class="field"><span>${escapeHtml(t('client.barber'))}</span>
             <select name="barber">
                 <option value="">${escapeHtml(t('cashier.anyBarber'))}</option>
@@ -1739,7 +1770,7 @@ function renderSlotForm(form, ctx, nowMark = '') {
                             </button>`).join('')}
                     </div>` : `<p class="slot-form-hint">${escapeHtml(t('client.noServices'))}</p>`}
             </div>
-            ${isAdmin() ? `
+            ${runsBoard() ? `
                 <label class="slot-form-section">
                     <span class="slot-form-label">${icon('wallet')}${escapeHtml(t('slotForm.money'))}</span>
                     <span class="money-input">
@@ -1831,7 +1862,7 @@ async function saveSlotForm() {
     const name = form.name.trim();
     const phone = form.phone.trim();
     let amount = null;
-    if (isAdmin() && String(form.amount).trim() !== '') {
+    if (runsBoard() && String(form.amount).trim() !== '') {
         amount = parsePrice(form.amount);
         if (amount == null) {
             toast(t('slotForm.badMoney'), 'error');
@@ -1854,7 +1885,7 @@ async function saveSlotForm() {
                 return;
             }
             // Only the admin types the money; a barber's change keeps it.
-            if (!isAdmin()) amount = ticketMoney(current).entered;
+            if (!runsBoard()) amount = ticketMoney(current).entered;
         }
 
         const statements = [];
@@ -1890,7 +1921,7 @@ async function saveSlotForm() {
         let time = form.time;
         if (current) {
             time = isValidTime(form.time) ? form.time.slice(0, 5) : String(current.time || '').slice(0, 5);
-            const barberId = isAdmin() ? form.barberId : Number(current.barber_id);
+            const barberId = runsBoard() ? form.barberId : Number(current.barber_id);
             const status = barberId ? current.status : 'waiting';
             statements.push({
                 query: `UPDATE orders SET customer_id = ?, time = ?, total = ?, barber_id = ?, status = ?, updated_at = CURRENT_TIMESTAMP
@@ -1958,7 +1989,7 @@ async function removeOpenClient(id) {
 // A barber changes only their own time between clients; the admin can change anyone's.
 async function saveSlotLength(barberId, value) {
     const id = Number(barberId);
-    if (!Number.isInteger(id) || (!isAdmin() && !isMine(id))) {
+    if (!Number.isInteger(id) || (!runsBoard() && !isMine(id))) {
         denyNotYours();
         return;
     }
@@ -2011,7 +2042,7 @@ async function takeClient(id) {
         return;
     }
     let barberId = ticket.barber_id != null && Number(ticket.barber_active) ? Number(ticket.barber_id) : null;
-    if (!isAdmin()) {
+    if (!runsBoard()) {
         // A barber takes their own clients, or a client who has no barber (it becomes theirs).
         if (barberId && !isMine(barberId)) {
             denyNotYours();
@@ -2448,7 +2479,7 @@ async function openFinishedModal(ticketId) {
         : `<div class="inline-empty">${escapeHtml(t('client.noProducts'))}</div>`;
 
     const optional = `<em>${escapeHtml(t('common.optional'))}</em>`;
-    const barberField = isAdmin()
+    const barberField = runsBoard()
         ? `<select data-field="barber">
                 <option value="">${escapeHtml(t('history.noBarber'))}</option>
                 ${barbers.map(barber => `<option value="${barber.id}" ${String(barber.id) === selectedBarber ? 'selected' : ''}>${escapeHtml(barber.name)}${Number(barber.is_active) ? '' : ` (${escapeHtml(t('cashier.removedBarber'))})`}</option>`).join('')}
@@ -2492,7 +2523,7 @@ async function openFinishedModal(ticketId) {
                     <button type="button" class="${draft.method === 'cash' ? 'active' : ''}" data-method="cash" aria-pressed="${draft.method === 'cash'}">${icon('cash')}${escapeHtml(t('pay.cash'))}</button>
                     <button type="button" class="${draft.method === 'card' ? 'active' : ''}" data-method="card" aria-pressed="${draft.method === 'card'}">${icon('card')}${escapeHtml(t('pay.card'))}</button>
                 </div>
-                ${isAdmin() ? `
+                ${runsBoard() ? `
                     <label class="field finished-money"><span>${escapeHtml(t('slotForm.money'))}</span>
                         <span class="money-input">
                             <input type="number" min="0" step="any" inputmode="decimal" data-field="amount" value="${draft.entered == null ? '' : escapeHtml(draft.entered)}">
@@ -2539,7 +2570,7 @@ async function openFinishedModal(ticketId) {
     const productPrice = id => Number(products.find(product => Number(product.id) === id)?.price || 0);
     // The admin's typed money; a barber keeps what the admin typed.
     const enteredMoney = () => {
-        if (!isAdmin()) return { value: draft.entered, valid: true };
+        if (!runsBoard()) return { value: draft.entered, valid: true };
         const text = field('amount').value.trim();
         if (text === '') return { value: null, valid: true };
         const value = parsePrice(text);
@@ -2551,7 +2582,7 @@ async function openFinishedModal(ticketId) {
         const productsTotal = sum([...draft.products.values()], item => item.price * item.quantity);
         const typed = enteredMoney().value;
         const servicesTotal = typed ?? servicePrices;
-        if (isAdmin()) field('amount').placeholder = I18N.formatNumber(servicePrices);
+        if (runsBoard()) field('amount').placeholder = I18N.formatNumber(servicePrices);
         modal.querySelector('[data-sum="services"]').innerHTML = money(servicesTotal);
         modal.querySelector('[data-sum="products"]').innerHTML = money(productsTotal);
         modal.querySelector('[data-sum="total"]').innerHTML = money(servicesTotal + productsTotal);
@@ -2631,7 +2662,7 @@ async function openFinishedModal(ticketId) {
         const date = isValidDate(field('date').value) ? field('date').value : ticket.date;
         const time = isValidTime(field('time').value) ? field('time').value.slice(0, 5) : '';
         const barberValue = field('barber').value;
-        const chosenBarber = isAdmin() ? (barberValue ? Number(barberValue) : null) : myBarberId();
+        const chosenBarber = runsBoard() ? (barberValue ? Number(barberValue) : null) : myBarberId();
 
         const items = [
             ...[...draft.services.entries()].map(([id, item]) => ({ type: 'service', id, ...item })),
@@ -2906,7 +2937,7 @@ async function openDoneDialog(id) {
         await renderPage({ keepScroll: true });
         return;
     }
-    if (!isAdmin()) {
+    if (!runsBoard()) {
         toast(t('done.ownerOnly'), 'error');
         await renderPage({ keepScroll: true });
         return;
@@ -2915,7 +2946,7 @@ async function openDoneDialog(id) {
     const name = String(ticket.customer_name || '').trim() || t('cashier.walkIn');
     const who = [ticket.barber_name || t('cashier.anyBarber'), ticket.time ? I18N.formatTime(String(ticket.time).slice(0, 5)) : '']
         .filter(Boolean).join(' · ');
-    const admin = isAdmin();
+    const admin = runsBoard();
 
     const body = `
         <div class="pay done-dialog">
@@ -3782,7 +3813,7 @@ function changeCart(id, step) {
 }
 
 async function finishSale() {
-    if (!isAdmin()) return;
+    if (!runsBoard()) return;
     const lines = cartLines();
     if (!lines.length) return;
     if (lines.length * 2 + 1 > MAX_TRANSACTION_STATEMENTS) {
@@ -3844,7 +3875,7 @@ async function finishSale() {
 
 // Deleting a sale always asks for the history password. Its products go back to stock.
 async function deleteProductSale(id) {
-    if (!isAdmin()) return;
+    if (!runsBoard()) return;
     const [saleRows, items] = await queryMany([
         { query: 'SELECT id, total FROM product_sales WHERE id = ?', params: [id] },
         { query: 'SELECT product_id, quantity FROM product_sale_items WHERE sale_id = ?', params: [id] }
@@ -4660,12 +4691,9 @@ async function openAccountModal(barberId) {
             return;
         }
         try {
-            const taken = await queryOne(
-                'SELECT barber_id FROM barber_accounts WHERE username = ? COLLATE NOCASE AND barber_id <> ?',
-                [username, barberId]
-            );
+            const taken = await usernameTaken(username, { barberId });
             if (taken) {
-                toast(t('accounts.usernameTaken'), 'error');
+                toast(t(taken), 'error');
                 form.elements.username.focus();
                 return;
             }
@@ -4713,7 +4741,7 @@ async function renderSettings() {
     const isLocal = typeof api.isLocalDatabase === 'function' ? await api.isLocalDatabase() : false;
     const current = I18N.getLanguage();
     const booking = await loadBookingOptions();
-    const [settingsBarbers, settingsSlotRows, siteRows, upcomingRows, socialRows, commissionRows] = await queryMany([
+    const [settingsBarbers, settingsSlotRows, siteRows, upcomingRows, socialRows, commissionRows, cashierRows] = await queryMany([
         { query: 'SELECT id, name FROM barbers WHERE is_active = 1 ORDER BY id' },
         BARBER_SLOT_QUERY,
         { query: 'SELECT value FROM app_options WHERE key = ?', params: [SITE_OPEN_KEY] },
@@ -4723,9 +4751,11 @@ async function renderSettings() {
             params: [todayString()]
         },
         { query: 'SELECT key, value FROM app_options WHERE key IN (?, ?)', params: [INSTAGRAM_KEY, WHATSAPP_KEY] },
-        COMMISSION_QUERY
+        COMMISSION_QUERY,
+        { query: "SELECT username FROM staff_accounts WHERE role = 'cashier' AND is_active = 1 ORDER BY id LIMIT 1" }
     ]);
     const siteOpen = String(siteRows[0]?.value ?? '1') !== '0';
+    const blocks = await loadBookingBlocks();
     const whatsapp = await loadWhatsappStatus();
     const social = Object.fromEntries(socialRows.map(row => [row.key, row.value == null ? '' : String(row.value)]));
 
@@ -4770,6 +4800,8 @@ async function renderSettings() {
             </section>
             ${renderHoursCard(booking, settingsBarbers, parseBarberSlots(settingsSlotRows))}
             ${renderCommissionCard(parseCommission(commissionRows), settingsBarbers)}
+            ${renderCashierAccountCard(cashierRows[0] || null)}
+            ${renderBlocksCard(blocks)}
             ${renderSiteCard(booking, siteOpen, Number(upcomingRows[0]?.count || 0))}
             ${renderWhatsappCard(whatsapp, social[WHATSAPP_KEY] || settings.phone || '')}
             <section class="card">
@@ -5375,12 +5407,12 @@ async function checkNewBookings() {
     }
     if (latestId <= bookingWatchLast) return;
     // A barber hears only about their own bookings.
-    const mine = isAdmin() ? '' : ' AND ob.barber_id = ?';
+    const mine = runsBoard() ? '' : ' AND ob.barber_id = ?';
     const rows = await api.dbQuery(
         `SELECT ob.customer_name, ob.date, ob.time, b.name AS barber
          FROM online_bookings ob JOIN orders o ON o.id = ob.order_id LEFT JOIN barbers b ON b.id = ob.barber_id
          WHERE ob.rowid > ? AND ob.rowid <= ?${mine} ORDER BY ob.rowid LIMIT 50`,
-        isAdmin() ? [bookingWatchLast, latestId] : [bookingWatchLast, latestId, myBarberId()]
+        runsBoard() ? [bookingWatchLast, latestId] : [bookingWatchLast, latestId, myBarberId()]
     );
     bookingWatchLast = latestId;
     if (!rows.length) return;
@@ -5416,6 +5448,194 @@ async function migrateHoursToMidnight() {
 
 // Opening hours, time between clients and closed days. The cashier makes its time slots from
 // these, and the website shows the same free times.
+/* ------------------------------------------------------------------ */
+/* Cashier account                                                     */
+/*                                                                     */
+/* A sign-in for the person at the front desk (staff_accounts, role    */
+/* "cashier"). The cashier adds, edits and finishes every barber's     */
+/* clients and sells products, but never sees what the barbers earned: */
+/* no money totals, Dashboard, History, Expenses or Settings.          */
+/* ------------------------------------------------------------------ */
+
+function renderCashierAccountCard(account) {
+    return `
+        <section class="card cashier-card">
+            <h3 class="card-title">${icon('wallet')}${escapeHtml(t('cashierAccount.title'))}</h3>
+            <p class="card-text">${escapeHtml(t('cashierAccount.text'))}</p>
+            <div class="barber-account ${account ? 'has-account' : ''}">
+                <span class="barber-account-icon">${icon('key')}</span>
+                <div class="barber-account-text">
+                    <strong>${escapeHtml(t(account ? 'accounts.hasSignIn' : 'accounts.noSignIn'))}</strong>
+                    <span>${account ? `${escapeHtml(t('login.username'))}: <bdi dir="ltr">${escapeHtml(account.username)}</bdi>` : escapeHtml(t('cashierAccount.none'))}</span>
+                </div>
+                <button type="button" class="btn ${account ? 'btn-outline' : 'btn-primary'} btn-sm" data-action="cashier-account">${icon(account ? 'pencil' : 'plus')}<span>${escapeHtml(t(account ? 'accounts.change' : 'accounts.create'))}</span></button>
+            </div>
+        </section>`;
+}
+
+// A username may be used by one account only: the owner, a barber or the cashier.
+async function usernameTaken(username, { barberId = null, cashier = false } = {}) {
+    if (username.toLowerCase() === ADMIN_USERNAME) return 'accounts.adminReserved';
+    const [barbers, staff] = await queryMany([
+        { query: 'SELECT barber_id FROM barber_accounts WHERE username = ? COLLATE NOCASE AND barber_id <> ?', params: [username, barberId ?? -1] },
+        { query: cashier ? "SELECT id FROM staff_accounts WHERE username = ? COLLATE NOCASE AND role <> 'cashier'" : 'SELECT id FROM staff_accounts WHERE username = ? COLLATE NOCASE', params: [username] }
+    ]);
+    return barbers.length || staff.length ? 'accounts.usernameTaken' : null;
+}
+
+async function openCashierAccountModal() {
+    if (!isAdmin()) return;
+    const account = await queryOne("SELECT id, username FROM staff_accounts WHERE role = 'cashier' ORDER BY id LIMIT 1");
+    const entry = openModal({
+        title: t('cashierAccount.title'),
+        size: 'sm',
+        autofocus: true,
+        body: `
+            <form class="stack" data-cashier-form autocomplete="off">
+                <p class="card-text">${escapeHtml(t('cashierAccount.text'))}</p>
+                <label class="field"><span>${escapeHtml(t('login.username'))}</span>
+                    <input type="text" name="username" maxlength="40" dir="ltr" autocapitalize="none" spellcheck="false" autocomplete="off" required value="${escapeHtml(account?.username || '')}">
+                </label>
+                <label class="field"><span>${escapeHtml(t(account ? 'accounts.newPassword' : 'login.password'))}</span>
+                    <input type="text" name="password" maxlength="100" dir="ltr" autocapitalize="none" spellcheck="false" autocomplete="off" ${account ? '' : 'required'}>
+                    <small class="field-hint">${escapeHtml(t(account ? 'accounts.keepPassword' : 'cashierAccount.passwordHint'))}</small>
+                </label>
+            </form>`,
+        footer: `
+            ${account ? `<button type="button" class="btn btn-ghost-danger" data-cashier-remove>${icon('trash')}<span>${escapeHtml(t('accounts.remove'))}</span></button>` : ''}
+            <span class="spacer"></span>
+            <button type="button" class="btn btn-ghost" data-modal-close>${escapeHtml(t('common.cancel'))}</button>
+            <button type="button" class="btn btn-primary" data-cashier-save>${icon('check')}<span>${escapeHtml(t('common.save'))}</span></button>`
+    });
+    const modal = entry.modal;
+    const form = modal.querySelector('[data-cashier-form]');
+
+    const save = async () => {
+        const username = form.elements.username.value.trim();
+        const password = form.elements.password.value;
+        if (username.length < 3 || /\s/.test(username)) {
+            toast(t('accounts.badUsername'), 'error');
+            form.elements.username.focus();
+            return;
+        }
+        if ((!account || password) && password.length < 4) {
+            toast(t('accounts.shortPassword'), 'error');
+            form.elements.password.focus();
+            return;
+        }
+        try {
+            const problem = await usernameTaken(username, { cashier: true });
+            if (problem) {
+                toast(t(problem), 'error');
+                form.elements.username.focus();
+                return;
+            }
+            let statement;
+            if (account && !password) {
+                statement = { query: 'UPDATE staff_accounts SET username = ?, is_active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?', params: [username, account.id] };
+            } else if (account) {
+                statement = { query: 'UPDATE staff_accounts SET username = ?, password_hash = ?, is_active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?', params: [username, XAuth.hashPassword(password), account.id] };
+            } else {
+                statement = { query: "INSERT INTO staff_accounts (role, username, password_hash, is_active) VALUES ('cashier', ?, ?, 1)", params: [username, XAuth.hashPassword(password)] };
+            }
+            await runStatements([statement]);
+            entry.close();
+            toast(t('cashierAccount.saved'));
+            await renderPage({ keepScroll: true });
+        } catch (error) {
+            handleError(error);
+        }
+    };
+
+    form.addEventListener('submit', event => {
+        event.preventDefault();
+        save();
+    });
+    modal.querySelector('[data-cashier-save]').addEventListener('click', save);
+    modal.querySelector('[data-cashier-remove]')?.addEventListener('click', async () => {
+        if (!await confirmDialog(t('cashierAccount.confirmRemove'), { okLabel: t('accounts.remove'), danger: true })) return;
+        try {
+            await runStatements([{ query: "DELETE FROM staff_accounts WHERE role = 'cashier'", params: [] }]);
+            entry.close();
+            toast(t('cashierAccount.removed'));
+            await renderPage({ keepScroll: true });
+        } catch (error) {
+            handleError(error);
+        }
+    });
+}
+
+/* ------------------------------------------------------------------ */
+/* Blocked from booking online (spam)                                  */
+/*                                                                     */
+/* The owner blocks a website booking that is spam ("Block" on the     */
+/* client): its phone number and internet address can no longer book   */
+/* online, and their waiting bookings are cancelled. Settings lists    */
+/* who is blocked; a phone number can also be blocked by hand.         */
+/* ------------------------------------------------------------------ */
+
+async function loadBookingBlocks() {
+    if (!state.serverMode || !isAdmin() || typeof api.bookingBlocks !== 'function') return null;
+    try {
+        return (await api.bookingBlocks('list')).blocks || [];
+    } catch (error) {
+        console.warn('Could not read the blocked list:', error);
+        return [];
+    }
+}
+
+function renderBlocksCard(blocks) {
+    if (!blocks) return '';
+    return `
+        <section class="card blocks-card">
+            <h3 class="card-title">${icon('ban')}${escapeHtml(t('block.title'))}</h3>
+            <p class="card-text">${escapeHtml(t('block.text'))}</p>
+            <form class="wa-link-row" data-form="block-phone" autocomplete="off">
+                <label class="field"><span>${escapeHtml(t('block.phoneLabel'))}</span>
+                    <input type="tel" name="phone" maxlength="30" dir="ltr" placeholder="0750 123 4567" required>
+                </label>
+                <button type="submit" class="btn btn-outline">${icon('ban')}<span>${escapeHtml(t('block.button'))}</span></button>
+            </form>
+            ${blocks.length ? `
+                <ul class="blocks-list">
+                    ${blocks.map(block => `
+                        <li>
+                            <span class="blocks-what">
+                                <strong>${escapeHtml(block.name || t(block.kind === 'ip' ? 'block.address' : 'block.phone'))}</strong>
+                                <span>${escapeHtml(t(block.kind === 'ip' ? 'block.address' : 'block.phone'))}: <bdi dir="ltr">${escapeHtml(block.kind === 'phone' ? `+${block.value}` : block.value)}</bdi></span>
+                            </span>
+                            <button type="button" class="btn btn-ghost btn-sm" data-action="unblock" data-id="${Number(block.id)}">${escapeHtml(t('block.unblock'))}</button>
+                        </li>`).join('')}
+                </ul>` : `<p class="field-hint">${escapeHtml(t('block.none'))}</p>`}
+        </section>`;
+}
+
+async function blockBooking(orderId, name) {
+    if (!isAdmin()) return;
+    if (!await confirmDialog(t('block.confirm', { name: name || t('cashier.walkIn') }), { okLabel: t('block.button'), danger: true })) return;
+    const result = await api.bookingBlocks('block-order', { order_id: Number(orderId) });
+    toast(t('block.done', { name: name || t('cashier.walkIn'), n: Number(result.cancelled || 0) }));
+    await renderPage({ keepScroll: true });
+}
+
+async function blockPhone(form) {
+    const phone = form.elements.phone.value.trim();
+    if (latinDigits(phone).replace(/\D+/g, '').length < 7) {
+        toast(t('wa.testBadPhone'), 'error');
+        form.elements.phone.focus();
+        return;
+    }
+    await api.bookingBlocks('add-phone', { phone });
+    toast(t('block.phoneDone'));
+    await renderPage({ keepScroll: true });
+}
+
+async function unblock(id) {
+    await api.bookingBlocks('remove', { id: Number(id) });
+    toast(t('block.removed'));
+    await renderPage({ keepScroll: true });
+}
+
 // Settings → Barber commission: the shop's share for barbers, and a different one for a barber.
 function renderCommissionCard(rates, barbers = []) {
     const today = todayString();
@@ -5776,6 +5996,9 @@ const actions = {
         return go('catalog');
     },
     'barber-account': element => openAccountModal(Number(element.dataset.id)),
+    'cashier-account': () => openCashierAccountModal(),
+    'block-booking': element => blockBooking(Number(element.dataset.id), element.dataset.name),
+    unblock: element => unblock(Number(element.dataset.id)),
     'remove-photo': element => removeBarberPhoto(element.dataset.id, element.dataset.name || ''),
     'add-barber': async () => {
         const name = await promptDialog({ title: t('barbers.addTitle'), label: t('barbers.name'), placeholder: t('barbers.namePlaceholder'), okLabel: t('barbers.add'), maxLength: 60 });
@@ -5962,10 +6185,10 @@ document.addEventListener('submit', event => {
         saveShop(form).catch(handleError);
     } else if (form.dataset.form === 'history-password') {
         saveHistoryPassword(form).catch(handleError);
-    } else if (['hours', 'site', 'admin-password', 'whatsapp', 'wa-test', 'commission'].includes(form.dataset.form)) {
+    } else if (['hours', 'site', 'admin-password', 'whatsapp', 'wa-test', 'commission', 'block-phone'].includes(form.dataset.form)) {
         const button = form.querySelector('button[type="submit"]');
         if (button) button.disabled = true;
-        const save = { hours: saveHours, site: saveSiteSettings, 'admin-password': saveAdminPassword, whatsapp: saveWhatsappSettings, 'wa-test': sendWhatsappTest, commission: saveCommission }[form.dataset.form];
+        const save = { hours: saveHours, site: saveSiteSettings, 'admin-password': saveAdminPassword, whatsapp: saveWhatsappSettings, 'wa-test': sendWhatsappTest, commission: saveCommission, 'block-phone': blockPhone }[form.dataset.form];
         save(form)
             .catch(handleError)
             .finally(() => {

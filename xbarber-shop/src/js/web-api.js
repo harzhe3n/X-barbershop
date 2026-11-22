@@ -526,6 +526,7 @@
         changeAdminPassword: (current, next) => request('/api/admin-password', { current, next }),
         // Online, owner only: the shop's WhatsApp for reminders. action: status, link or unlink.
         whatsapp: (action, payload = {}) => request(`/api/whatsapp/${action}`, payload),
+        bookingBlocks: (action, payload = {}) => request(`/api/booking-blocks/${action}`, payload),
         backupDatabase: async () => {
             if (await getMode() === 'server') return downloadDatabase(await requestFile('/api/backup-download'));
             const bytes = await localOperation(database => database.export());

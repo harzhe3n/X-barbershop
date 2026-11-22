@@ -79,7 +79,13 @@
             'err.name': 'Please type your name.',
             'err.phone': 'Please type a valid phone number.',
             'err.taken': 'Sorry, someone just booked that time. Please pick another one.',
-            'err.limit': 'This number already has bookings. Please call the shop to book more.',
+            'err.limit': 'This phone number already has a booking. One booking at a time: cancel it on the phone you booked with, or call the shop.',
+            'err.blocked': 'Online booking is not available for this number. Please call the shop.',
+            'mine.title': 'Your booking',
+            'mine.cancel': 'Cancel booking',
+            'mine.confirm': 'Cancel your booking with {barber}, {when}?',
+            'mine.cancelled': 'Your booking was cancelled.',
+            'mine.cantCancel': 'This booking can no longer be cancelled here. Please call the shop.',
             'err.busy': 'Too many tries. Please wait a little and try again.',
             'err.closed': 'Online booking is closed right now. Please call the shop.',
             'err.network': 'Could not connect. Check your internet and try again.',
@@ -87,7 +93,7 @@
             'err.retry': 'Try again',
             'done.title': 'You’re booked!',
             'done.when': '{day} · {time}',
-            'done.note': 'Please come a few minutes early. To change or cancel, call the shop.',
+            'done.note': 'Please come a few minutes early. To cancel, press “Cancel booking” at the top of this page on this phone, or call the shop.',
             'done.call': 'Call the shop',
             'done.close': 'Done',
             'closed.banner': 'Online booking is closed right now. Please call us to book.',
@@ -169,7 +175,13 @@
             'err.name': 'يرجى كتابة اسمك.',
             'err.phone': 'يرجى كتابة رقم هاتف صحيح.',
             'err.taken': 'عذرًا، حجز شخص آخر هذا الوقت للتو. يرجى اختيار وقت آخر.',
-            'err.limit': 'لهذا الرقم حجوزات مسبقًا. يرجى الاتصال بالمحل لحجز المزيد.',
+            'err.limit': 'لهذا الرقم حجز مسبقًا. حجز واحد فقط في كل مرة: ألغِه من الهاتف الذي حجزت منه، أو اتصل بالمحل.',
+            'err.blocked': 'الحجز عبر الموقع غير متاح لهذا الرقم. يرجى الاتصال بالمحل.',
+            'mine.title': 'حجزك',
+            'mine.cancel': 'إلغاء الحجز',
+            'mine.confirm': 'إلغاء حجزك مع {barber}، {when}؟',
+            'mine.cancelled': 'تم إلغاء حجزك.',
+            'mine.cantCancel': 'لم يعد ممكنًا إلغاء هذا الحجز من هنا. يرجى الاتصال بالمحل.',
             'err.busy': 'محاولات كثيرة. يرجى الانتظار قليلًا ثم المحاولة مجددًا.',
             'err.closed': 'الحجز عبر الموقع مغلق الآن. يرجى الاتصال بالمحل.',
             'err.network': 'تعذّر الاتصال. تحقق من الإنترنت وحاول مجددًا.',
@@ -177,7 +189,7 @@
             'err.retry': 'حاول مجددًا',
             'done.title': 'تم حجزك!',
             'done.when': '{day} · {time}',
-            'done.note': 'يرجى الحضور قبل الموعد ببضع دقائق. للتغيير أو الإلغاء اتصل بالمحل.',
+            'done.note': 'يرجى الحضور قبل الموعد ببضع دقائق. للإلغاء اضغط «إلغاء الحجز» أعلى هذه الصفحة على هذا الهاتف، أو اتصل بالمحل.',
             'done.call': 'اتصل بالمحل',
             'done.close': 'تم',
             'closed.banner': 'الحجز عبر الموقع مغلق الآن. يرجى الاتصال بنا للحجز.',
@@ -259,7 +271,13 @@
             'err.name': 'تکایە ناوت بنووسە.',
             'err.phone': 'تکایە ژمارەیەکی دروست بنووسە.',
             'err.taken': 'ببورە، کەسێکی تر ئێستا ئەم کاتەی گرت. تکایە کاتێکی تر هەڵبژێرە.',
-            'err.limit': 'ئەم ژمارەیە پێشتر نۆرەی هەیە. تکایە بۆ نۆرەی زیاتر پەیوەندی بە دوکانەوە بکە.',
+            'err.limit': 'ئەم ژمارەیە پێشتر نۆرەی هەیە. هەر جارەی یەک نۆرە: لەو مۆبایلەی نۆرەکەت پێ گرتووە هەڵیبوەشێنەرەوە، یان پەیوەندی بە دوکانەوە بکە.',
+            'err.blocked': 'نۆرەگرتنی ئۆنلاین بۆ ئەم ژمارەیە بەردەست نییە. تکایە پەیوەندی بە دوکانەوە بکە.',
+            'mine.title': 'نۆرەکەت',
+            'mine.cancel': 'هەڵوەشاندنەوەی نۆرە',
+            'mine.confirm': 'نۆرەکەت لای {barber}، {when} هەڵبوەشێنرێتەوە؟',
+            'mine.cancelled': 'نۆرەکەت هەڵوەشێنرایەوە.',
+            'mine.cantCancel': 'ئەم نۆرەیە چیتر لێرەوە هەڵناوەشێنرێتەوە. تکایە پەیوەندی بە دوکانەوە بکە.',
             'err.busy': 'هەوڵی زۆر. تکایە کەمێک چاوەڕێ بکە و دووبارە هەوڵ بدەرەوە.',
             'err.closed': 'نۆرەگرتنی ئۆنلاین ئێستا داخراوە. تکایە پەیوەندی بە دوکانەوە بکە.',
             'err.network': 'پەیوەندی نەکرا. ئینتەرنێتەکەت بپشکنە و دووبارە هەوڵ بدەرەوە.',
@@ -267,7 +285,7 @@
             'err.retry': 'دووبارە هەوڵ بدەرەوە',
             'done.title': 'نۆرەکەت گیرا!',
             'done.when': '{day} · {time}',
-            'done.note': 'تکایە چەند خولەکێک زووتر وەرە. بۆ گۆڕین یان هەڵوەشاندنەوە پەیوەندی بە دوکانەوە بکە.',
+            'done.note': 'تکایە چەند خولەکێک زووتر وەرە. بۆ هەڵوەشاندنەوە، لە سەرەوەی ئەم پەڕەیە لەسەر ئەم مۆبایلە «هەڵوەشاندنەوەی نۆرە» دابگرە، یان پەیوەندی بە دوکانەوە بکە.',
             'done.call': 'پەیوەندی بە دوکانەوە بکە',
             'done.close': 'تەواو',
             'closed.banner': 'نۆرەگرتنی ئۆنلاین ئێستا داخراوە. تکایە بۆ نۆرەگرتن پەیوەندیمان پێوە بکە.',
@@ -796,6 +814,104 @@
         return name && !['XBARBER SHOP', 'XOSHAWI BARBER', 'XOSHAWI STUDIO'].includes(name.toUpperCase()) ? name : 'XOSHAWIS STUDIO';
     }
 
+    /* ---------------- The visitor's own booking ---------------- */
+    /*
+     * One booking at a time per phone number. Each booking made on this phone is kept here (its id
+     * and the secret that lets this phone cancel it); only this phone can see and cancel it.
+     */
+    const MINE_KEY = 'xbarber-my-bookings';
+
+    function storedBookings() {
+        try {
+            const list = JSON.parse(localStorage.getItem(MINE_KEY) || '[]');
+            return Array.isArray(list) ? list.filter(item => item && item.id && item.token).slice(-5) : [];
+        } catch (error) {
+            return [];
+        }
+    }
+
+    function storeBookings(list) {
+        try {
+            localStorage.setItem(MINE_KEY, JSON.stringify(list.slice(-5)));
+        } catch (error) {
+            // Private mode: the booking can still be cancelled by calling the shop.
+        }
+    }
+
+    async function loadMine() {
+        const stored = storedBookings();
+        if (!stored.length) {
+            state.mine = [];
+            renderMine();
+            return;
+        }
+        try {
+            const data = await request('/api/public/mine', { method: 'POST', body: JSON.stringify({ items: stored }) });
+            state.mine = data.bookings || [];
+            // Bookings that are over, finished or cancelled are forgotten.
+            storeBookings(stored.filter(item => state.mine.some(booking => booking.id === item.id)));
+        } catch (error) {
+            // Kept for the next time the page opens.
+        }
+        renderMine();
+    }
+
+    function mineWhen(booking) {
+        return `${relativeDay(booking.date)} · ${slotTime(booking.time, booking.night)}`;
+    }
+
+    // A short message after cancelling ("Your booking was cancelled."), shown for a few seconds.
+    function noteMine(message) {
+        state.mineNote = message;
+        renderMine();
+        clearTimeout(state.mineNoteTimer);
+        state.mineNoteTimer = setTimeout(() => {
+            state.mineNote = '';
+            renderMine();
+        }, 8000);
+    }
+
+    function renderMine() {
+        const box = $('#my-bookings');
+        const list = state.mine || [];
+        const message = state.mineNote || '';
+        box.hidden = !list.length && !message;
+        box.innerHTML = `
+            ${message ? `<p class="mine mine-note">${esc(message)}</p>` : ''}
+            ${list.map(booking => `
+                <div class="mine">
+                    <div class="mine-text">
+                        <small>${esc(t('mine.title'))}</small>
+                        <strong>${esc(`${booking.barber} · ${mineWhen(booking)}`)}</strong>
+                    </div>
+                    <button type="button" class="btn btn-ghost btn-small" data-cancel-booking="${esc(booking.id)}">${esc(t('mine.cancel'))}</button>
+                </div>`).join('')}`;
+    }
+
+    async function cancelMine(id) {
+        const booking = (state.mine || []).find(item => item.id === id);
+        const stored = storedBookings().find(item => item.id === id);
+        if (!booking || !stored) return;
+        if (!window.confirm(t('mine.confirm', { barber: booking.barber, when: mineWhen(booking) }))) return;
+        const forget = () => {
+            storeBookings(storedBookings().filter(item => item.id !== id));
+            state.mine = (state.mine || []).filter(item => item.id !== id);
+        };
+        try {
+            await request('/api/public/cancel', { method: 'POST', body: JSON.stringify({ id, token: stored.token }) });
+            forget();
+            noteMine(t('mine.cancelled'));
+            loadInfo();
+        } catch (error) {
+            if (error.code === 'gone' || error.code === 'started') {
+                forget();
+                noteMine(t('mine.cantCancel'));
+            } else {
+                window.alert(t('err.network'));
+            }
+        }
+    }
+
     function renderPage() {
         const info = state.info;
         renderCarousel(false);
@@ -821,6 +937,7 @@
             footerPhone.textContent = shop.phone;
         }
         renderSocial(shop);
+        renderMine();
     }
 
     // "See our work" (Instagram) and the WhatsApp button. The links are set in the cashier (Settings, Shop).
@@ -1128,6 +1245,9 @@
             });
             state.booked = result.booking;
             state.step = 'done';
+            // Kept on this phone, so the booking can be cancelled from the top of the page.
+            if (result.booking?.token) storeBookings([...storedBookings(), { id: result.booking.id, token: result.booking.token }]);
+            loadMine();
         } catch (error) {
             const code = error.code;
             if (code === 'taken') {
@@ -1140,7 +1260,7 @@
                 state.notice = t('err.taken');
             } else if (code === 'name' || code === 'phone') {
                 state.errors = { [code]: t(`err.${code}`) };
-            } else if (['limit', 'busy', 'closed'].includes(code)) {
+            } else if (['limit', 'busy', 'closed', 'blocked'].includes(code)) {
                 state.notice = t(`err.${code}`);
             } else {
                 state.notice = t('err.network');
@@ -1163,6 +1283,11 @@
                 // Ignore: the choice still applies until the page closes.
             }
             applyLanguage();
+            return;
+        }
+        const cancel = event.target.closest('[data-cancel-booking]');
+        if (cancel) {
+            cancelMine(cancel.dataset.cancelBooking);
             return;
         }
         if (event.target.closest('[data-retry]')) {
@@ -1266,7 +1391,7 @@
 
     // The next free times stay fresh while the page is open.
     setInterval(() => {
-        if (!document.hidden && sheetRoot.hidden && state.info) loadInfo();
+        if (!document.hidden && sheetRoot.hidden && state.info) loadInfo().then(loadMine);
     }, 60000);
 
     $('#footer-year').textContent = String(new Date().getFullYear());
@@ -1274,7 +1399,7 @@
     renderBand();
     startLoader();
     applyLanguage();
-    loadInfo();
+    loadInfo().then(loadMine);
     startReveal();
     startCursor();
     startParallax();
