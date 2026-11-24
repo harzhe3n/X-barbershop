@@ -37,8 +37,8 @@ const XSlots = window.XSlots;
 const OPEN_STATUSES = ['waiting', 'in-service'];
 const ADMIN_PAGES = ['cashier', 'sell', 'expenses', 'dashboard', 'history', 'catalog', 'barbers', 'settings'];
 const BARBER_PAGES = ['cashier', 'history'];
-// The cashier (front desk): the board and product sales, no money totals, history or settings.
-const CASHIER_PAGES = ['cashier', 'sell'];
+// The cashier (front desk): the board, product sales and expenses; no money totals, history or settings.
+const CASHIER_PAGES = ['cashier', 'sell', 'expenses'];
 const ADMIN_USERNAME = 'admin';
 const ADMIN_PASSWORD = 'admin123';
 // Hash of the default password for editing finished clients. The admin can change it in Settings.
@@ -4756,6 +4756,7 @@ async function renderSettings() {
     ]);
     const siteOpen = String(siteRows[0]?.value ?? '1') !== '0';
     const blocks = await loadBookingBlocks();
+    const telegram = await loadTelegramStatus();
     const whatsapp = await loadWhatsappStatus();
     const social = Object.fromEntries(socialRows.map(row => [row.key, row.value == null ? '' : String(row.value)]));
 
@@ -4804,6 +4805,7 @@ async function renderSettings() {
             ${renderBlocksCard(blocks)}
             ${renderSiteCard(booking, siteOpen, Number(upcomingRows[0]?.count || 0))}
             ${renderWhatsappCard(whatsapp, social[WHATSAPP_KEY] || settings.phone || '')}
+            ${renderTelegramCard(telegram, settingsBarbers)}
             <section class="card">
                 <h3 class="card-title">${icon('lock')}${escapeHtml(t('lock.settingsTitle'))}</h3>
                 <p class="card-text">${escapeHtml(t('lock.settingsText'))}</p>
@@ -5566,6 +5568,156 @@ async function openCashierAccountModal() {
 }
 
 /* ------------------------------------------------------------------ */
+/* Telegram messages to barbers                                        */
+/*                                                                     */
+/* Each barber gets a Telegram message when a client books them on the */
+/* website, and when a client cancels. The owner pastes the bot's      */
+/* token and each barber's chat id here; the server sends the messages */
+/* (see server.js). Online only.                                       */
+/* ------------------------------------------------------------------ */
+
+async function loadTelegramStatus() {
+    if (!state.serverMode || !isAdmin() || typeof api.telegram !== 'function') return null;
+    try {
+        return await api.telegram('status');
+    } catch (error) {
+        console.warn('Could not read the Telegram settings:', error);
+        return { configured: false, bot: null, chats: [], error: true };
+    }
+}
+
+function renderTelegramCard(info, barbers = []) {
+    if (!state.serverMode) {
+        return `
+            <section class="card card-wide tg-card">
+                <h3 class="card-title">${icon('send')}${escapeHtml(t('tg.title'))}</h3>
+                <p class="card-text">${escapeHtml(t('tg.localText'))}</p>
+            </section>`;
+    }
+    if (!info) return '';
+    const chats = new Map((info.chats || []).map(row => [Number(row.barber_id), String(row.chat_id)]));
+    const rows = barbers.map(barber => `
+        <div class="barber-time tg-row">
+            <span class="avatar avatar-sm">${escapeHtml(initials(barber.name))}</span>
+            <strong>${escapeHtml(barber.name)}</strong>
+            <span class="tg-chat">
+                <input type="text" inputmode="numeric" dir="ltr" maxlength="21" placeholder="123456789" value="${escapeHtml(chats.get(Number(barber.id)) || '')}"
+                    data-tg-chat="${barber.id}" aria-label="${escapeHtml(t('tg.chatLabel', { name: barber.name }))}">
+                <button type="button" class="btn btn-ghost btn-sm" data-action="tg-test" data-barber="${barber.id}" ${info.configured ? '' : 'disabled'}>${escapeHtml(t('tg.test'))}</button>
+            </span>
+        </div>`).join('');
+    return `
+        <section class="card card-wide tg-card">
+            <div class="booking-head">
+                <h3 class="card-title">${icon('send')}${escapeHtml(t('tg.title'))}</h3>
+                <span class="booking-status" data-state="${info.configured ? 'ok' : 'off'}"><span class="status-dot"></span>${escapeHtml(info.configured ? t('tg.on', { bot: info.bot || '' }) : t('tg.off'))}</span>
+            </div>
+            <p class="card-text">${escapeHtml(t('tg.text'))}</p>
+            <ol class="wa-steps">
+                <li>${escapeHtml(t('tg.step1'))}</li>
+                <li>${escapeHtml(t('tg.step2'))}</li>
+                <li>${escapeHtml(t('tg.step3'))}</li>
+            </ol>
+            <form class="stack" data-form="telegram" autocomplete="off">
+                <label class="field"><span>${escapeHtml(t('tg.token'))}</span>
+                    <input type="password" name="token" dir="ltr" autocomplete="off" spellcheck="false"
+                        placeholder="${escapeHtml(info.configured ? t('tg.tokenSaved') : '123456789:AAH…')}">
+                </label>
+                <div class="field">
+                    <span>${escapeHtml(t('tg.chats'))}</span>
+                    ${rows ? `<div class="barber-times">${rows}</div>` : `<p class="field-hint">${escapeHtml(t('hours.noBarbers'))}</p>`}
+                    <small class="field-hint">${escapeHtml(t('tg.chatsHint'))}</small>
+                </div>
+                <div class="button-row">
+                    <button type="submit" class="btn btn-primary">${icon('check')}<span>${escapeHtml(t('common.save'))}</span></button>
+                    <button type="button" class="btn btn-outline" data-action="tg-find" ${info.configured ? '' : 'disabled'}>${icon('users')}<span>${escapeHtml(t('tg.find'))}</span></button>
+                    ${info.configured ? `<button type="button" class="btn btn-ghost-danger" data-action="tg-remove">${icon('trash')}<span>${escapeHtml(t('tg.remove'))}</span></button>` : ''}
+                </div>
+                <div class="tg-found" data-tg-found></div>
+            </form>
+        </section>`;
+}
+
+async function saveTelegram(form) {
+    const chats = [...form.querySelectorAll('[data-tg-chat]')].map(input => ({
+        barber_id: Number(input.dataset.tgChat),
+        chat_id: latinDigits(input.value).replace(/[^\d-]/g, '')
+    }));
+    const bad = chats.find(chat => chat.chat_id && !/^-?\d{3,20}$/.test(chat.chat_id));
+    if (bad) {
+        toast(t('tg.badChat'), 'error');
+        form.querySelector(`[data-tg-chat="${bad.barber_id}"]`)?.focus();
+        return;
+    }
+    await api.telegram('save', { token: form.elements.token.value.trim(), chats });
+    toast(t('tg.saved'));
+    await renderPage({ keepScroll: true });
+}
+
+// "Find chat IDs": everyone who wrote to the bot lately, with their chat id and "Put in …".
+async function findTelegramChats(button) {
+    const box = dom.page.querySelector('[data-tg-found]');
+    const info = await api.telegram('found');
+    const found = info.found || [];
+    const barbers = [...dom.page.querySelectorAll('[data-tg-chat]')].map(input => ({
+        id: input.dataset.tgChat,
+        name: input.closest('.tg-row')?.querySelector('strong')?.textContent || ''
+    }));
+    if (!box) return;
+    box.innerHTML = found.length ? `
+        <p class="field-hint">${escapeHtml(t('tg.foundHint'))}</p>
+        <ul class="blocks-list">
+            ${found.map(chat => `
+                <li>
+                    <span class="blocks-what">
+                        <strong>${escapeHtml(chat.name || chat.username || chat.chat_id)}${chat.username && chat.name ? ` <bdi dir="ltr">${escapeHtml(chat.username)}</bdi>` : ''}</strong>
+                        <span>${escapeHtml(t('tg.chatId'))}: <bdi dir="ltr">${escapeHtml(chat.chat_id)}</bdi></span>
+                    </span>
+                    <select data-tg-put="${escapeHtml(chat.chat_id)}" aria-label="${escapeHtml(t('tg.putIn'))}">
+                        <option value="">${escapeHtml(t('tg.putIn'))}</option>
+                        ${barbers.map(barber => `<option value="${escapeHtml(barber.id)}">${escapeHtml(barber.name)}</option>`).join('')}
+                    </select>
+                </li>`).join('')}
+        </ul>` : `<p class="notice notice-slim">${escapeHtml(t('tg.noneFound'))}</p>`;
+    button?.blur();
+}
+
+async function testTelegram(barberId) {
+    const input = dom.page.querySelector(`[data-tg-chat="${Number(barberId)}"]`);
+    const chatId = latinDigits(input?.value || '').replace(/[^\d-]/g, '');
+    if (!/^-?\d{3,20}$/.test(chatId)) {
+        toast(t('tg.badChat'), 'error');
+        input?.focus();
+        return;
+    }
+    try {
+        await api.telegram('test', { chat_id: chatId });
+        toast(t('tg.testSent'));
+    } catch (error) {
+        toast(t('tg.testFailed', { message: error.message }), 'error');
+    }
+}
+
+async function removeTelegram() {
+    if (!await confirmDialog(t('tg.confirmRemove'), { okLabel: t('tg.remove'), danger: true })) return;
+    await api.telegram('remove');
+    toast(t('tg.removed'));
+    await renderPage({ keepScroll: true });
+}
+
+// "Put in …" next to a chat found: fills that barber's box.
+document.addEventListener('change', event => {
+    const select = event.target.closest?.('[data-tg-put]');
+    if (!select || !select.value) return;
+    const input = dom.page.querySelector(`[data-tg-chat="${select.value}"]`);
+    if (input) {
+        input.value = select.dataset.tgPut;
+        input.focus();
+    }
+    select.value = '';
+});
+
+/* ------------------------------------------------------------------ */
 /* Blocked from booking online (spam)                                  */
 /*                                                                     */
 /* The owner blocks a website booking that is spam ("Block" on the     */
@@ -5997,6 +6149,9 @@ const actions = {
     },
     'barber-account': element => openAccountModal(Number(element.dataset.id)),
     'cashier-account': () => openCashierAccountModal(),
+    'tg-find': element => findTelegramChats(element),
+    'tg-test': element => testTelegram(Number(element.dataset.barber)),
+    'tg-remove': () => removeTelegram(),
     'block-booking': element => blockBooking(Number(element.dataset.id), element.dataset.name),
     unblock: element => unblock(Number(element.dataset.id)),
     'remove-photo': element => removeBarberPhoto(element.dataset.id, element.dataset.name || ''),
@@ -6185,10 +6340,10 @@ document.addEventListener('submit', event => {
         saveShop(form).catch(handleError);
     } else if (form.dataset.form === 'history-password') {
         saveHistoryPassword(form).catch(handleError);
-    } else if (['hours', 'site', 'admin-password', 'whatsapp', 'wa-test', 'commission', 'block-phone'].includes(form.dataset.form)) {
+    } else if (['hours', 'site', 'admin-password', 'whatsapp', 'wa-test', 'commission', 'block-phone', 'telegram'].includes(form.dataset.form)) {
         const button = form.querySelector('button[type="submit"]');
         if (button) button.disabled = true;
-        const save = { hours: saveHours, site: saveSiteSettings, 'admin-password': saveAdminPassword, whatsapp: saveWhatsappSettings, 'wa-test': sendWhatsappTest, commission: saveCommission, 'block-phone': blockPhone }[form.dataset.form];
+        const save = { hours: saveHours, site: saveSiteSettings, 'admin-password': saveAdminPassword, whatsapp: saveWhatsappSettings, 'wa-test': sendWhatsappTest, commission: saveCommission, 'block-phone': blockPhone, telegram: saveTelegram }[form.dataset.form];
         save(form)
             .catch(handleError)
             .finally(() => {

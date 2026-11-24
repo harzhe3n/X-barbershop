@@ -263,6 +263,21 @@ CREATE TABLE IF NOT EXISTS booking_blocks (
     UNIQUE (kind, value)
 );
 
+-- Telegram messages to barbers about their website bookings: the bot's token (owner only)
+-- and each barber's chat id.
+CREATE TABLE IF NOT EXISTS telegram_bot (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    token TEXT,
+    bot_name TEXT,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS telegram_chats (
+    barber_id INTEGER PRIMARY KEY,
+    chat_id TEXT NOT NULL,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Clients who came in without a booking, added with the "Walk-in client" button in the cashier.
 CREATE TABLE IF NOT EXISTS walk_ins (
     order_id INTEGER PRIMARY KEY,

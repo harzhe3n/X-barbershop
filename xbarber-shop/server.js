@@ -394,8 +394,9 @@ function requireAdmin(session) {
 // Barbers change their own clients. Sign-ins, photos, product sales, the catalog and shop settings
 // are for the owner only. The cashier (front desk) runs every barber's clients, finishes them and
 // sells products, but cannot change sign-ins, barbers, prices, costs or settings.
-const OWNER_ONLY_TABLES = /\b(admins|barber_accounts|staff_accounts|booking_access|booking_blocks|barber_photos|product_sales|product_sale_items|expenses|settings|barbers|services|categories)\b/i;
-const CASHIER_BLOCKED_TABLES = /\b(admins|barber_accounts|staff_accounts|booking_access|booking_blocks|barber_photos|expenses|settings|barbers|services|categories)\b/i;
+const OWNER_ONLY_TABLES = /\b(admins|barber_accounts|staff_accounts|booking_access|booking_blocks|telegram_bot|telegram_chats|barber_photos|product_sales|product_sale_items|expenses|settings|barbers|services|categories)\b/i;
+// The cashier also records the shop's expenses.
+const CASHIER_BLOCKED_TABLES = /\b(admins|barber_accounts|staff_accounts|booking_access|booking_blocks|telegram_bot|telegram_chats|barber_photos|settings|barbers|services|categories)\b/i;
 // The day's board settings that staff change: time between clients, added and deleted slots,
 // days off, Open / Closed and "Book up to", each for one barber.
 const BOARD_OPTION = /^(?:slot\.barber\.(\d+)|extra\.(\d+)\.\d{4}-\d{2}-\d{2}|off\.(\d+)\.\d{4}-\d{2}-\d{2}|online\.(\d+)|skip\.(\d+)\.\d{4}-\d{2}-\d{2}|days\.barber\.(\d+))$/;
@@ -430,9 +431,14 @@ function assertWriteAllowed(session, query, params = []) {
 }
 
 function assertReadAllowed(session, query) {
-  if (session.session.role === 'admin') return;
-  // Staff do not see sign-ins, the history password, the shop's expenses, or where bookings came from.
-  if (/\b(admins|barber_accounts|staff_accounts|expenses|booking_access|booking_blocks)\b/i.test(query) || /history_password/i.test(query)) {
+  const role = session.session.role;
+  if (role === 'admin') return;
+  // Staff do not see sign-ins, the history password, where bookings came from or the Telegram bot.
+  // Barbers do not see the shop's expenses either; the cashier records them.
+  const hidden = role === 'cashier'
+    ? /\b(admins|barber_accounts|staff_accounts|booking_access|booking_blocks|telegram_bot|telegram_chats)\b/i
+    : /\b(admins|barber_accounts|staff_accounts|expenses|booking_access|booking_blocks|telegram_bot|telegram_chats)\b/i;
+  if (hidden.test(query) || /history_password/i.test(query)) {
     throw httpError(403, 'Only the owner can do this.');
   }
 }
@@ -877,6 +883,10 @@ async function handleApi(req, res, pathname) {
     requireAdmin(session);
     return handleBookingBlocks(req, res, pathname);
   }
+  if (pathname.startsWith('/api/telegram/')) {
+    requireAdmin(session);
+    return handleTelegram(req, res, pathname);
+  }
 
   throw httpError(404, 'API route not found.');
 }
@@ -1241,7 +1251,7 @@ async function handlePublicBook(req, res) {
         'INSERT INTO booking_access (booking_id, order_id, ip, token_hash) VALUES (?, ?, ?, ?)',
         [bookingId, order.lastID, address, sha256Hex(token)]);
       await dbRun(connection, 'COMMIT');
-      return { id: bookingId, token, barber: barber.name, date, time };
+      return { id: bookingId, token, barber: barber.name, barberId, date, time };
     } catch (error) {
       try {
         await dbRun(connection, 'ROLLBACK');
@@ -1251,7 +1261,184 @@ async function handlePublicBook(req, res) {
       throw error;
     }
   });
+  notifyBarber(booking.barberId, 'new', { name, date: booking.date, time: booking.time });
+  delete booking.barberId;
   sendJson(res, 200, { ok: true, booking });
+}
+
+/* ------------------------------------------------------------------ */
+/* Telegram: each barber gets a message when a client books them on   */
+/* the website, and when a client cancels. The owner pastes the bot's  */
+/* token and each barber's chat id in Settings. Messages go out one    */
+/* after another, in the order the bookings came in, and are tried    */
+/* again a few times when Telegram cannot be reached.                  */
+/* ------------------------------------------------------------------ */
+
+// Only for tests: another address instead of Telegram's.
+const TELEGRAM_API = process.env.XBARBER_TELEGRAM_API || 'https://api.telegram.org';
+const TELEGRAM_TOKEN = /^\d{5,15}:[A-Za-z0-9_-]{30,60}$/;
+const TELEGRAM_CHAT = /^-?\d{3,20}$/;
+const TELEGRAM_TRIES = 3;
+const KURDISH_WEEKDAYS = ['یەکشەممە', 'دووشەممە', 'سێشەممە', 'چوارشەممە', 'پێنجشەممە', 'هەینی', 'شەممە'];
+let telegramQueue = Promise.resolve();
+
+async function telegramCall(token, method, payload = {}) {
+  let response;
+  try {
+    response = await fetch(`${TELEGRAM_API}/bot${token}/${method}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(15000)
+    });
+  } catch (error) {
+    // Never shows the address: it has the token in it.
+    throw new Error('Telegram could not be reached.');
+  }
+  const data = await response.json().catch(() => ({}));
+  if (!data.ok) throw new Error(data.description || `Telegram answered ${response.status}.`);
+  return data.result;
+}
+
+// "3:30 PM" the Kurdish way (پ.ن before noon, د.ن after), as in the cashier.
+function kurdishTime(time) {
+  const [hours, minutes] = String(time).split(':').map(Number);
+  return `${hours % 12 === 0 ? 12 : hours % 12}:${String(minutes).padStart(2, '0')} ${hours < 12 ? 'پ.ن' : 'د.ن'}`;
+}
+
+// The message a barber gets, in Kurdish: what happened, who, which day and what time.
+async function bookingMessage(connection, kind, booking) {
+  const hours = await loadShopHours(connection);
+  const clock = shopNow();
+  const now = Slots.shopDay(hours, clock.date, clock.minutes);
+  const [, month, day] = booking.date.split('-').map(Number);
+  const dayText = booking.date === now.date ? 'ئەمڕۆ'
+    : booking.date === Slots.addDays(now.date, 1) ? 'سبەینێ'
+      : `${KURDISH_WEEKDAYS[Slots.weekday(booking.date)]} ${day}/${month}`;
+  const night = Slots.dayMinutes(hours, booking.time) >= 24 * 60 ? ' (دوای نیوەشەو)' : '';
+  return [
+    kind === 'new' ? '📅 نۆرەی نوێ لە ماڵپەڕەوە' : '❌ نۆرەیەک هەڵوەشێنرایەوە',
+    `کڕیار: ${cleanName(booking.name) || '-'}`,
+    `ڕۆژ: ${dayText}`,
+    `کات: ${kurdishTime(booking.time)}${night}`
+  ].join('\n');
+}
+
+function notifyBarber(barberId, kind, booking) {
+  if (!barberId) return;
+  telegramQueue = telegramQueue.then(async () => {
+    const target = await serialize(async () => {
+      const connection = await openDatabase();
+      const bot = await dbGet(connection, 'SELECT token FROM telegram_bot WHERE id = 1');
+      const chat = await dbGet(connection, 'SELECT chat_id FROM telegram_chats WHERE barber_id = ?', [barberId]);
+      if (!bot?.token || !chat?.chat_id) return null;
+      return { token: bot.token, chatId: chat.chat_id, text: await bookingMessage(connection, kind, booking) };
+    });
+    if (!target) return;
+    for (let attempt = 1; attempt <= TELEGRAM_TRIES; attempt += 1) {
+      try {
+        await telegramCall(target.token, 'sendMessage', { chat_id: target.chatId, text: target.text });
+        return;
+      } catch (error) {
+        if (attempt === TELEGRAM_TRIES) console.error(`Telegram message to barber ${barberId} failed:`, error.message);
+        else await new Promise(resolve => setTimeout(resolve, attempt * 5000));
+      }
+    }
+  }).catch(error => console.error('Telegram:', error.message));
+}
+
+/*
+ * Owner only:
+ *   status            { configured, bot, chats: [{ barber_id, chat_id }] }
+ *   save   { token?, chats: [{ barber_id, chat_id }] }   an empty chat id removes it
+ *   remove            forget the bot
+ *   test   { chat_id }  send a test message
+ *   found             people who wrote to the bot lately (to find their chat id)
+ */
+async function handleTelegram(req, res, pathname) {
+  const body = await readJson(req, 16384);
+  const action = pathname.slice('/api/telegram/'.length);
+  const readBot = () => serialize(async () => dbGet(await openDatabase(), 'SELECT token, bot_name FROM telegram_bot WHERE id = 1'));
+  let found = null;
+  if (action === 'save') {
+    const token = String(body.token || '').trim();
+    let botName = null;
+    if (token) {
+      if (!TELEGRAM_TOKEN.test(token)) throw httpError(400, 'This is not a Telegram bot token.');
+      try {
+        const me = await telegramCall(token, 'getMe');
+        botName = me?.username ? `@${me.username}` : null;
+      } catch (error) {
+        throw httpError(400, `Telegram did not accept the token: ${error.message}`);
+      }
+    }
+    const chats = Array.isArray(body.chats) ? body.chats.slice(0, 200) : [];
+    for (const chat of chats) {
+      const value = String(chat?.chat_id ?? '').trim();
+      if (value && !TELEGRAM_CHAT.test(value)) throw httpError(400, `Check the chat id "${value.slice(0, 30)}".`);
+    }
+    await serialize(async () => {
+      const connection = await openDatabase();
+      if (token) {
+        await dbRun(connection,
+          `INSERT INTO telegram_bot (id, token, bot_name, updated_at) VALUES (1, ?, ?, CURRENT_TIMESTAMP)
+           ON CONFLICT(id) DO UPDATE SET token = excluded.token, bot_name = excluded.bot_name, updated_at = CURRENT_TIMESTAMP`,
+          [token, botName]);
+      }
+      for (const chat of chats) {
+        const barberId = Number(chat?.barber_id);
+        const value = String(chat?.chat_id ?? '').trim();
+        if (!Number.isInteger(barberId)) continue;
+        if (value) {
+          await dbRun(connection,
+            `INSERT INTO telegram_chats (barber_id, chat_id, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP)
+             ON CONFLICT(barber_id) DO UPDATE SET chat_id = excluded.chat_id, updated_at = CURRENT_TIMESTAMP`,
+            [barberId, value]);
+        } else {
+          await dbRun(connection, 'DELETE FROM telegram_chats WHERE barber_id = ?', [barberId]);
+        }
+      }
+    });
+  } else if (action === 'remove') {
+    await serialize(async () => dbRun(await openDatabase(), 'DELETE FROM telegram_bot WHERE id = 1'));
+  } else if (action === 'test') {
+    const chatId = String(body.chat_id ?? '').trim();
+    if (!TELEGRAM_CHAT.test(chatId)) throw httpError(400, 'Check the chat id.');
+    const bot = await readBot();
+    if (!bot?.token) throw httpError(409, 'Save the bot token first.');
+    try {
+      await telegramCall(bot.token, 'sendMessage', { chat_id: chatId, text: '✅ XOSHAWIS STUDIO: تاقیکردنەوە. لێرە ئاگادار دەکرێیتەوە کاتێک نۆرەیەکی نوێت دەبێت.' });
+    } catch (error) {
+      throw httpError(502, error.message);
+    }
+  } else if (action === 'found') {
+    const bot = await readBot();
+    if (!bot?.token) throw httpError(409, 'Save the bot token first.');
+    let updates;
+    try {
+      updates = await telegramCall(bot.token, 'getUpdates', { limit: 100, allowed_updates: ['message', 'my_chat_member'] });
+    } catch (error) {
+      throw httpError(502, error.message);
+    }
+    const chats = new Map();
+    (Array.isArray(updates) ? updates : []).forEach(update => {
+      const chat = update.message?.chat || update.my_chat_member?.chat;
+      if (!chat || chat.id == null) return;
+      const name = [chat.first_name, chat.last_name].filter(Boolean).join(' ') || chat.title || '';
+      chats.set(String(chat.id), { chat_id: String(chat.id), name: cleanName(name).slice(0, 60), username: chat.username ? `@${chat.username}` : '' });
+    });
+    found = [...chats.values()];
+  } else if (action !== 'status') {
+    throw httpError(404, 'API route not found.');
+  }
+  const { bot, chats } = await serialize(async () => {
+    const connection = await openDatabase();
+    return {
+      bot: await dbGet(connection, 'SELECT bot_name FROM telegram_bot WHERE id = 1 AND token IS NOT NULL'),
+      chats: await dbAll(connection, 'SELECT barber_id, chat_id FROM telegram_chats ORDER BY barber_id')
+    };
+  });
+  sendJson(res, 200, { configured: Boolean(bot), bot: bot?.bot_name || null, chats, ...(found ? { found } : {}) });
 }
 
 /*
@@ -1310,7 +1497,7 @@ async function handleBookingBlocks(req, res, pathname) {
 async function findOwnBooking(connection, id, token) {
   if (!/^web-[a-z0-9-]{4,40}$/.test(String(id || '')) || !/^[a-f0-9]{48}$/.test(String(token || ''))) return null;
   const row = await dbGet(connection,
-    `SELECT a.token_hash, ob.booking_id, ob.order_id, ob.date, ob.time, o.status, b.name AS barber
+    `SELECT a.token_hash, ob.booking_id, ob.order_id, ob.date, ob.time, ob.customer_name, o.status, o.barber_id, b.name AS barber
      FROM booking_access a
      JOIN online_bookings ob ON ob.booking_id = a.booking_id
      JOIN orders o ON o.id = ob.order_id
@@ -1348,14 +1535,16 @@ async function handlePublicCancel(req, res) {
   if (!sameOrigin(req)) throw httpError(403, 'Request blocked.');
   if (bookingBlocked(clientAddress(req))) throw httpError(429, 'busy');
   const body = await readJson(req, 4096);
-  await serialize(async () => {
+  const cancelled = await serialize(async () => {
     const connection = await openDatabase();
     const row = await findOwnBooking(connection, body.id, body.token);
     if (!row) throw httpError(404, 'gone');
     if (row.status !== 'waiting') throw httpError(409, 'started');
     await dbRun(connection, "UPDATE orders SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'waiting'", [row.order_id]);
     await dbRun(connection, "UPDATE online_bookings SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP WHERE booking_id = ?", [row.booking_id]);
+    return row;
   });
+  notifyBarber(cancelled.barber_id, 'cancelled', { name: cancelled.customer_name, date: cancelled.date, time: String(cancelled.time || '').slice(0, 5) });
   sendJson(res, 200, { ok: true });
 }
 
